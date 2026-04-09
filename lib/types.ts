@@ -11,6 +11,11 @@ export interface Creator {
   videos_this_month: number
   status: 'pending' | 'active' | 'suspended'
   access_code: string | null
+  acc_goal: number | null
+  ttd_goal: number | null
+  gmv_goal: number | null
+  special_hashtags: string | null
+  creative_brief: string | null
   approved_at: string | null
   created_at: string
 }
@@ -66,6 +71,7 @@ export interface PortfolioSubmission {
 export interface Announcement {
   id: string
   message: string
+  image_url: string | null
   is_active: boolean
   created_at: string
 }

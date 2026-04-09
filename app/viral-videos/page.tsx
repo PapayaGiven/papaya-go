@@ -45,6 +45,7 @@ export default async function ViralVideosPage({
   return (
     <div className="min-h-screen bg-go-light">
       <Sidebar creatorName={creatorData.full_name} tiktokHandle={creatorData.tiktok_handle} nivel={creatorData.nivel} />
+      <img src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png" className="fixed top-4 right-4 w-40 h-40 opacity-[0.04] pointer-events-none select-none z-0" alt="" aria-hidden="true" />
       <main className="md:ml-[220px] pb-20 md:pb-0 min-h-screen">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
           <div className="mb-6">
@@ -79,7 +80,7 @@ export default async function ViralVideosPage({
           {/* List */}
           {items.length === 0 ? (
             <div className="bg-white rounded-2xl border border-go-border p-10 text-center">
-              <p className="text-4xl mb-3">🎬</p>
+              <img src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png" className="w-16 h-16 mx-auto mb-3" alt="" aria-hidden="true" />
               <p className="font-dm text-gray-500 text-sm">
                 Aún no hay videos de {activeType === 'ACC' ? 'hoteles' : 'atracciones'}.
               </p>
@@ -92,9 +93,7 @@ export default async function ViralVideosPage({
                   href={v.tiktok_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className={`bg-white rounded-2xl border overflow-hidden flex items-center gap-4 px-5 py-4 transition hover:shadow-sm group ${
-                    idx === 0 ? 'border-go-orange/40' : idx === 1 ? 'border-go-peach/40' : idx === 2 ? 'border-go-pink/40' : 'border-go-border'
-                  }`}
+                  className="bg-white rounded-2xl border border-[rgba(255,119,0,0.12)] overflow-hidden flex items-center gap-4 px-5 py-4 transition hover:shadow-sm group"
                 >
                   {/* Rank */}
                   <span className={`font-syne font-extrabold text-2xl shrink-0 w-10 text-center ${

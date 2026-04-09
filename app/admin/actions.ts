@@ -238,7 +238,21 @@ export async function deleteTemplate(id: string) {
 
 // ── Announcements ─────────────────────────────────────
 
-export async function setAnnouncement(message: string) {
+export async function updateCreatorStrategy(id: string, data: {
+  acc_goal?: number
+  ttd_goal?: number
+  gmv_goal?: number
+  special_hashtags?: string | null
+  creative_brief?: string | null
+}): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_creators').update(data).eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  return {}
+}
+
+export async function setAnnouncement(message: string, image_url?: string) {
   const supabase = createAdminClient()
 
   // Deactivate all existing announcements
@@ -247,6 +261,7 @@ export async function setAnnouncement(message: string) {
   // Insert new active announcement
   const { error } = await supabase.from('go_announcements').insert({
     message,
+    image_url: image_url || null,
     is_active: true,
   })
   if (error) return { error: error.message }

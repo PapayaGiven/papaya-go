@@ -9,3 +9,16 @@
 .safe-area-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
+
+.card {
+  @apply bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl;
+}
+
+@keyframes pulse-sun {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
+.animate-pulse-sun {
+  animation: pulse-sun 2s ease-in-out infinite;
+}

@@ -94,10 +94,10 @@ export default async function DashboardPage() {
   const checklistItems = CHECKLIST_BY_NIVEL[creator.nivel] ?? CHECKLIST_DEFAULT
 
   const stats = [
-    { emoji: '💰', value: `$${creator.gmv_this_month.toLocaleString()}`, label: 'GMV este mes' },
-    { emoji: '🎬', value: creator.videos_this_month, label: 'Videos publicados' },
-    { emoji: '🏨', value: creator.acc_this_month, label: 'ACC completados' },
-    { emoji: '🎡', value: creator.ttd_this_month, label: 'TTD completados' },
+    { value: `$${creator.gmv_this_month.toLocaleString()}`, label: 'GMV este mes' },
+    { value: creator.videos_this_month, label: 'Videos publicados' },
+    { value: creator.acc_this_month, label: 'ACC completados' },
+    { value: creator.ttd_this_month, label: 'TTD completados' },
   ]
 
   return (
@@ -108,22 +108,36 @@ export default async function DashboardPage() {
         nivel={creator.nivel}
       />
 
+      {/* Sun watermark */}
+      <img
+        src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png"
+        alt=""
+        className="fixed top-4 right-4 w-40 h-40 opacity-[0.04] pointer-events-none select-none z-0"
+      />
+
       <main className="md:ml-[220px] pb-20 md:pb-0">
         {/* Announcement banner */}
         {announcement && (
           <div className="bg-go-orange text-white px-4 py-3 font-dm text-sm text-center">
-            📢 {announcement.message}
+            {announcement.image_url && (
+              <img
+                src={announcement.image_url}
+                alt=""
+                className="mx-auto mb-2 max-h-32 rounded-lg object-contain"
+              />
+            )}
+            {announcement.message}
           </div>
         )}
 
-        <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-6">
+        <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-8">
           {/* Header */}
           <div>
-            <h1 className="font-syne font-extrabold text-2xl md:text-3xl text-go-dark">
+            <h1 className="font-syne font-bold text-2xl text-go-dark">
               Dashboard
             </h1>
-            <p className="font-dm text-gray-500 mt-1">
-              ¡Hola, {firstName}! 👋
+            <p className="font-dm text-sm text-gray-400 mt-1">
+              ¡Hola, {firstName}!
             </p>
           </div>
 
@@ -132,26 +146,22 @@ export default async function DashboardPage() {
             {stats.map((stat) => (
               <div
                 key={stat.label}
-                className="bg-white border border-go-border rounded-2xl p-4 flex flex-col gap-1"
+                className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5 flex flex-col gap-1"
               >
-                <span className="text-2xl">{stat.emoji}</span>
-                <span className="font-syne font-extrabold text-xl md:text-2xl text-go-dark">
+                <span className="font-syne font-bold text-2xl text-go-orange">
                   {stat.value}
                 </span>
-                <span className="font-dm text-xs text-gray-500">{stat.label}</span>
+                <span className="font-dm text-xs text-gray-400">{stat.label}</span>
               </div>
             ))}
           </div>
 
           {/* Progress to next level */}
           {nextNivel && (
-            <div className="bg-white border border-go-border rounded-2xl p-5 md:p-6">
-              <div className="flex items-center gap-2 mb-4">
-                <span className="text-lg">⭐</span>
-                <h2 className="font-syne font-extrabold text-lg text-go-dark">
-                  Progreso al siguiente nivel
-                </h2>
-              </div>
+            <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5 md:p-6">
+              <h2 className="font-syne font-bold text-lg text-go-dark mb-4">
+                Progreso al siguiente nivel
+              </h2>
 
               <div className="flex items-center gap-2 mb-5">
                 <span
@@ -175,7 +185,7 @@ export default async function DashboardPage() {
                     {creator.videos_this_month}/{nextNivel.total_videos_required}
                   </span>
                 </div>
-                <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-1 bg-gray-100 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-go-orange rounded-full transition-all"
                     style={{ width: `${videosProgress}%` }}
@@ -191,7 +201,7 @@ export default async function DashboardPage() {
                     ${creator.gmv_this_month.toLocaleString()}/${nextNivel.gmv_required.toLocaleString()}
                   </span>
                 </div>
-                <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-1 bg-gray-100 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-go-peach rounded-full transition-all"
                     style={{ width: `${gmvProgress}%` }}
@@ -212,9 +222,9 @@ export default async function DashboardPage() {
 
           {/* If max level */}
           {!nextNivel && (
-            <div className="bg-white border border-go-border rounded-2xl p-5 md:p-6 text-center">
+            <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5 md:p-6 text-center">
               <span className="text-4xl mb-2 block">🏆</span>
-              <h2 className="font-syne font-extrabold text-lg text-go-dark mb-1">
+              <h2 className="font-syne font-bold text-lg text-go-dark mb-1">
                 ¡Estás en el nivel máximo!
               </h2>
               <p className="font-dm text-sm text-gray-500">
@@ -224,13 +234,10 @@ export default async function DashboardPage() {
           )}
 
           {/* Today's checklist */}
-          <div className="bg-white border border-go-border rounded-2xl p-5 md:p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <span className="text-lg">✅</span>
-              <h2 className="font-syne font-extrabold text-lg text-go-dark">
-                Checklist de hoy
-              </h2>
-            </div>
+          <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5 md:p-6">
+            <h2 className="font-syne font-bold text-lg text-go-dark mb-4">
+              Checklist de hoy
+            </h2>
             <DailyChecklist items={checklistItems} />
           </div>
         </div>

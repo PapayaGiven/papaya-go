@@ -27,10 +27,10 @@ export default async function POIsPage({
   const { data: creator } = await supabase
     .from('go_creators')
     .select('*')
-    .eq('id', user.id)
+    .eq('email', user.email!)
     .single<Creator>()
 
-  if (!creator || creator.status !== 'active') redirect('/pending')
+  if (!creator) redirect('/pending')
 
   const params = await searchParams
   const typeFilter = params.type ?? ''

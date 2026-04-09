@@ -15,6 +15,7 @@ import {
   updateCreator,
   addCreator,
   deleteCreator,
+  updateCreatorStrategy,
   addPOI,
   // updatePOI,
   togglePOI,
@@ -361,6 +362,8 @@ function CreatorsTab({
   const [editData, setEditData] = useState<Record<string, string | number>>({})
   const [feedback, setFeedback] = useState<string | null>(null)
   const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
+  const [strategyId, setStrategyId] = useState<string | null>(null)
+  const [strategyForm, setStrategyForm] = useState({ acc_goal: '', ttd_goal: '', gmv_goal: '', special_hashtags: '', creative_brief: '' })
 
   // Add form state
   const [newEmail, setNewEmail] = useState('')
@@ -577,6 +580,18 @@ function CreatorsTab({
                         <ActionButton variant="ghost" onClick={() => startEdit(c)}>
                           Editar
                         </ActionButton>
+                        <ActionButton variant="ghost" onClick={() => {
+                          setStrategyId(c.id)
+                          setStrategyForm({
+                            acc_goal: String(c.acc_goal ?? ''),
+                            ttd_goal: String(c.ttd_goal ?? ''),
+                            gmv_goal: String(c.gmv_goal ?? ''),
+                            special_hashtags: c.special_hashtags ?? '',
+                            creative_brief: c.creative_brief ?? '',
+                          })
+                        }}>
+                          Estrategia
+                        </ActionButton>
                         <ActionButton
                           variant="ghost"
                           onClick={() => {
@@ -606,6 +621,33 @@ function CreatorsTab({
           </table>
         </div>
       </SectionCard>
+
+      {strategyId && (
+        <div className="mt-4 bg-go-light border border-go-border rounded-2xl p-5">
+          <h3 className="font-syne font-bold text-go-dark mb-3">Estrategia mensual</h3>
+          <div className="grid grid-cols-3 gap-3">
+            <div><label className="block text-xs font-medium text-gray-500 mb-1">ACC videos/mes</label><input type="number" value={strategyForm.acc_goal} onChange={e => setStrategyForm(f => ({...f, acc_goal: e.target.value}))} className="w-full px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition" /></div>
+            <div><label className="block text-xs font-medium text-gray-500 mb-1">TTD videos/mes</label><input type="number" value={strategyForm.ttd_goal} onChange={e => setStrategyForm(f => ({...f, ttd_goal: e.target.value}))} className="w-full px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition" /></div>
+            <div><label className="block text-xs font-medium text-gray-500 mb-1">GMV meta ($)</label><input type="number" value={strategyForm.gmv_goal} onChange={e => setStrategyForm(f => ({...f, gmv_goal: e.target.value}))} className="w-full px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition" /></div>
+          </div>
+          <div className="mt-3"><label className="block text-xs font-medium text-gray-500 mb-1">Hashtags especiales (separados por coma)</label><input value={strategyForm.special_hashtags} onChange={e => setStrategyForm(f => ({...f, special_hashtags: e.target.value}))} className="w-full px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition" /></div>
+          <div className="mt-3"><label className="block text-xs font-medium text-gray-500 mb-1">Brief creativo</label><textarea value={strategyForm.creative_brief} onChange={e => setStrategyForm(f => ({...f, creative_brief: e.target.value}))} className="w-full px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition" rows={3} /></div>
+          <div className="flex gap-2 mt-3">
+            <button onClick={() => startTransition(async () => {
+              const r = await updateCreatorStrategy(strategyId, {
+                acc_goal: parseInt(strategyForm.acc_goal) || undefined,
+                ttd_goal: parseInt(strategyForm.ttd_goal) || undefined,
+                gmv_goal: parseInt(strategyForm.gmv_goal) || undefined,
+                special_hashtags: strategyForm.special_hashtags || null,
+                creative_brief: strategyForm.creative_brief || null,
+              })
+              if (r.error) fb(`Error: ${r.error}`)
+              else { fb('Estrategia guardada'); setStrategyId(null) }
+            })} className="font-dm text-sm font-semibold bg-go-orange text-white px-4 py-2 rounded-xl">Guardar</button>
+            <button onClick={() => setStrategyId(null)} className="font-dm text-sm text-gray-500 px-4 py-2">Cancelar</button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -937,6 +979,7 @@ function AnnouncementsTab({
   startTransition: (cb: () => void) => void
 }) {
   const [newMessage, setNewMessage] = useState('')
+  const [newImageUrl, setNewImageUrl] = useState('')
 
   const activeAnnouncement = announcements.find((a) => a.is_active)
 
@@ -944,8 +987,9 @@ function AnnouncementsTab({
     e.preventDefault()
     if (!newMessage.trim()) return
     startTransition(async () => {
-      await setAnnouncement(newMessage.trim())
+      await setAnnouncement(newMessage.trim(), newImageUrl.trim() || undefined)
       setNewMessage('')
+      setNewImageUrl('')
     })
   }
 
@@ -981,20 +1025,29 @@ function AnnouncementsTab({
           <label className="block text-xs font-medium text-go-dark/60 mb-2">
             Nuevo anuncio
           </label>
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                placeholder="Escribe el mensaje del anuncio..."
+                className="flex-1 px-4 py-2.5 rounded-xl border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition"
+              />
+              <button
+                type="submit"
+                className="px-4 py-2.5 rounded-xl bg-go-orange text-white text-sm font-medium hover:bg-go-orange/90 transition"
+              >
+                Publicar
+              </button>
+            </div>
             <input
-              type="text"
-              value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              placeholder="Escribe el mensaje del anuncio..."
-              className="flex-1 px-4 py-2.5 rounded-xl border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition"
+              type="url"
+              value={newImageUrl}
+              onChange={(e) => setNewImageUrl(e.target.value)}
+              placeholder="URL de imagen (opcional)"
+              className="px-4 py-2.5 rounded-xl border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition"
             />
-            <button
-              type="submit"
-              className="px-4 py-2.5 rounded-xl bg-go-orange text-white text-sm font-medium hover:bg-go-orange/90 transition"
-            >
-              Publicar
-            </button>
           </div>
         </form>
       </SectionCard>

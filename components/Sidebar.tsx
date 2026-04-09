@@ -34,6 +34,7 @@ export default function Sidebar({ creatorName, tiktokHandle, nivel }: SidebarPro
   const router = useRouter()
   const [, setMobileOpen] = useState(false)
   const [signingOut, setSigningOut] = useState(false)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const nivelColor = NIVEL_COLORS[nivel] ?? NIVEL_COLORS[1]
 
   async function handleSignOut() {
@@ -47,8 +48,17 @@ export default function Sidebar({ creatorName, tiktokHandle, nivel }: SidebarPro
   const navContent = (
     <>
       <div className="p-5 border-b border-go-border">
-        <Link href="/dashboard" className="flex items-center gap-2">
-          <img src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/Papaya%20Go%20Logo.png" alt="Papaya GO" className="h-8 object-contain" />
+        <Link href="/dashboard" className="flex flex-col items-start gap-2">
+          <img
+            src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-lightOrange.png"
+            alt=""
+            className="w-6 h-6 object-contain"
+          />
+          <img
+            src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/Papaya%20Go%20Logo.png"
+            alt="Papaya GO"
+            className="h-7 object-contain"
+          />
         </Link>
       </div>
 
@@ -60,10 +70,10 @@ export default function Sidebar({ creatorName, tiktokHandle, nivel }: SidebarPro
               key={item.href}
               href={item.href}
               onClick={() => setMobileOpen(false)}
-              className={`flex items-center gap-3 px-4 py-3 rounded-xl font-dm text-sm font-medium transition-colors ${
+              className={`flex items-center gap-3 px-4 py-3 font-dm text-sm transition-colors ${
                 isActive
-                  ? 'bg-go-orange text-white'
-                  : 'text-gray-600 hover:bg-go-orange/5 hover:text-go-orange'
+                  ? 'border-l-[3px] border-go-orange bg-[rgba(255,119,0,0.06)] text-go-dark'
+                  : 'text-gray-500 hover:text-go-dark hover:bg-gray-50'
               }`}
             >
               <span className="text-lg">{item.icon}</span>
@@ -79,12 +89,12 @@ export default function Sidebar({ creatorName, tiktokHandle, nivel }: SidebarPro
             {(creatorName ?? 'U').charAt(0).toUpperCase()}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-dm text-sm font-semibold text-go-dark truncate">{creatorName ?? 'Creator'}</p>
+            <p className="font-dm text-sm text-go-dark truncate">{creatorName ?? 'Creator'}</p>
             {tiktokHandle && <p className="font-dm text-xs text-gray-400 truncate">@{tiktokHandle}</p>}
           </div>
         </div>
         <div className="flex items-center justify-between">
-          <span className={`font-dm text-xs font-bold px-2.5 py-1 rounded-full ${nivelColor.bg} ${nivelColor.text}`}>
+          <span className="font-dm text-xs font-bold px-2.5 py-1 rounded-full bg-go-orange/10 text-go-orange">
             Nivel {nivel} · {NIVEL_NAMES[nivel] ?? 'Explorer'}
           </span>
           <button onClick={handleSignOut} disabled={signingOut} className="font-dm text-xs text-gray-400 hover:text-go-orange transition">
@@ -115,7 +125,7 @@ export default function Sidebar({ creatorName, tiktokHandle, nivel }: SidebarPro
               }`}
             >
               <span className="text-lg">{item.icon}</span>
-              <span className="truncate text-[10px]">{item.label.split(' ')[0]}</span>
+              <span className="truncate text-[10px]">{item.label}</span>
             </Link>
           )
         })}

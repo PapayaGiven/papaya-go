@@ -22,10 +22,10 @@ export default async function NivelesPage() {
   const { data: creator } = await supabase
     .from('go_creators')
     .select('*')
-    .eq('id', user.id)
+    .eq('email', user.email!)
     .single<Creator>()
 
-  if (!creator || creator.status !== 'active') redirect('/pending')
+  if (!creator) redirect('/pending')
 
   const { data: requirements } = await supabase
     .from('go_nivel_requirements')

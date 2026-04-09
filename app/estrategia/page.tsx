@@ -53,8 +53,8 @@ export default async function EstrategiaPage() {
   const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
   const daysRemaining = lastDay - now.getDate()
 
-  // GMV progress
-  const gmvGoal = nivelReq?.gmv_required ?? 0
+  // GMV progress — use creator's custom goal if set, otherwise fall back to nivel requirement
+  const gmvGoal = creator.gmv_goal ?? nivelReq?.gmv_required ?? 0
   const gmvProgress = gmvGoal > 0 ? Math.min((creator.gmv_this_month / gmvGoal) * 100, 100) : 0
 
   // Video tracker status helpers
@@ -67,9 +67,12 @@ export default async function EstrategiaPage() {
     return { color: 'bg-orange-50 border-orange-200', text: 'text-orange-700', badge: 'En progreso' }
   }
 
-  const accRequired = nivelReq?.acc_required ?? 0
-  const ttdRequired = nivelReq?.ttd_required ?? 0
-  const totalRequired = nivelReq?.total_videos_required ?? 0
+  // Use creator's custom goals if set, otherwise fall back to nivel requirements
+  const accRequired = creator.acc_goal ?? nivelReq?.acc_required ?? 0
+  const ttdRequired = creator.ttd_goal ?? nivelReq?.ttd_required ?? 0
+  const totalRequired = (creator.acc_goal != null || creator.ttd_goal != null)
+    ? (creator.acc_goal ?? 0) + (creator.ttd_goal ?? 0)
+    : nivelReq?.total_videos_required ?? 0
 
   const accStatus = trackerStatus(creator.acc_this_month, accRequired)
   const ttdStatus = trackerStatus(creator.ttd_this_month, ttdRequired)
@@ -118,6 +121,7 @@ export default async function EstrategiaPage() {
         tiktokHandle={creator.tiktok_handle}
         nivel={creator.nivel}
       />
+      <img src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png" className="fixed top-4 right-4 w-40 h-40 opacity-[0.04] pointer-events-none select-none z-0" alt="" aria-hidden="true" />
 
       <main className="md:ml-[220px] pb-20 md:pb-0">
         <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-6">
@@ -130,6 +134,43 @@ export default async function EstrategiaPage() {
               Nivel {creator.nivel} · {NIVEL_NAMES[creator.nivel] ?? 'Explorer'} — {daysRemaining} días restantes este mes
             </p>
           </div>
+
+          {/* Special hashtags */}
+          {creator.special_hashtags && (
+            <div className="bg-white border border-go-border rounded-2xl p-5 md:p-6">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-lg">#</span>
+                <h2 className="font-syne font-extrabold text-lg text-go-dark">Hashtags especiales</h2>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {creator.special_hashtags.split(',').map((tag: string) => {
+                  const trimmed = tag.trim()
+                  if (!trimmed) return null
+                  return (
+                    <span
+                      key={trimmed}
+                      className="font-dm text-sm font-semibold px-3 py-1 rounded-full bg-orange-100 text-go-orange"
+                    >
+                      #{trimmed.replace(/^#/, '')}
+                    </span>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Creative brief */}
+          {creator.creative_brief && (
+            <div className="bg-white border border-go-border rounded-2xl p-5 md:p-6">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-lg">📝</span>
+                <h2 className="font-syne font-extrabold text-lg text-go-dark">Tu brief creativo</h2>
+              </div>
+              <p className="font-dm text-sm text-gray-600 leading-relaxed whitespace-pre-line">
+                {creator.creative_brief}
+              </p>
+            </div>
+          )}
 
           {/* Monthly goal */}
           <div className="bg-white border border-go-border rounded-2xl p-5 md:p-6">
