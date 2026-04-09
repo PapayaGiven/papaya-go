@@ -21,6 +21,14 @@ const NAV_ITEMS = [
   { href: '/niveles', icon: '⭐', label: 'Niveles' },
 ]
 
+const MOBILE_NAV_ITEMS = [
+  { href: '/dashboard', icon: '🏠', label: 'Dashboard' },
+  { href: '/estrategia', icon: '🎯', label: 'Estrategia' },
+  { href: '/ai-coach', icon: '✨', label: 'AI Coach' },
+  { href: '/pois', icon: '📍', label: 'Hoteles' },
+  { href: '/niveles', icon: '⭐', label: 'Niveles' },
+]
+
 export default function Sidebar({ creatorName, tiktokHandle, nivel }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
@@ -95,8 +103,8 @@ export default function Sidebar({ creatorName, tiktokHandle, nivel }: SidebarPro
       </aside>
 
       {/* Mobile bottom nav */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-go-border z-40 flex">
-        {NAV_ITEMS.map((item) => {
+      <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-go-border z-40 flex safe-area-bottom">
+        {MOBILE_NAV_ITEMS.map((item) => {
           const isActive = pathname === item.href
           return (
             <Link

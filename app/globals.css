@@ -5,3 +5,7 @@
 .input-field {
   @apply w-full px-4 py-3 rounded-xl border border-orange-200 focus:outline-none focus:ring-2 focus:ring-go-orange/40 focus:border-go-orange font-dm text-sm bg-white text-go-dark placeholder-gray-400 transition;
 }
+
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
