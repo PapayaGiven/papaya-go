@@ -16,6 +16,7 @@ export interface Creator {
   gmv_goal: number | null
   special_hashtags: string | null
   creative_brief: string | null
+  mediakit_url: string | null
   approved_at: string | null
   created_at: string
 }

@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import Sidebar from '@/components/Sidebar'
 import { Creator, NivelRequirement, POI, NIVEL_NAMES, POI_TYPE_LABELS } from '@/lib/types'
+import MediaKitCTA from './MediaKitCTA'
 
 export default async function EstrategiaPage() {
   const supabase = await createClient()
@@ -325,6 +326,9 @@ export default async function EstrategiaPage() {
               ))}
             </div>
           </div>
+
+          {/* Portfolio CTA */}
+          <MediaKitCTA creatorId={creator.id} existingUrl={creator.mediakit_url} />
         </div>
       </main>
     </div>

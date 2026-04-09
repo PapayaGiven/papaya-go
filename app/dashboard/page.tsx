@@ -131,14 +131,34 @@ export default async function DashboardPage() {
         )}
 
         <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-8">
-          {/* Header */}
-          <div>
-            <h1 className="font-syne font-bold text-2xl text-go-dark">
-              Dashboard
-            </h1>
-            <p className="font-dm text-sm text-gray-400 mt-1">
-              ¡Hola, {firstName}!
-            </p>
+          {/* Welcome hero */}
+          <div className="rounded-2xl overflow-hidden relative" style={{ background: 'linear-gradient(135deg, #fff8f2 0%, #ffe8d0 100%)' }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png"
+              alt=""
+              className="absolute right-4 top-1/2 -translate-y-1/2 w-32 md:w-44 h-32 md:h-44 opacity-[0.15] pointer-events-none select-none"
+              aria-hidden="true"
+            />
+            <div className="p-6 md:p-8 relative z-10">
+              <h1 className="font-syne font-bold text-2xl md:text-3xl text-go-dark">
+                ¡Hola, {firstName}! 🧡
+              </h1>
+              <p className="font-dm text-sm text-go-dark/60 mt-2 max-w-md">
+                {creator.nivel === 1 && 'Estás comenzando tu journey. ¡Cada video te acerca más! 🌱'}
+                {creator.nivel === 2 && '¡Vas increíble! Sigue posteando y los deals llegarán. 🔥'}
+                {creator.nivel === 3 && 'Eres Partner de Papaya GO. ¡El mundo te está viendo! ⭐'}
+                {creator.nivel >= 4 && 'Elite. La mejor de las mejores. Tú inspiras a todas. 👑'}
+              </p>
+              <div className="flex items-center gap-3 mt-4">
+                <span className={`font-dm text-xs font-bold px-3 py-1 rounded-full ${nivelColor.bg} ${nivelColor.text}`}>
+                  Nivel {creator.nivel} · {NIVEL_NAMES[creator.nivel]}
+                </span>
+                <span className="font-dm text-xs text-go-dark/50">
+                  {creator.videos_this_month} videos este mes
+                </span>
+              </div>
+            </div>
           </div>
 
           {/* Stats grid */}
