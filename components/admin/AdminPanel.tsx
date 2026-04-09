@@ -14,6 +14,8 @@ import {
   approveCreator,
   updateCreator,
   addCreator,
+  deleteCreator,
+  sendInvite,
   addPOI,
   // updatePOI,
   togglePOI,
@@ -541,16 +543,43 @@ function CreatorsTab({
                       </td>
                       <td className="px-4 py-3 text-right space-x-1">
                         {c.status === 'pending' && (
-                          <ActionButton
-                            onClick={() =>
-                              startTransition(() => approveCreator(c.id))
-                            }
-                          >
-                            Aprobar
-                          </ActionButton>
+                          <>
+                            <ActionButton
+                              onClick={() =>
+                                startTransition(() => approveCreator(c.id))
+                              }
+                            >
+                              Aprobar
+                            </ActionButton>
+                            <ActionButton
+                              variant="ghost"
+                              onClick={() =>
+                                startTransition(async () => {
+                                  const r = await sendInvite(c.id)
+                                  if (r.error) alert(`Error: ${r.error}`)
+                                  else alert('✓ Invitación enviada')
+                                })
+                              }
+                            >
+                              Enviar Invitación
+                            </ActionButton>
+                          </>
                         )}
                         <ActionButton variant="ghost" onClick={() => startEdit(c)}>
                           Editar
+                        </ActionButton>
+                        <ActionButton
+                          variant="ghost"
+                          onClick={() => {
+                            if (confirm(`¿Segura que quieres eliminar a ${c.full_name || c.email}? Esta acción no se puede deshacer.`)) {
+                              startTransition(async () => {
+                                const r = await deleteCreator(c.id)
+                                if (r.error) alert(`Error: ${r.error}`)
+                              })
+                            }
+                          }}
+                        >
+                          Eliminar
                         </ActionButton>
                       </td>
                     </>

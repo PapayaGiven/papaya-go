@@ -21,6 +21,7 @@ export const metadata: Metadata = {
   manifest: '/manifest.json',
   icons: {
     icon: 'https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png',
+    shortcut: 'https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png',
     apple: 'https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png',
   },
   appleWebApp: {
