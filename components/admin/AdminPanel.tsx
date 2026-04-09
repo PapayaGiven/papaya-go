@@ -173,7 +173,7 @@ export default function AdminPanel({
       <header className="bg-go-dark sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/Papaya%20Go%20Logo.png" alt="Papaya GO" className="h-8 object-contain brightness-0 invert" />
+            <img src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/Papaya%20Go%20Logo.png" alt="Papaya GO" className="h-8 object-contain" />
             <span className="text-xs text-white/40 font-dm">Admin</span>
           </div>
           <button

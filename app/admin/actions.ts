@@ -70,9 +70,13 @@ export async function addCreator(data: {
   const supabase = createAdminClient()
 
   // Create auth user with invite
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://papaya-go.vercel.app'
   const { data: authData, error: authError } = await supabase.auth.admin.inviteUserByEmail(
     data.email,
-    { data: { full_name: data.full_name } }
+    {
+      data: { full_name: data.full_name },
+      redirectTo: `${siteUrl}/set-password`,
+    }
   )
   if (authError) return { error: authError.message }
 
