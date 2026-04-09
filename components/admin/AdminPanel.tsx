@@ -15,7 +15,6 @@ import {
   updateCreator,
   addCreator,
   deleteCreator,
-  sendInvite,
   addPOI,
   // updatePOI,
   togglePOI,
@@ -449,6 +448,7 @@ function CreatorsTab({
                 <th className="text-right px-4 py-3 font-medium text-go-dark/60">TTD</th>
                 <th className="text-right px-4 py-3 font-medium text-go-dark/60">Videos</th>
                 <th className="text-left px-4 py-3 font-medium text-go-dark/60">Status</th>
+                <th className="text-left px-4 py-3 font-medium text-go-dark/60">Código</th>
                 <th className="text-right px-4 py-3 font-medium text-go-dark/60">Acciones</th>
               </tr>
             </thead>
@@ -546,29 +546,33 @@ function CreatorsTab({
                       <td className="px-4 py-3">
                         <StatusBadge status={c.status} />
                       </td>
+                      <td className="px-4 py-3">
+                        {c.access_code ? (
+                          <span className="font-mono text-xs font-bold text-go-orange bg-go-orange/10 px-2 py-1 rounded-lg tracking-widest">{c.access_code}</span>
+                        ) : (
+                          <span className="text-xs text-gray-300">—</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-right space-x-1">
                         {c.status === 'pending' && (
-                          <>
-                            <ActionButton
-                              onClick={() =>
-                                startTransition(() => approveCreator(c.id))
-                              }
-                            >
-                              Aprobar
-                            </ActionButton>
-                            <ActionButton
-                              variant="ghost"
-                              onClick={() =>
-                                startTransition(async () => {
-                                  const r = await sendInvite(c.id)
-                                  if (r.error) fb(`Error: ${r.error}`)
-                                  else fb(`✓ Invitación enviada a ${r.email}`)
-                                })
-                              }
-                            >
-                              Enviar Invitación
-                            </ActionButton>
-                          </>
+                          <ActionButton
+                            onClick={() =>
+                              startTransition(() => approveCreator(c.id))
+                            }
+                          >
+                            Aprobar
+                          </ActionButton>
+                        )}
+                        {c.access_code && (
+                          <ActionButton
+                            variant="ghost"
+                            onClick={() => {
+                              navigator.clipboard.writeText(c.access_code!)
+                              fb(`✓ Código copiado: ${c.access_code}`)
+                            }}
+                          >
+                            Copiar código
+                          </ActionButton>
                         )}
                         <ActionButton variant="ghost" onClick={() => startEdit(c)}>
                           Editar
@@ -593,7 +597,7 @@ function CreatorsTab({
               ))}
               {creators.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-go-dark/40">
+                  <td colSpan={11} className="px-4 py-8 text-center text-go-dark/40">
                     No hay creators aun
                   </td>
                 </tr>

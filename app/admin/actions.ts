@@ -62,34 +62,6 @@ export async function deleteCreator(id: string) {
   return { success: true }
 }
 
-export async function sendInvite(creatorId: string): Promise<{ error?: string; email?: string }> {
-  const supabase = createAdminClient()
-
-  const { data: creator } = await supabase.from('go_creators').select('email, full_name').eq('id', creatorId).single()
-  if (!creator) return { error: 'Creator no encontrado.' }
-
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://papaya-go.vercel.app'
-
-  // Supabase sends the invite email automatically via configured SMTP
-  console.log('[sendInvite] Sending invite to:', creator.email, 'redirectTo:', `${siteUrl}/set-password`)
-  const { data: inviteData, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(
-    creator.email,
-    {
-      data: { full_name: creator.full_name },
-      redirectTo: `${siteUrl}/set-password`,
-    }
-  )
-  if (inviteError) {
-    console.error('[sendInvite] Invite error full details:', JSON.stringify(inviteError, null, 2))
-    console.error('[sendInvite] Error name:', inviteError.name, 'status:', inviteError.status, 'message:', inviteError.message)
-    return { error: inviteError.message + ' — ' + JSON.stringify(inviteError) }
-  }
-  console.log('[sendInvite] Invite success, user:', inviteData?.user?.email, 'id:', inviteData?.user?.id)
-
-  revalidatePath('/admin')
-  return { email: creator.email }
-}
-
 export async function updateCreator(
   id: string,
   data: {
@@ -108,6 +80,13 @@ export async function updateCreator(
   return { success: true }
 }
 
+function generateAccessCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  let code = ''
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)]
+  return code
+}
+
 export async function addCreator(data: {
   email: string
   full_name: string
@@ -115,18 +94,59 @@ export async function addCreator(data: {
   nivel?: number
 }) {
   const supabase = createAdminClient()
+  const accessCode = generateAccessCode()
 
-  // Only insert into go_creators — no auth user yet
   const { error } = await supabase.from('go_creators').insert({
     email: data.email,
     full_name: data.full_name,
     tiktok_handle: data.tiktok_handle,
     nivel: data.nivel ?? 1,
-    status: 'pending',
+    status: 'active',
+    access_code: accessCode,
+    approved_at: new Date().toISOString(),
   })
   if (error) return { error: error.message }
   revalidatePath('/admin')
-  return { success: true }
+  return { success: true, access_code: accessCode }
+}
+
+// ── Access Code Auth ─────────────────────────────────
+
+export async function verifyAccessCode(email: string, code: string): Promise<{ error?: string; hasAuthAccount?: boolean }> {
+  const supabase = createAdminClient()
+
+  const { data: creator } = await supabase
+    .from('go_creators')
+    .select('id, email, access_code, status')
+    .eq('email', email.toLowerCase().trim())
+    .single()
+
+  if (!creator || creator.access_code !== code.toUpperCase().trim()) {
+    return { error: 'Código incorrecto o email no registrado.' }
+  }
+  if (creator.status !== 'active') {
+    return { error: 'Tu cuenta aún no está activa. Contacta a tu agencia.' }
+  }
+
+  // Check if auth user exists
+  const { data: { users } } = await supabase.auth.admin.listUsers()
+  const authUser = users.find(u => u.email === email.toLowerCase().trim())
+
+  return { hasAuthAccount: !!authUser }
+}
+
+export async function createAuthAndLogin(email: string, password: string): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+
+  // Create auth user
+  const { error: createError } = await supabase.auth.admin.createUser({
+    email: email.toLowerCase().trim(),
+    password,
+    email_confirm: true,
+  })
+  if (createError) return { error: createError.message }
+
+  return {}
 }
 
 // ── POIs ──────────────────────────────────────────────

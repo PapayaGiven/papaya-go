@@ -10,6 +10,7 @@ export interface Creator {
   ttd_this_month: number
   videos_this_month: number
   status: 'pending' | 'active' | 'suspended'
+  access_code: string | null
   approved_at: string | null
   created_at: string
 }

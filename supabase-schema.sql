@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS go_creators (
   ttd_this_month int DEFAULT 0,
   videos_this_month int DEFAULT 0,
   status text DEFAULT 'pending',
+  access_code text,
   approved_at timestamp,
   created_at timestamp DEFAULT now()
 );

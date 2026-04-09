@@ -27,7 +27,7 @@ export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname
 
   // Public routes
-  if (path === '/admin' || path === '/set-password' || path.startsWith('/api/')) {
+  if (path === '/admin' || path.startsWith('/api/')) {
     return supabaseResponse
   }
 
