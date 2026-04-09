@@ -71,14 +71,20 @@ export async function sendInvite(creatorId: string): Promise<{ error?: string; e
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://papaya-go.vercel.app'
 
   // Supabase sends the invite email automatically via configured SMTP
-  const { error: inviteError } = await supabase.auth.admin.inviteUserByEmail(
+  console.log('[sendInvite] Sending invite to:', creator.email, 'redirectTo:', `${siteUrl}/set-password`)
+  const { data: inviteData, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(
     creator.email,
     {
       data: { full_name: creator.full_name },
       redirectTo: `${siteUrl}/set-password`,
     }
   )
-  if (inviteError) return { error: inviteError.message }
+  if (inviteError) {
+    console.error('[sendInvite] Invite error full details:', JSON.stringify(inviteError, null, 2))
+    console.error('[sendInvite] Error name:', inviteError.name, 'status:', inviteError.status, 'message:', inviteError.message)
+    return { error: inviteError.message + ' — ' + JSON.stringify(inviteError) }
+  }
+  console.log('[sendInvite] Invite success, user:', inviteData?.user?.email, 'id:', inviteData?.user?.id)
 
   revalidatePath('/admin')
   return { email: creator.email }
