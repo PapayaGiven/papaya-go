@@ -15,8 +15,9 @@ interface SidebarProps {
 const NAV_ITEMS = [
   { href: '/dashboard', icon: '🏠', label: 'Dashboard' },
   { href: '/estrategia', icon: '🎯', label: 'Mi Estrategia' },
-  { href: '/ai-coach', icon: '✨', label: 'AI Coach' },
+  { href: '/ai-coach', icon: '🎬', label: 'Crea tu Video' },
   { href: '/viral-videos', icon: '🔥', label: 'Videos Virales' },
+  { href: '/boost', icon: '🚀', label: 'Boost tu Video' },
   { href: '/pois', icon: '📍', label: 'Hoteles & Atracciones' },
   { href: '/niveles', icon: '⭐', label: 'Niveles' },
 ]
@@ -24,8 +25,8 @@ const NAV_ITEMS = [
 const MOBILE_NAV_ITEMS = [
   { href: '/dashboard', icon: '🏠', label: 'Dashboard' },
   { href: '/estrategia', icon: '🎯', label: 'Estrategia' },
-  { href: '/ai-coach', icon: '✨', label: 'AI Coach' },
-  { href: '/pois', icon: '📍', label: 'Hoteles' },
+  { href: '/ai-coach', icon: '🎬', label: 'Video' },
+  { href: '/boost', icon: '🚀', label: 'Boost' },
   { href: '/niveles', icon: '⭐', label: 'Niveles' },
 ]
 

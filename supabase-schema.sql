@@ -139,3 +139,83 @@ CREATE TABLE IF NOT EXISTS go_viral_videos (
 ALTER TABLE go_viral_videos ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "go_viral_read_all" ON go_viral_videos FOR SELECT TO authenticated USING (true);
 CREATE POLICY "go_viral_service" ON go_viral_videos FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- 8. go_poi_requests
+CREATE TABLE IF NOT EXISTS go_poi_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  creator_id uuid REFERENCES go_creators(id),
+  creator_name text,
+  tiktok_handle text,
+  place_name text NOT NULL,
+  city_state text,
+  place_type text,
+  reason text,
+  status text DEFAULT 'pending',
+  created_at timestamp DEFAULT now()
+);
+ALTER TABLE go_poi_requests ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "go_poi_requests_insert" ON go_poi_requests FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "go_poi_requests_read_own" ON go_poi_requests FOR SELECT USING (creator_id IN (SELECT id FROM go_creators WHERE email = auth.email()));
+CREATE POLICY "go_poi_requests_service" ON go_poi_requests FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- 9. go_nivel_rewards
+CREATE TABLE IF NOT EXISTS go_nivel_rewards (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  nivel int NOT NULL,
+  reward_name text NOT NULL,
+  reward_description text,
+  reward_emoji text DEFAULT '🎁',
+  is_active boolean DEFAULT true,
+  created_at timestamp DEFAULT now()
+);
+ALTER TABLE go_nivel_rewards ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "go_nivel_rewards_read" ON go_nivel_rewards FOR SELECT TO authenticated USING (true);
+CREATE POLICY "go_nivel_rewards_service" ON go_nivel_rewards FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- Seed default rewards
+INSERT INTO go_nivel_rewards (nivel, reward_name, reward_description, reward_emoji) VALUES
+(1, 'PR Box de Viaje', 'Caja sorpresa con productos de viaje seleccionados por Papaya', '📦'),
+(1, 'Shoutout en Instagram', 'Te presentamos en el Instagram de Papaya GO', '📸'),
+(2, 'Day Pass en Hotel', 'Acceso de un día a las instalaciones de un hotel partner', '🏊'),
+(2, 'Sesión de Coaching 1:1', '30 minutos con un coach de Papaya GO', '🎯'),
+(3, '1 Noche Gratis', 'Una noche en un hotel partner de Papaya GO', '🏨'),
+(3, 'Feature en Comunidad', 'Tu perfil destacado en todos los canales de Papaya GO', '⭐'),
+(4, 'Multi-night Stay', 'Varias noches en propiedades premium', '🌟'),
+(4, 'Gift Personalizado', 'Regalo personalizado por ser Top Creator', '🎀'),
+(4, 'Rol de Mentora', 'Conviértete en mentora oficial de Papaya GO', '👑');
+
+-- 10. go_reward_requests
+CREATE TABLE IF NOT EXISTS go_reward_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  creator_id uuid REFERENCES go_creators(id),
+  creator_name text,
+  tiktok_handle text,
+  nivel int,
+  reward_id uuid REFERENCES go_nivel_rewards(id),
+  reward_name text,
+  notes text,
+  status text DEFAULT 'pending',
+  created_at timestamp DEFAULT now()
+);
+ALTER TABLE go_reward_requests ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "go_reward_requests_insert" ON go_reward_requests FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "go_reward_requests_read_own" ON go_reward_requests FOR SELECT USING (creator_id IN (SELECT id FROM go_creators WHERE email = auth.email()));
+CREATE POLICY "go_reward_requests_service" ON go_reward_requests FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- 11. go_boost_requests
+CREATE TABLE IF NOT EXISTS go_boost_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  creator_id uuid REFERENCES go_creators(id),
+  creator_name text,
+  tiktok_handle text,
+  tiktok_url text,
+  video_url text,
+  boost_reason text,
+  notes text,
+  status text DEFAULT 'pending',
+  created_at timestamp DEFAULT now()
+);
+ALTER TABLE go_boost_requests ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "go_boost_insert" ON go_boost_requests FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "go_boost_read_own" ON go_boost_requests FOR SELECT USING (creator_id IN (SELECT id FROM go_creators WHERE email = auth.email()));
+CREATE POLICY "go_boost_service" ON go_boost_requests FOR ALL TO service_role USING (true) WITH CHECK (true);

@@ -1,6 +1,7 @@
 'use server'
 
 import { redirect } from 'next/navigation'
+import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 
 export async function submitPortfolio(formData: FormData) {
@@ -38,4 +39,20 @@ export async function submitPortfolio(formData: FormData) {
   }
 
   redirect('/niveles')
+}
+
+export async function requestReward(data: {
+  creator_id: string
+  creator_name: string | null
+  tiktok_handle: string | null
+  nivel: number
+  reward_id: string
+  reward_name: string
+  notes: string | null
+}): Promise<{ error?: string }> {
+  const supabase = await createClient()
+  const { error } = await supabase.from('go_reward_requests').insert(data)
+  if (error) return { error: error.message }
+  revalidatePath('/niveles')
+  return {}
 }

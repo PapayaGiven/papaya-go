@@ -7,6 +7,9 @@ import type {
   CapCutTemplate,
   Announcement,
   PortfolioSubmission,
+  NivelReward,
+  BoostRequest,
+  RewardRequest,
 } from '@/lib/types'
 import { NIVEL_NAMES, POI_TYPE_LABELS } from '@/lib/types'
 import {
@@ -31,6 +34,11 @@ import {
   syncViralVideosFromSheet,
   updatePOIRequestStatus,
   updatePOITimesSold,
+  addNivelReward,
+  toggleNivelReward,
+  deleteNivelReward,
+  updateBoostStatus,
+  updateRewardRequestStatus,
 } from '@/app/admin/actions'
 
 // ── Types ─────────────────────────────────────────────
@@ -59,7 +67,7 @@ interface POIRequest {
   creator?: { full_name: string | null; email: string } | null
 }
 
-type Tab = 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests'
+type Tab = 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests' | 'rewards-admin' | 'boosts' | 'reward-requests'
 
 interface AdminPanelProps {
   creators: Creator[]
@@ -69,6 +77,9 @@ interface AdminPanelProps {
   portfolios: PortfolioSubmission[]
   viralVideos: ViralVideo[]
   poiRequests: POIRequest[]
+  nivelRewards: NivelReward[]
+  boostRequests: BoostRequest[]
+  rewardRequests: RewardRequest[]
 }
 
 // ── Shared helpers ────────────────────────────────────
@@ -337,6 +348,233 @@ function POIRequestsTab({ requests, startTransition }: { requests: POIRequest[];
   )
 }
 
+// ── Nivel Rewards Tab ────────────────────────────────
+
+function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[]; startTransition: (fn: () => void) => void }) {
+  const [showAdd, setShowAdd] = useState(false)
+  const [form, setForm] = useState({ nivel: '1', reward_name: '', reward_description: '', reward_emoji: '🎁' })
+  const [feedback, setFeedback] = useState<string | null>(null)
+  function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
+
+  const grouped = [1, 2, 3, 4].map(n => ({ nivel: n, items: rewards.filter(r => r.nivel === n) }))
+
+  return (
+    <SectionCard>
+      <div className="p-6">
+        <h2 className="font-syne font-bold text-lg text-go-dark mb-4">Rewards por Nivel ({rewards.length})</h2>
+
+        <button onClick={() => setShowAdd(!showAdd)} className="font-dm text-sm font-semibold bg-go-orange text-white px-4 py-2 rounded-xl hover:bg-go-orange/90 transition mb-4">
+          {showAdd ? 'Cancelar' : '+ Agregar Reward'}
+        </button>
+
+        {feedback && <p className={`text-sm font-dm mb-3 px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{feedback}</p>}
+
+        {showAdd && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              startTransition(async () => {
+                const res = await addNivelReward({
+                  nivel: parseInt(form.nivel),
+                  reward_name: form.reward_name,
+                  reward_description: form.reward_description || null,
+                  reward_emoji: form.reward_emoji,
+                })
+                if (res.error) fb(`Error: ${res.error}`)
+                else { fb('Reward agregado'); setForm({ nivel: '1', reward_name: '', reward_description: '', reward_emoji: '🎁' }); setShowAdd(false) }
+              })
+            }}
+            className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-6 p-4 bg-go-light rounded-xl border border-go-border"
+          >
+            <FormSelect label="Nivel" value={form.nivel} onChange={(v) => setForm({ ...form, nivel: v })} options={[
+              { value: '1', label: '1 - Explorer' },
+              { value: '2', label: '2 - Contributor' },
+              { value: '3', label: '3 - Partner' },
+              { value: '4', label: '4 - Elite' },
+            ]} />
+            <FormInput label="Nombre" value={form.reward_name} onChange={(v) => setForm({ ...form, reward_name: v })} required />
+            <FormInput label="Descripcion" value={form.reward_description} onChange={(v) => setForm({ ...form, reward_description: v })} />
+            <div className="flex items-end gap-2">
+              <FormInput label="Emoji" value={form.reward_emoji} onChange={(v) => setForm({ ...form, reward_emoji: v })} />
+              <ActionButton onClick={() => {}} variant="primary">Guardar</ActionButton>
+            </div>
+          </form>
+        )}
+
+        {grouped.map(g => (
+          <div key={g.nivel} className="mb-6">
+            <h3 className="font-syne font-bold text-sm text-go-dark/70 mb-2">Nivel {g.nivel} — {NIVEL_NAMES[g.nivel]}</h3>
+            <div className="overflow-x-auto rounded-2xl border border-go-dark/5">
+              <table className="w-full text-sm font-dm">
+                <thead className="bg-go-dark/[0.03]">
+                  <tr>
+                    {['Emoji', 'Nombre', 'Descripcion', 'Activo', 'Acciones'].map(h => (
+                      <th key={h} className="px-4 py-3 text-left text-xs text-go-dark/50 font-semibold uppercase tracking-wide">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-go-dark/5">
+                  {g.items.map(r => (
+                    <tr key={r.id} className={!r.is_active ? 'opacity-40' : ''}>
+                      <td className="px-4 py-3 text-lg">{r.reward_emoji}</td>
+                      <td className="px-4 py-3 font-medium text-go-dark">{r.reward_name}</td>
+                      <td className="px-4 py-3 text-go-dark/60 text-xs">{r.reward_description ?? '—'}</td>
+                      <td className="px-4 py-3">
+                        <ActionButton onClick={() => startTransition(async () => {
+                          const res = await toggleNivelReward(r.id, !r.is_active)
+                          if (res.error) fb(`Error: ${res.error}`)
+                          else fb(r.is_active ? 'Desactivado' : 'Activado')
+                        })} variant="ghost">
+                          {r.is_active ? 'Desactivar' : 'Activar'}
+                        </ActionButton>
+                      </td>
+                      <td className="px-4 py-3">
+                        <ActionButton onClick={() => startTransition(async () => {
+                          await deleteNivelReward(r.id)
+                          fb('Reward eliminado')
+                        })} variant="danger">
+                          Eliminar
+                        </ActionButton>
+                      </td>
+                    </tr>
+                  ))}
+                  {g.items.length === 0 && <tr><td colSpan={5} className="px-4 py-4 text-center text-go-dark/40 text-xs">Sin rewards para este nivel.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
+      </div>
+    </SectionCard>
+  )
+}
+
+// ── Boosts Tab ──────────────────────────────────────
+
+function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startTransition: (fn: () => void) => void }) {
+  const [feedback, setFeedback] = useState<string | null>(null)
+  function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
+
+  return (
+    <SectionCard>
+      <div className="p-6">
+        <h2 className="font-syne font-bold text-lg text-go-dark mb-4">Solicitudes de Boost ({boosts.length})</h2>
+
+        {feedback && <p className={`text-sm font-dm mb-3 px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{feedback}</p>}
+
+        <div className="overflow-x-auto rounded-2xl border border-go-dark/5">
+          <table className="w-full text-sm font-dm">
+            <thead className="bg-go-dark/[0.03]">
+              <tr>
+                {['Creator', 'TikTok', 'URL Video', 'Razon', 'Notas', 'Estado', 'Fecha'].map(h => (
+                  <th key={h} className="px-4 py-3 text-left text-xs text-go-dark/50 font-semibold uppercase tracking-wide">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-go-dark/5">
+              {boosts.map(b => (
+                <tr key={b.id} className={b.status === 'boosteado' ? 'bg-emerald-50' : ''}>
+                  <td className="px-4 py-3 font-medium text-go-dark">{b.creator_name ?? '—'}</td>
+                  <td className="px-4 py-3 text-go-dark/60 text-xs">{b.tiktok_handle ?? '—'}</td>
+                  <td className="px-4 py-3 text-xs">
+                    {(b.tiktok_url || b.video_url) ? (
+                      <a href={b.tiktok_url || b.video_url || '#'} target="_blank" rel="noopener noreferrer" className="text-go-orange hover:underline truncate block max-w-[180px]">
+                        {b.tiktok_url || b.video_url}
+                      </a>
+                    ) : '—'}
+                  </td>
+                  <td className="px-4 py-3 text-go-dark/50 text-xs max-w-[200px] truncate">{b.boost_reason ?? '—'}</td>
+                  <td className="px-4 py-3 text-go-dark/50 text-xs max-w-[150px] truncate">{b.notes ?? '—'}</td>
+                  <td className="px-4 py-3">
+                    <select
+                      value={b.status}
+                      onChange={(e) => {
+                        startTransition(async () => {
+                          const res = await updateBoostStatus(b.id, e.target.value)
+                          if (res.error) fb(`Error: ${res.error}`)
+                          else fb('Estado actualizado')
+                        })
+                      }}
+                      className="text-xs px-2 py-1 rounded-lg border border-go-border bg-go-light font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition"
+                    >
+                      {['pending', 'en proceso', 'boosteado'].map(s => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-4 py-3 text-go-dark/40 text-xs">{new Date(b.created_at).toLocaleDateString('es')}</td>
+                </tr>
+              ))}
+              {boosts.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-go-dark/40">No hay solicitudes de boost.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </SectionCard>
+  )
+}
+
+// ── Reward Requests Tab ─────────────────────────────
+
+function RewardRequestsTab({ requests, startTransition }: { requests: RewardRequest[]; startTransition: (fn: () => void) => void }) {
+  const [feedback, setFeedback] = useState<string | null>(null)
+  function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
+
+  return (
+    <SectionCard>
+      <div className="p-6">
+        <h2 className="font-syne font-bold text-lg text-go-dark mb-4">Solicitudes de Reward ({requests.length})</h2>
+
+        {feedback && <p className={`text-sm font-dm mb-3 px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{feedback}</p>}
+
+        <div className="overflow-x-auto rounded-2xl border border-go-dark/5">
+          <table className="w-full text-sm font-dm">
+            <thead className="bg-go-dark/[0.03]">
+              <tr>
+                {['Creator', 'Nivel', 'Reward', 'Notas', 'Estado', 'Fecha'].map(h => (
+                  <th key={h} className="px-4 py-3 text-left text-xs text-go-dark/50 font-semibold uppercase tracking-wide">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-go-dark/5">
+              {requests.map(r => (
+                <tr key={r.id} className={r.status === 'entregado' ? 'bg-emerald-50' : ''}>
+                  <td className="px-4 py-3 font-medium text-go-dark">
+                    {r.creator_name ?? '—'}
+                    {r.tiktok_handle && <span className="block text-xs text-go-dark/40">@{r.tiktok_handle}</span>}
+                  </td>
+                  <td className="px-4 py-3 text-go-dark/60 text-xs">{r.nivel} — {NIVEL_NAMES[r.nivel] ?? ''}</td>
+                  <td className="px-4 py-3 font-medium text-go-dark">{r.reward_name}</td>
+                  <td className="px-4 py-3 text-go-dark/50 text-xs max-w-[200px] truncate">{r.notes ?? '—'}</td>
+                  <td className="px-4 py-3">
+                    <select
+                      value={r.status}
+                      onChange={(e) => {
+                        startTransition(async () => {
+                          const res = await updateRewardRequestStatus(r.id, e.target.value)
+                          if (res.error) fb(`Error: ${res.error}`)
+                          else fb('Estado actualizado')
+                        })
+                      }}
+                      className="text-xs px-2 py-1 rounded-lg border border-go-border bg-go-light font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition"
+                    >
+                      {['pending', 'en proceso', 'entregado'].map(s => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-4 py-3 text-go-dark/40 text-xs">{new Date(r.created_at).toLocaleDateString('es')}</td>
+                </tr>
+              ))}
+              {requests.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-go-dark/40">No hay solicitudes de reward.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </SectionCard>
+  )
+}
+
 // ── Main Component ────────────────────────────────────
 
 export default function AdminPanel({
@@ -347,6 +585,9 @@ export default function AdminPanel({
   portfolios,
   viralVideos,
   poiRequests,
+  nivelRewards,
+  boostRequests,
+  rewardRequests,
 }: AdminPanelProps) {
   const [tab, setTab] = useState<Tab>('creators')
   const [isPending, startTransition] = useTransition()
@@ -359,6 +600,9 @@ export default function AdminPanel({
     { key: 'portfolios', label: 'Portfolios', count: portfolios.length },
     { key: 'viral', label: 'Videos Virales', count: viralVideos.length },
     { key: 'poi-requests', label: 'Solicitudes', count: poiRequests.length },
+    { key: 'rewards-admin', label: '🎁 Rewards', count: nivelRewards.length },
+    { key: 'boosts', label: '🚀 Boosts', count: boostRequests.length },
+    { key: 'reward-requests', label: '🎀 Reward Requests', count: rewardRequests.length },
   ]
 
   return (
@@ -428,6 +672,9 @@ export default function AdminPanel({
         {tab === 'poi-requests' && (
           <POIRequestsTab requests={poiRequests} startTransition={startTransition} />
         )}
+        {tab === 'rewards-admin' && <NivelRewardsTab rewards={nivelRewards} startTransition={startTransition} />}
+        {tab === 'boosts' && <BoostsTab boosts={boostRequests} startTransition={startTransition} />}
+        {tab === 'reward-requests' && <RewardRequestsTab requests={rewardRequests} startTransition={startTransition} />}
       </main>
     </div>
   )

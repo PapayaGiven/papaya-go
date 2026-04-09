@@ -416,3 +416,52 @@ export async function updatePOITimesSold(id: string, times_sold: number): Promis
   revalidatePath('/pois')
   return {}
 }
+
+// ── Nivel Rewards ────────────────────────────────────
+
+export async function addNivelReward(data: {
+  nivel: number
+  reward_name: string
+  reward_description: string | null
+  reward_emoji: string
+}): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_nivel_rewards').insert(data)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  return {}
+}
+
+export async function toggleNivelReward(id: string, isActive: boolean): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_nivel_rewards').update({ is_active: isActive }).eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  return {}
+}
+
+export async function deleteNivelReward(id: string): Promise<void> {
+  const supabase = createAdminClient()
+  await supabase.from('go_nivel_rewards').delete().eq('id', id)
+  revalidatePath('/admin')
+}
+
+// ── Boost Requests ───────────────────────────────────
+
+export async function updateBoostStatus(id: string, status: string): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_boost_requests').update({ status }).eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  return {}
+}
+
+// ── Reward Requests ──────────────────────────────────
+
+export async function updateRewardRequestStatus(id: string, status: string): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_reward_requests').update({ status }).eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  return {}
+}

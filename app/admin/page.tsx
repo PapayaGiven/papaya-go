@@ -8,6 +8,9 @@ import type {
   CapCutTemplate,
   Announcement,
   PortfolioSubmission,
+  NivelReward,
+  BoostRequest,
+  RewardRequest,
 } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -30,6 +33,9 @@ export default async function AdminPage() {
     { data: portfolios },
     { data: viralVideos },
     { data: poiRequests },
+    { data: nivelRewards },
+    { data: boostRequests },
+    { data: rewardRequests },
   ] = await Promise.all([
     supabase
       .from('go_creators')
@@ -59,6 +65,9 @@ export default async function AdminPage() {
       .from('go_poi_requests')
       .select('*, creator:go_creators(full_name, email)')
       .order('created_at', { ascending: false }),
+    supabase.from('go_nivel_rewards').select('*').order('nivel, created_at'),
+    supabase.from('go_boost_requests').select('*').order('created_at', { ascending: false }),
+    supabase.from('go_reward_requests').select('*').order('created_at', { ascending: false }),
   ])
 
   return (
@@ -72,6 +81,9 @@ export default async function AdminPage() {
       viralVideos={(viralVideos ?? []) as any}
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       poiRequests={(poiRequests ?? []) as any}
+      nivelRewards={(nivelRewards as NivelReward[]) ?? []}
+      boostRequests={(boostRequests as BoostRequest[]) ?? []}
+      rewardRequests={(rewardRequests as RewardRequest[]) ?? []}
     />
   )
 }

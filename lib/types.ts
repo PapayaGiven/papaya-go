@@ -96,3 +96,46 @@ export const POI_TYPE_LABELS: Record<string, { label: string; color: string }> =
   attraction: { label: 'Atracción (TTD)', color: 'bg-purple-100 text-purple-700' },
   restaurant: { label: 'Restaurante', color: 'bg-emerald-100 text-emerald-700' },
 }
+
+export interface NivelReward {
+  id: string
+  nivel: number
+  reward_name: string
+  reward_description: string | null
+  reward_emoji: string
+  is_active: boolean
+  created_at: string
+}
+
+export interface RewardRequest {
+  id: string
+  creator_id: string
+  creator_name: string | null
+  tiktok_handle: string | null
+  nivel: number
+  reward_id: string
+  reward_name: string
+  notes: string | null
+  status: string
+  created_at: string
+}
+
+export interface BoostRequest {
+  id: string
+  creator_id: string
+  creator_name: string | null
+  tiktok_handle: string | null
+  tiktok_url: string | null
+  video_url: string | null
+  boost_reason: string | null
+  notes: string | null
+  status: string
+  created_at: string
+}
+
+export const NIVEL_BORDER_COLORS: Record<number, string> = {
+  1: '#ff9ece',
+  2: '#ffa552',
+  3: '#ff7700',
+  4: '#d4a017',
+}
