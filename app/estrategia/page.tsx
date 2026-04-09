@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import Sidebar from '@/components/Sidebar'
 import { Creator, NivelRequirement, POI, NIVEL_NAMES, POI_TYPE_LABELS } from '@/lib/types'
 import MediaKitCTA from './MediaKitCTA'
@@ -30,8 +31,10 @@ export default async function EstrategiaPage() {
     redirect('/pending')
   }
 
-  // Fetch nivel requirements and suggested POIs in parallel
-  const [nivelResult, poisResult] = await Promise.all([
+  const admin = createAdminClient()
+
+  // Fetch nivel requirements, suggested POIs, and weekly plan in parallel
+  const [nivelResult, poisResult, weeklyPlanResult] = await Promise.all([
     supabase
       .from('go_nivel_requirements')
       .select('*')
@@ -44,6 +47,11 @@ export default async function EstrategiaPage() {
       .lte('min_nivel', creator.nivel)
       .limit(3)
       .returns<POI[]>(),
+    admin
+      .from('go_weekly_plan')
+      .select('*')
+      .eq('is_active', true)
+      .order('sort_order'),
   ])
 
   const nivelReq = nivelResult.data
@@ -78,26 +86,15 @@ export default async function EstrategiaPage() {
     { label: 'Total', current: creator.videos_this_month, required: totalGoal, ...trackerColor(creator.videos_this_month, totalGoal) },
   ]
 
-  const weeklyPlan = [
-    {
-      day: 'Lunes',
-      type: 'ACC',
-      description: 'Video ACC en hotel',
-      tip: 'Graba el recorrido del check-in al cuarto. Usa la plantilla de CapCut para ACC.',
-    },
-    {
-      day: 'Miércoles',
-      type: 'TTD',
-      description: 'Video TTD de experiencia',
-      tip: 'Muestra tu reacción genuina. Los primeros 3 segundos son clave para el hook.',
-    },
-    {
-      day: 'Viernes',
-      type: 'Orgánico',
-      description: 'Video orgánico de restaurante',
-      tip: 'Enfócate en la comida y el ambiente. Usa trending sounds para mayor alcance.',
-    },
-  ]
+  // Weekly plan from database (fallback to defaults if empty)
+  const dbPlan = (weeklyPlanResult.data ?? []) as { day_es: string; video_type: string; title: string; description: string | null; tip: string | null }[]
+  const weeklyPlan = dbPlan.length > 0
+    ? dbPlan.map(p => ({ day: p.day_es, type: p.video_type ?? 'general', description: p.title, tip: p.tip ?? '' }))
+    : [
+        { day: 'Lunes', type: 'ACC', description: 'Video ACC en hotel', tip: 'Graba el recorrido del check-in al cuarto.' },
+        { day: 'Miércoles', type: 'TTD', description: 'Video TTD de experiencia', tip: 'Muestra tu reacción genuina.' },
+        { day: 'Viernes', type: 'Orgánico', description: 'Video orgánico de restaurante', tip: 'Enfócate en la comida y el ambiente.' },
+      ]
 
   const typeColors: Record<string, string> = {
     ACC: 'bg-blue-100 text-blue-700',

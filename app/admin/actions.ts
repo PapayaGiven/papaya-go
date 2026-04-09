@@ -473,3 +473,54 @@ export async function updateRewardRequestStatus(id: string, status: string): Pro
   revalidatePath('/admin')
   return {}
 }
+
+// ── Weekly Plan ──────────────────────────────────────
+
+export async function addWeeklyPlan(data: {
+  day_name: string
+  day_es: string
+  video_type: string
+  title: string
+  description: string | null
+  tip: string | null
+  sort_order: number
+}): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_weekly_plan').insert(data)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/estrategia')
+  return {}
+}
+
+export async function updateWeeklyPlan(id: string, data: {
+  day_es?: string
+  video_type?: string
+  title?: string
+  description?: string | null
+  tip?: string | null
+  sort_order?: number
+}): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_weekly_plan').update(data).eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/estrategia')
+  return {}
+}
+
+export async function toggleWeeklyPlan(id: string, isActive: boolean): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_weekly_plan').update({ is_active: isActive }).eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/estrategia')
+  return {}
+}
+
+export async function deleteWeeklyPlan(id: string): Promise<void> {
+  const supabase = createAdminClient()
+  await supabase.from('go_weekly_plan').delete().eq('id', id)
+  revalidatePath('/admin')
+  revalidatePath('/estrategia')
+}

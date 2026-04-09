@@ -36,6 +36,7 @@ export default async function AdminPage() {
     { data: nivelRewards },
     { data: boostRequests },
     { data: rewardRequests },
+    { data: weeklyPlan },
   ] = await Promise.all([
     supabase
       .from('go_creators')
@@ -68,6 +69,7 @@ export default async function AdminPage() {
     supabase.from('go_nivel_rewards').select('*').order('nivel, created_at'),
     supabase.from('go_boost_requests').select('*').order('created_at', { ascending: false }),
     supabase.from('go_reward_requests').select('*').order('created_at', { ascending: false }),
+    supabase.from('go_weekly_plan').select('*').order('sort_order'),
   ])
 
   return (
@@ -84,6 +86,8 @@ export default async function AdminPage() {
       nivelRewards={(nivelRewards as NivelReward[]) ?? []}
       boostRequests={(boostRequests as BoostRequest[]) ?? []}
       rewardRequests={(rewardRequests as RewardRequest[]) ?? []}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      weeklyPlan={(weeklyPlan ?? []) as any}
     />
   )
 }

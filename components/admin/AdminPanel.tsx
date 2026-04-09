@@ -39,6 +39,10 @@ import {
   deleteNivelReward,
   updateBoostStatus,
   updateRewardRequestStatus,
+  addWeeklyPlan,
+  // updateWeeklyPlan,
+  toggleWeeklyPlan,
+  deleteWeeklyPlan,
 } from '@/app/admin/actions'
 
 // ── Types ─────────────────────────────────────────────
@@ -67,7 +71,7 @@ interface POIRequest {
   creator?: { full_name: string | null; email: string } | null
 }
 
-type Tab = 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests' | 'rewards-admin' | 'boosts' | 'reward-requests'
+type Tab = 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests' | 'rewards-admin' | 'boosts' | 'reward-requests' | 'weekly-plan'
 
 interface AdminPanelProps {
   creators: Creator[]
@@ -80,6 +84,19 @@ interface AdminPanelProps {
   nivelRewards: NivelReward[]
   boostRequests: BoostRequest[]
   rewardRequests: RewardRequest[]
+  weeklyPlan: WeeklyPlanItem[]
+}
+
+interface WeeklyPlanItem {
+  id: string
+  day_name: string
+  day_es: string
+  video_type: string | null
+  title: string
+  description: string | null
+  tip: string | null
+  sort_order: number
+  is_active: boolean
 }
 
 // ── Shared helpers ────────────────────────────────────
@@ -575,6 +592,76 @@ function RewardRequestsTab({ requests, startTransition }: { requests: RewardRequ
   )
 }
 
+// ── Weekly Plan Tab ──────────────────────────────────
+
+function WeeklyPlanTab({ items, startTransition }: { items: WeeklyPlanItem[]; startTransition: (fn: () => void) => void }) {
+  const [showAdd, setShowAdd] = useState(false)
+  const [form, setForm] = useState({ day_name: 'monday', day_es: '', video_type: 'ACC', title: '', description: '', tip: '', sort_order: '' })
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 4000) }
+
+  return (
+    <SectionCard>
+      <div className="p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-syne font-bold text-lg text-go-dark">Plan Semanal ({items.length})</h2>
+          <ActionButton onClick={() => setShowAdd(!showAdd)}>{showAdd ? 'Cancelar' : '+ Agregar'}</ActionButton>
+        </div>
+        {feedback && <p className={`text-sm font-dm mb-3 px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{feedback}</p>}
+
+        {showAdd && (
+          <div className="bg-go-light border border-go-border rounded-2xl p-4 mb-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <div><label className="block text-xs font-medium text-gray-500 mb-1">Día (español)</label><input value={form.day_es} onChange={e => setForm(f => ({ ...f, day_es: e.target.value }))} placeholder="Ej: Lunes" className="input-field" /></div>
+              <div><label className="block text-xs font-medium text-gray-500 mb-1">Tipo de video</label>
+                <select value={form.video_type} onChange={e => setForm(f => ({ ...f, video_type: e.target.value }))} className="input-field">
+                  <option value="ACC">ACC</option><option value="TTD">TTD</option><option value="general">Orgánico</option>
+                </select>
+              </div>
+              <div><label className="block text-xs font-medium text-gray-500 mb-1">Orden</label><input type="number" value={form.sort_order} onChange={e => setForm(f => ({ ...f, sort_order: e.target.value }))} className="input-field" placeholder="1" /></div>
+              <div className="sm:col-span-2"><label className="block text-xs font-medium text-gray-500 mb-1">Título</label><input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} className="input-field" placeholder="Video ACC en hotel" /></div>
+              <div><label className="block text-xs font-medium text-gray-500 mb-1">Descripción</label><input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} className="input-field" /></div>
+              <div className="sm:col-span-3"><label className="block text-xs font-medium text-gray-500 mb-1">Tip</label><input value={form.tip} onChange={e => setForm(f => ({ ...f, tip: e.target.value }))} className="input-field" placeholder="Consejo para la creadora" /></div>
+            </div>
+            <button
+              disabled={!form.day_es || !form.title}
+              onClick={() => startTransition(async () => {
+                const r = await addWeeklyPlan({ day_name: form.day_es.toLowerCase(), day_es: form.day_es, video_type: form.video_type, title: form.title, description: form.description || null, tip: form.tip || null, sort_order: parseInt(form.sort_order) || 0 })
+                if (r.error) fb(`Error: ${r.error}`)
+                else { fb('✓ Plan agregado'); setForm({ day_name: 'monday', day_es: '', video_type: 'ACC', title: '', description: '', tip: '', sort_order: '' }); setShowAdd(false) }
+              })}
+              className="mt-3 font-dm text-sm font-semibold bg-go-orange text-white px-4 py-2 rounded-xl disabled:opacity-50"
+            >Guardar</button>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          {items.map(item => (
+            <div key={item.id} className="border border-go-dark/5 rounded-xl p-4 flex items-center gap-4">
+              <span className="font-dm text-xs font-bold text-gray-400 w-6">{item.sort_order}</span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-syne font-bold text-sm text-go-dark">{item.day_es}</span>
+                  <span className={`font-dm text-[10px] font-bold px-2 py-0.5 rounded-full ${item.video_type === 'ACC' ? 'bg-blue-100 text-blue-700' : item.video_type === 'TTD' ? 'bg-purple-100 text-purple-700' : 'bg-emerald-100 text-emerald-700'}`}>{item.video_type}</span>
+                </div>
+                <p className="font-dm text-sm text-go-dark">{item.title}</p>
+                {item.tip && <p className="font-dm text-xs text-gray-400 mt-0.5">{item.tip}</p>}
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button onClick={() => startTransition(async () => { await toggleWeeklyPlan(item.id, !item.is_active); fb('✓') })} className={`text-xs font-semibold px-2 py-1 rounded-full ${item.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-400'}`}>
+                  {item.is_active ? 'Activo' : 'Inactivo'}
+                </button>
+                <button onClick={() => { if (confirm('¿Eliminar?')) startTransition(async () => { await deleteWeeklyPlan(item.id); fb('✓ Eliminado') }) }} className="text-xs text-red-400 hover:text-red-600">Eliminar</button>
+              </div>
+            </div>
+          ))}
+          {items.length === 0 && <p className="text-center text-gray-400 py-6 font-dm text-sm">No hay plan semanal configurado.</p>}
+        </div>
+      </div>
+    </SectionCard>
+  )
+}
+
 // ── Main Component ────────────────────────────────────
 
 export default function AdminPanel({
@@ -588,6 +675,7 @@ export default function AdminPanel({
   nivelRewards,
   boostRequests,
   rewardRequests,
+  weeklyPlan,
 }: AdminPanelProps) {
   const [tab, setTab] = useState<Tab>('creators')
   const [isPending, startTransition] = useTransition()
@@ -603,6 +691,7 @@ export default function AdminPanel({
     { key: 'rewards-admin', label: '🎁 Rewards', count: nivelRewards.length },
     { key: 'boosts', label: '🚀 Boosts', count: boostRequests.length },
     { key: 'reward-requests', label: '🎀 Reward Requests', count: rewardRequests.length },
+    { key: 'weekly-plan', label: '📅 Plan Semanal', count: weeklyPlan.length },
   ]
 
   return (
@@ -675,6 +764,7 @@ export default function AdminPanel({
         {tab === 'rewards-admin' && <NivelRewardsTab rewards={nivelRewards} startTransition={startTransition} />}
         {tab === 'boosts' && <BoostsTab boosts={boostRequests} startTransition={startTransition} />}
         {tab === 'reward-requests' && <RewardRequestsTab requests={rewardRequests} startTransition={startTransition} />}
+        {tab === 'weekly-plan' && <WeeklyPlanTab items={weeklyPlan} startTransition={startTransition} />}
       </main>
     </div>
   )
