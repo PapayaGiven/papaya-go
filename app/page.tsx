@@ -38,8 +38,8 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         <div className="bg-white rounded-3xl shadow-sm border border-go-border p-10">
           <div className="text-center mb-8">
-            <p className="text-5xl mb-4">🧳</p>
-            <h1 className="font-syne font-extrabold text-3xl text-go-dark">Papaya GO</h1>
+            <img src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png" alt="Papaya GO" className="w-16 h-16 mx-auto mb-2" />
+            <img src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/Papaya%20Go%20Logo.png" alt="Papaya GO" className="h-10 mx-auto object-contain" />
             <p className="font-dm text-gray-500 mt-2 text-sm">Inicia sesión para acceder a tu portal</p>
           </div>
           <form onSubmit={handleSubmit} className="space-y-4">

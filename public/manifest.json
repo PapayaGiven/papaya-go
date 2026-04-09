@@ -9,13 +9,13 @@
   "theme_color": "#ff7700",
   "icons": [
     {
-      "src": "/icon.png",
+      "src": "https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/icon.png",
+      "src": "https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"

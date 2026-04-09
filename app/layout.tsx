@@ -20,7 +20,8 @@ export const metadata: Metadata = {
   description: 'La comunidad #1 de creadoras Latinas en TikTok GO',
   manifest: '/manifest.json',
   icons: {
-    icon: '/icon.png',
+    icon: 'https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png',
+    apple: 'https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png',
   },
   appleWebApp: {
     capable: true,

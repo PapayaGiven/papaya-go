@@ -39,8 +39,7 @@ export default function Sidebar({ creatorName, tiktokHandle, nivel }: SidebarPro
     <>
       <div className="p-5 border-b border-go-border">
         <Link href="/dashboard" className="flex items-center gap-2">
-          <span className="text-2xl">🧳</span>
-          <span className="font-syne font-extrabold text-lg text-go-dark">Papaya GO</span>
+          <img src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/Papaya%20Go%20Logo.png" alt="Papaya GO" className="h-8 object-contain" />
         </Link>
       </div>
 
