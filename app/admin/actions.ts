@@ -379,12 +379,17 @@ export async function syncViralVideosFromSheet(): Promise<{ error?: string; coun
       const url = (row.tiktok_url || '').trim()
       if (!url) continue
       const vt = (row.video_type || '').trim().toUpperCase()
+      const handle = (row.tiktok_handle || '').trim() || null
+      const views = (row.views || '').trim() || null
+      const record: Record<string, unknown> = {
+        tiktok_url: url,
+        video_type: vt === 'TTD' ? 'TTD' : 'ACC',
+        is_active: true,
+      }
+      if (handle) record.tiktok_handle = handle
+      if (views) record.views = views
       const { error } = await supabase.from('go_viral_videos').upsert(
-        {
-          tiktok_url: url,
-          video_type: vt === 'TTD' ? 'TTD' : 'ACC',
-          is_active: true,
-        },
+        record,
         { onConflict: 'tiktok_url' }
       )
       if (!error) count++

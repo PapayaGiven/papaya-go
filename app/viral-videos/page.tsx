@@ -2,13 +2,30 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { redirect } from 'next/navigation'
 import Sidebar from '@/components/Sidebar'
-import Link from 'next/link'
+import ViralVideosClient from './ViralVideosClient'
 
 interface ViralVideo {
   id: string
   tiktok_url: string
+  tiktok_handle: string | null
+  views: string | null
   video_type: string | null
   is_active: boolean
+  thumbnail_url?: string
+}
+
+async function fetchThumbnail(tiktokUrl: string): Promise<string | null> {
+  try {
+    const res = await fetch(`https://www.tiktok.com/oembed?url=${encodeURIComponent(tiktokUrl)}`, {
+      next: { revalidate: 86400 },
+      signal: AbortSignal.timeout(5000)
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    return data.thumbnail_url || null
+  } catch {
+    return null
+  }
 }
 
 export default async function ViralVideosPage({
@@ -20,14 +37,8 @@ export default async function ViralVideosPage({
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/')
 
-  const { data: creatorData } = await supabase
-    .from('go_creators')
-    .select('*')
-    .eq('email', user.email!)
-    .single()
-
+  const { data: creatorData } = await supabase.from('go_creators').select('*').eq('email', user.email!).single()
   if (!creatorData) redirect('/')
-  if (creatorData.status === 'pending') redirect('/pending')
 
   const admin = createAdminClient()
   const params = await searchParams
@@ -42,74 +53,24 @@ export default async function ViralVideosPage({
 
   const items = (videos ?? []) as ViralVideo[]
 
+  // Fetch thumbnails in parallel (limit to first 20)
+  const withThumbnails = await Promise.all(
+    items.slice(0, 20).map(async (v) => ({
+      ...v,
+      thumbnail_url: await fetchThumbnail(v.tiktok_url) ?? undefined,
+    }))
+  )
+
   return (
-    <div className="min-h-screen bg-go-light">
+    <div className="min-h-screen bg-[#fff8f2]">
       <Sidebar creatorName={creatorData.full_name} tiktokHandle={creatorData.tiktok_handle} nivel={creatorData.nivel} />
-      <img src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png" className="fixed top-4 right-4 w-40 h-40 opacity-[0.04] pointer-events-none select-none z-0" alt="" aria-hidden="true" />
       <main className="md:ml-[220px] pb-20 md:pb-0 min-h-screen">
-        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
+        <div className="p-4 md:p-8 max-w-5xl mx-auto">
           <div className="mb-6">
-            <h1 className="font-syne font-extrabold text-2xl text-go-dark mb-1">🔥 Videos Virales</h1>
-            <p className="font-dm text-sm text-gray-500">Los videos que más están funcionando en TikTok GO.</p>
+            <h1 className="font-syne font-bold text-2xl text-[#1a0800]">🔥 Videos Virales</h1>
+            <p className="font-dm text-sm text-gray-400 mt-1">Los videos que más están funcionando en TikTok GO</p>
           </div>
-
-          {/* Tabs */}
-          <div className="flex gap-2 mb-6">
-            <Link
-              href="/viral-videos?type=ACC"
-              className={`font-dm text-sm font-semibold px-5 py-2.5 rounded-xl transition ${
-                activeType === 'ACC'
-                  ? 'bg-go-orange text-white'
-                  : 'bg-white border border-go-border text-gray-600 hover:border-go-orange hover:text-go-orange'
-              }`}
-            >
-              🏨 Hoteles
-            </Link>
-            <Link
-              href="/viral-videos?type=TTD"
-              className={`font-dm text-sm font-semibold px-5 py-2.5 rounded-xl transition ${
-                activeType === 'TTD'
-                  ? 'bg-go-pink text-white'
-                  : 'bg-white border border-go-border text-gray-600 hover:border-go-pink hover:text-go-pink'
-              }`}
-            >
-              🎡 Atracciones
-            </Link>
-          </div>
-
-          {/* List */}
-          {items.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-go-border p-10 text-center">
-              <img src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png" className="w-16 h-16 mx-auto mb-3" alt="" aria-hidden="true" />
-              <p className="font-dm text-gray-500 text-sm">
-                Aún no hay videos de {activeType === 'ACC' ? 'hoteles' : 'atracciones'}.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {items.map((v, idx) => (
-                <a
-                  key={v.id}
-                  href={v.tiktok_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="bg-white rounded-2xl border border-[rgba(255,119,0,0.12)] overflow-hidden flex items-center gap-4 px-5 py-4 transition hover:shadow-sm group"
-                >
-                  {/* Rank */}
-                  <span className={`font-syne font-extrabold text-2xl shrink-0 w-10 text-center ${
-                    idx === 0 ? 'text-go-orange' : idx === 1 ? 'text-go-peach' : idx === 2 ? 'text-go-pink' : 'text-gray-300'
-                  }`}>
-                    #{idx + 1}
-                  </span>
-
-                  {/* CTA */}
-                  <span className="flex-1 font-dm text-sm font-semibold text-go-orange group-hover:text-go-orange/80 transition">
-                    Ver en TikTok →
-                  </span>
-                </a>
-              ))}
-            </div>
-          )}
+          <ViralVideosClient videos={withThumbnails} activeType={activeType} />
         </div>
       </main>
     </div>
