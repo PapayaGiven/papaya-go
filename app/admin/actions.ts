@@ -395,3 +395,24 @@ export async function syncViralVideosFromSheet(): Promise<{ error?: string; coun
     return { error: `Error: ${err instanceof Error ? err.message : 'Unknown'}` }
   }
 }
+
+// ── POI Requests ─────────────────────────────────────
+
+export async function updatePOIRequestStatus(id: string, status: string): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_poi_requests').update({ status }).eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  return {}
+}
+
+// ── POI times_sold ───────────────────────────────────
+
+export async function updatePOITimesSold(id: string, times_sold: number): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_pois').update({ times_sold }).eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/pois')
+  return {}
+}

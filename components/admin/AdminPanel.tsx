@@ -29,6 +29,8 @@ import {
   toggleViralVideo,
   deleteViralVideo,
   syncViralVideosFromSheet,
+  updatePOIRequestStatus,
+  updatePOITimesSold,
 } from '@/app/admin/actions'
 
 // ── Types ─────────────────────────────────────────────
@@ -43,7 +45,21 @@ interface ViralVideo {
   created_at: string
 }
 
-type Tab = 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral'
+interface POIRequest {
+  id: string
+  creator_id: string
+  creator_name: string | null
+  tiktok_handle: string | null
+  place_name: string
+  city_state: string | null
+  place_type: string | null
+  reason: string | null
+  status: string
+  created_at: string
+  creator?: { full_name: string | null; email: string } | null
+}
+
+type Tab = 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests'
 
 interface AdminPanelProps {
   creators: Creator[]
@@ -52,6 +68,7 @@ interface AdminPanelProps {
   announcements: Announcement[]
   portfolios: PortfolioSubmission[]
   viralVideos: ViralVideo[]
+  poiRequests: POIRequest[]
 }
 
 // ── Shared helpers ────────────────────────────────────
@@ -257,6 +274,69 @@ function ViralVideosTab({ videos, startTransition }: { videos: ViralVideo[]; sta
   )
 }
 
+// ── POI Requests Tab ─────────────────────────────────
+
+function POIRequestsTab({ requests, startTransition }: { requests: POIRequest[]; startTransition: (fn: () => void) => void }) {
+  const [feedback, setFeedback] = useState<string | null>(null)
+  function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
+
+  return (
+    <SectionCard>
+      <div className="p-6">
+        <h2 className="font-syne font-bold text-lg text-go-dark mb-4">Solicitudes de POI ({requests.length})</h2>
+
+        {feedback && <p className={`text-sm font-dm mb-3 px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{feedback}</p>}
+
+        <div className="overflow-x-auto rounded-2xl border border-go-dark/5">
+          <table className="w-full text-sm font-dm">
+            <thead className="bg-go-dark/[0.03]">
+              <tr>
+                {['Creator', 'TikTok', 'Lugar', 'Ciudad', 'Tipo', 'Razon', 'Estado', 'Fecha'].map(h => (
+                  <th key={h} className="px-4 py-3 text-left text-xs text-go-dark/50 font-semibold uppercase tracking-wide">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-go-dark/5">
+              {requests.map(r => (
+                <tr key={r.id} className={r.status === 'conseguido' ? 'bg-emerald-50' : ''}>
+                  <td className="px-4 py-3 font-medium text-go-dark">
+                    {r.creator?.full_name ?? r.creator_name ?? '—'}
+                    {r.creator?.email && <span className="block text-xs text-go-dark/40">{r.creator.email}</span>}
+                  </td>
+                  <td className="px-4 py-3 text-go-dark/60 text-xs">{r.tiktok_handle ?? '—'}</td>
+                  <td className="px-4 py-3 font-medium text-go-dark">{r.place_name}</td>
+                  <td className="px-4 py-3 text-go-dark/60 text-xs">{r.city_state ?? '—'}</td>
+                  <td className="px-4 py-3 text-go-dark/60 text-xs">{r.place_type ?? '—'}</td>
+                  <td className="px-4 py-3 text-go-dark/50 text-xs max-w-[200px] truncate">{r.reason ?? '—'}</td>
+                  <td className="px-4 py-3">
+                    <select
+                      value={r.status}
+                      onChange={(e) => {
+                        startTransition(async () => {
+                          const res = await updatePOIRequestStatus(r.id, e.target.value)
+                          if (res.error) fb(`Error: ${res.error}`)
+                          else fb('Estado actualizado')
+                        })
+                      }}
+                      className="text-xs px-2 py-1 rounded-lg border border-go-border bg-go-light font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition"
+                    >
+                      {['pending', 'en proceso', 'conseguido', 'rechazado'].map(s => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-4 py-3 text-go-dark/40 text-xs">{new Date(r.created_at).toLocaleDateString('es')}</td>
+                </tr>
+              ))}
+              {requests.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-go-dark/40">No hay solicitudes de POI.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </SectionCard>
+  )
+}
+
 // ── Main Component ────────────────────────────────────
 
 export default function AdminPanel({
@@ -266,6 +346,7 @@ export default function AdminPanel({
   announcements,
   portfolios,
   viralVideos,
+  poiRequests,
 }: AdminPanelProps) {
   const [tab, setTab] = useState<Tab>('creators')
   const [isPending, startTransition] = useTransition()
@@ -277,6 +358,7 @@ export default function AdminPanel({
     { key: 'announcements', label: 'Announcements', count: announcements.length },
     { key: 'portfolios', label: 'Portfolios', count: portfolios.length },
     { key: 'viral', label: 'Videos Virales', count: viralVideos.length },
+    { key: 'poi-requests', label: 'Solicitudes', count: poiRequests.length },
   ]
 
   return (
@@ -342,6 +424,9 @@ export default function AdminPanel({
         )}
         {tab === 'viral' && (
           <ViralVideosTab videos={viralVideos} startTransition={startTransition} />
+        )}
+        {tab === 'poi-requests' && (
+          <POIRequestsTab requests={poiRequests} startTransition={startTransition} />
         )}
       </main>
     </div>
@@ -758,6 +843,7 @@ function POIsTab({
                 <th className="text-left px-4 py-3 font-medium text-go-dark/60">Comision</th>
                 <th className="text-left px-4 py-3 font-medium text-go-dark/60">Perk</th>
                 <th className="text-center px-4 py-3 font-medium text-go-dark/60">Min Nivel</th>
+                <th className="text-center px-4 py-3 font-medium text-go-dark/60">Vendidos</th>
                 <th className="text-center px-4 py-3 font-medium text-go-dark/60">Activo</th>
                 <th className="text-right px-4 py-3 font-medium text-go-dark/60">Acciones</th>
               </tr>
@@ -781,6 +867,20 @@ function POIsTab({
                   <td className="px-4 py-3 text-go-dark/50 text-xs">{p.perk ?? '—'}</td>
                   <td className="px-4 py-3 text-center">
                     <span className="text-xs font-medium">{p.min_nivel}</span>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <input
+                      type="number"
+                      min={0}
+                      defaultValue={p.times_sold ?? 0}
+                      className="w-16 px-2 py-1 rounded-lg border border-go-border bg-go-light text-sm text-center font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition"
+                      onBlur={(e) => {
+                        const val = Number(e.target.value)
+                        if (val !== (p.times_sold ?? 0)) {
+                          startTransition(() => updatePOITimesSold(p.id, val))
+                        }
+                      }}
+                    />
                   </td>
                   <td className="px-4 py-3 text-center">
                     <button
@@ -808,7 +908,7 @@ function POIsTab({
               ))}
               {pois.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-go-dark/40">
+                  <td colSpan={9} className="px-4 py-8 text-center text-go-dark/40">
                     No hay POIs aun
                   </td>
                 </tr>

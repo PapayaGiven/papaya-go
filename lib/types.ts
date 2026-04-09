@@ -32,6 +32,7 @@ export interface POI {
   capcut_template_url: string | null
   image_emoji: string | null
   is_active: boolean
+  times_sold: number
   created_at: string
 }
 

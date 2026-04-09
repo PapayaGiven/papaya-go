@@ -29,6 +29,7 @@ export default async function AdminPage() {
     { data: announcements },
     { data: portfolios },
     { data: viralVideos },
+    { data: poiRequests },
   ] = await Promise.all([
     supabase
       .from('go_creators')
@@ -54,6 +55,10 @@ export default async function AdminPage() {
       .from('go_viral_videos')
       .select('*')
       .order('created_at', { ascending: false }),
+    supabase
+      .from('go_poi_requests')
+      .select('*, creator:go_creators(full_name, email)')
+      .order('created_at', { ascending: false }),
   ])
 
   return (
@@ -65,6 +70,8 @@ export default async function AdminPage() {
       portfolios={(portfolios as PortfolioSubmission[]) ?? []}
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       viralVideos={(viralVideos ?? []) as any}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      poiRequests={(poiRequests ?? []) as any}
     />
   )
 }

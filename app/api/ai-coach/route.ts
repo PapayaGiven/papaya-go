@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 
-const SYSTEM_PROMPT =
-  'Eres el AI Coach de Papaya GO, una comunidad de creadoras Latinas en TikTok GO en Estados Unidos. Generas contenido específico para ayudar a creadoras a monetizar hoteles, atracciones y restaurantes en TikTok GO. Siempre responde en español. Tono: cálido, directo, motivador. Para hooks: máximo 3 líneas, debe enganchar en los primeros 2 segundos. Para captions: incluye siempre #tiktokgostay y 3 hashtags relevantes. Para voiceovers: exactamente 30 segundos al hablar normal, conversacional. Para ideas: da 5 ideas numeradas.'
+const SYSTEM_PROMPT = 'Eres el AI Coach de Papaya GO, una comunidad de creadoras Latinas en TikTok GO en Estados Unidos. Generas contenido específico para ayudar a creadoras a monetizar hoteles, atracciones y restaurantes en TikTok GO. Siempre responde en español. Tono: cálido, directo, motivador. Para hooks: máximo 3 líneas, debe enganchar en los primeros 2 segundos. Para captions: incluye siempre #tiktokgostay y 3 hashtags relevantes. Para voiceovers: exactamente 30 segundos al hablar normal, conversacional. Para ideas: da 5 ideas numeradas.'
 
 const CONTENT_TYPE_LABELS: Record<string, string> = {
   hook: 'un hook (frase de apertura que atrapa en 2 segundos)',
@@ -14,36 +13,43 @@ const CONTENT_TYPE_LABELS: Record<string, string> = {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { poi_name, poi_city, poi_state, poi_type, poi_commission, content_type } = body
+    const { url, place_name, content_type } = body
 
-    if (!poi_name || !content_type) {
-      return NextResponse.json(
-        { error: 'Faltan campos requeridos.' },
-        { status: 400 }
-      )
+    if (!content_type || (!url && !place_name)) {
+      return NextResponse.json({ error: 'Faltan campos requeridos.' }, { status: 400 })
     }
 
     const contentLabel = CONTENT_TYPE_LABELS[content_type] ?? content_type
 
-    const locationPart =
-      poi_city && poi_state
-        ? `${poi_name} en ${poi_city}, ${poi_state}`
-        : poi_name
+    // Try to fetch URL content for context
+    let urlContext = ''
+    if (url) {
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(5000) })
+        if (res.ok) {
+          const html = await res.text()
+          // Strip HTML tags and get first 2000 chars
+          const text = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+          urlContext = text.substring(0, 2000)
+        }
+      } catch {
+        // URL fetch failed, continue without it
+      }
+    }
 
-    const typePart = poi_type ? ` Tipo de lugar: ${poi_type}.` : ''
-    const commissionPart = poi_commission ? ` Comisión: ${poi_commission}.` : ''
+    const locationPart = place_name || url || 'un lugar'
+    let userPrompt = `Genera ${contentLabel} para un video de TikTok GO sobre ${locationPart}.`
+    if (url) userPrompt += ` URL del lugar: ${url}.`
+    if (urlContext) userPrompt += ` Información del lugar: ${urlContext}`
+    userPrompt += ' Usa la información para hacer el contenido específico y auténtico.'
 
-    const userPrompt = `Genera ${contentLabel} para un video de TikTok GO sobre ${locationPart}.${typePart}${commissionPart}`
-
-    // If no API key, return a mock response for development
-    if (!process.env.ANTHROPIC_API_KEY) {
+    if (!process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY === 'placeholder-add-your-key') {
       return NextResponse.json({
-        text: `[Modo desarrollo — API key no configurada]\n\nEjemplo de ${contentLabel} para ${poi_name}:\n\nEste es un contenido de ejemplo generado localmente. Configura ANTHROPIC_API_KEY en tu archivo .env.local para obtener respuestas reales del AI Coach.`,
+        text: `[Modo desarrollo — API key no configurada]\n\nEjemplo de ${contentLabel} para ${locationPart}:\n\nEste es contenido de ejemplo. Configura ANTHROPIC_API_KEY para respuestas reales.`,
       })
     }
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-
     const message = await client.messages.create({
       model: 'claude-sonnet-4-5-20250514',
       max_tokens: 512,
@@ -57,8 +63,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ text })
   } catch (err: unknown) {
     console.error('AI Coach error:', err)
-    const errorMessage =
-      err instanceof Error ? err.message : 'Error interno del servidor.'
-    return NextResponse.json({ error: errorMessage }, { status: 500 })
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Error interno.' }, { status: 500 })
   }
 }
