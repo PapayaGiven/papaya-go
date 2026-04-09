@@ -3,7 +3,6 @@
 import { cookies } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { Resend } from 'resend'
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'papaya-admin-2024'
 
@@ -63,7 +62,7 @@ export async function deleteCreator(id: string) {
   return { success: true }
 }
 
-export async function sendInvite(creatorId: string): Promise<{ error?: string }> {
+export async function sendInvite(creatorId: string): Promise<{ error?: string; email?: string }> {
   const supabase = createAdminClient()
 
   const { data: creator } = await supabase.from('go_creators').select('email, full_name').eq('id', creatorId).single()
@@ -71,54 +70,18 @@ export async function sendInvite(creatorId: string): Promise<{ error?: string }>
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://papaya-go.vercel.app'
 
-  // Generate invite link via Supabase
-  const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
-    type: 'invite',
-    email: creator.email,
-    options: { redirectTo: `${siteUrl}/set-password` },
-  })
-  if (linkError) return { error: linkError.message }
-
-  const inviteLink = linkData.properties.action_link
-
-  // Send email via Resend
-  if (!process.env.RESEND_API_KEY) {
-    console.log('[sendInvite] No RESEND_API_KEY — invite link:', inviteLink)
-    return { error: `No RESEND_API_KEY. Link: ${inviteLink}` }
-  }
-
-  const resend = new Resend(process.env.RESEND_API_KEY)
-  const { error: emailError } = await resend.emails.send({
-    from: 'Papaya GO <onboarding@resend.dev>',
-    to: creator.email,
-    subject: '¡Bienvenida a Papaya GO! 🧡',
-    html: `
-      <div style="font-family:'DM Sans',Helvetica,Arial,sans-serif;max-width:480px;margin:0 auto;padding:40px 24px;background:#fff8f2;">
-        <div style="text-align:center;margin-bottom:24px;">
-          <img src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/Papaya%20Go%20Logo.png" alt="Papaya GO" style="height:48px;" />
-        </div>
-        <h1 style="font-size:24px;font-weight:800;color:#1a0800;text-align:center;margin-bottom:8px;">
-          ¡Hola${creator.full_name ? `, ${creator.full_name.split(' ')[0]}` : ''}! 🧡
-        </h1>
-        <p style="font-size:15px;color:#555;text-align:center;line-height:1.6;margin-bottom:24px;">
-          Has sido invitada al portal de creadoras de <strong>Papaya GO</strong> — la comunidad #1 de Latinas en TikTok GO. Aquí podrás acceder a tu estrategia, AI Coach, hoteles, atracciones y mucho más.
-        </p>
-        <div style="text-align:center;margin-bottom:32px;">
-          <a href="${inviteLink}" style="display:inline-block;background:#ff7700;color:white;padding:14px 32px;border-radius:12px;text-decoration:none;font-weight:700;font-size:15px;">
-            Crear mi contraseña →
-          </a>
-        </div>
-        <p style="font-size:12px;color:#aaa;text-align:center;">
-          Si no solicitaste esta invitación, puedes ignorar este email.<br/>
-          © 2025 Papaya GO
-        </p>
-      </div>
-    `,
-  })
-  if (emailError) return { error: `Email error: ${JSON.stringify(emailError)}` }
+  // Supabase sends the invite email automatically via configured SMTP
+  const { error: inviteError } = await supabase.auth.admin.inviteUserByEmail(
+    creator.email,
+    {
+      data: { full_name: creator.full_name },
+      redirectTo: `${siteUrl}/set-password`,
+    }
+  )
+  if (inviteError) return { error: inviteError.message }
 
   revalidatePath('/admin')
-  return {}
+  return { email: creator.email }
 }
 
 export async function updateCreator(

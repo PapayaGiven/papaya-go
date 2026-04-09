@@ -557,7 +557,7 @@ function CreatorsTab({
                                 startTransition(async () => {
                                   const r = await sendInvite(c.id)
                                   if (r.error) alert(`Error: ${r.error}`)
-                                  else alert('✓ Invitación enviada')
+                                  else alert(`Invitación enviada a ${r.email} ✓`)
                                 })
                               }
                             >
