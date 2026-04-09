@@ -28,6 +28,7 @@ export default async function AdminPage() {
     { data: templates },
     { data: announcements },
     { data: portfolios },
+    { data: viralVideos },
   ] = await Promise.all([
     supabase
       .from('go_creators')
@@ -49,6 +50,10 @@ export default async function AdminPage() {
       .from('go_portfolio_submissions')
       .select('*, creator:go_creators(full_name, email, nivel)')
       .order('created_at', { ascending: false }),
+    supabase
+      .from('go_viral_videos')
+      .select('*')
+      .order('created_at', { ascending: false }),
   ])
 
   return (
@@ -58,6 +63,8 @@ export default async function AdminPage() {
       templates={(templates as CapCutTemplate[]) ?? []}
       announcements={(announcements as Announcement[]) ?? []}
       portfolios={(portfolios as PortfolioSubmission[]) ?? []}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      viralVideos={(viralVideos ?? []) as any}
     />
   )
 }

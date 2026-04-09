@@ -23,11 +23,27 @@ import {
   setAnnouncement,
   toggleAnnouncement,
   updatePortfolioStatus,
+  addViralVideo,
+  toggleViralVideo,
+  deleteViralVideo,
+  syncViralVideosFromSheet,
 } from '@/app/admin/actions'
 
 // ── Types ─────────────────────────────────────────────
 
-type Tab = 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios'
+interface ViralVideo {
+  id: string
+  tiktok_url: string
+  creator_name: string | null
+  views: string | null
+  poi_name: string | null
+  video_type: string | null
+  notes: string | null
+  is_active: boolean
+  created_at: string
+}
+
+type Tab = 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral'
 
 interface AdminPanelProps {
   creators: Creator[]
@@ -35,6 +51,7 @@ interface AdminPanelProps {
   templates: CapCutTemplate[]
   announcements: Announcement[]
   portfolios: PortfolioSubmission[]
+  viralVideos: ViralVideo[]
 }
 
 // ── Shared helpers ────────────────────────────────────
@@ -147,6 +164,106 @@ function FormSelect({
   )
 }
 
+// ── Viral Videos Tab ─────────────────────────────────
+
+function ViralVideosTab({ videos, startTransition }: { videos: ViralVideo[]; startTransition: (fn: () => void) => void }) {
+  const [showAdd, setShowAdd] = useState(false)
+  const [form, setForm] = useState({ tiktok_url: '', creator_name: '', views: '', poi_name: '', video_type: 'ACC', notes: '' })
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+
+  function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
+
+  return (
+    <SectionCard>
+      <div className="p-6">
+      <h2 className="font-syne font-bold text-lg text-go-dark mb-4">Videos Virales ({videos.length})</h2>
+      <div className="flex items-center gap-2 mb-4">
+        <button onClick={() => setShowAdd(!showAdd)} className="font-dm text-sm font-semibold bg-go-orange text-white px-4 py-2 rounded-xl hover:bg-go-orange/90 transition">
+          {showAdd ? 'Cancelar' : '+ Agregar video'}
+        </button>
+        <button
+          disabled={syncing}
+          onClick={() => {
+            setSyncing(true)
+            startTransition(async () => {
+              const r = await syncViralVideosFromSheet()
+              if (r.error) fb(`Error: ${r.error}`)
+              else fb(`✓ ${r.count} videos sincronizados desde Google Sheets`)
+              setSyncing(false)
+            })
+          }}
+          className="font-dm text-sm font-semibold bg-emerald-600 text-white px-4 py-2 rounded-xl hover:bg-emerald-700 transition disabled:opacity-50"
+        >
+          {syncing ? 'Sincronizando...' : '📊 Sync desde Google Sheets'}
+        </button>
+      </div>
+
+      {feedback && <p className={`text-sm font-dm mb-3 px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{feedback}</p>}
+
+      {showAdd && (
+        <div className="bg-go-light border border-go-border rounded-2xl p-5 mb-5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <input placeholder="URL de TikTok" value={form.tiktok_url} onChange={e => setForm(f => ({ ...f, tiktok_url: e.target.value }))} className="input-field sm:col-span-2" />
+            <select value={form.video_type} onChange={e => setForm(f => ({ ...f, video_type: e.target.value }))} className="input-field">
+              <option value="ACC">ACC (Hotel)</option>
+              <option value="TTD">TTD (Atracción)</option>
+            </select>
+            <input placeholder="Nombre del creator" value={form.creator_name} onChange={e => setForm(f => ({ ...f, creator_name: e.target.value }))} className="input-field" />
+            <input placeholder="Views (ej: 2.3M)" value={form.views} onChange={e => setForm(f => ({ ...f, views: e.target.value }))} className="input-field" />
+            <input placeholder="Nombre del POI" value={form.poi_name} onChange={e => setForm(f => ({ ...f, poi_name: e.target.value }))} className="input-field" />
+            <input placeholder="Notas — ¿por qué funciona?" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="input-field sm:col-span-3" />
+          </div>
+          <button disabled={!form.tiktok_url} onClick={() => startTransition(async () => {
+            const r = await addViralVideo(form)
+            if (r.error) fb(`Error: ${r.error}`)
+            else { fb('✓ Video agregado'); setForm({ tiktok_url: '', creator_name: '', views: '', poi_name: '', video_type: 'ACC', notes: '' }); setShowAdd(false) }
+          })} className="mt-3 font-dm text-sm font-semibold bg-go-orange text-white px-5 py-2.5 rounded-xl hover:bg-go-orange/90 transition disabled:opacity-50">
+            Guardar
+          </button>
+        </div>
+      )}
+
+      <div className="overflow-x-auto rounded-2xl border border-go-dark/5">
+        <table className="w-full text-sm font-dm">
+          <thead className="bg-go-dark/[0.03]">
+            <tr>
+              {['Creator', 'Views', 'Tipo', 'POI', 'Notas', 'Activo', 'Acciones'].map(h => (
+                <th key={h} className="px-4 py-3 text-left text-xs text-go-dark/50 font-semibold uppercase tracking-wide">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-go-dark/5">
+            {videos.map(v => (
+              <tr key={v.id}>
+                <td className="px-4 py-3 font-medium text-go-dark">
+                  <a href={v.tiktok_url} target="_blank" rel="noopener noreferrer" className="hover:text-go-orange hover:underline">{v.creator_name || 'Link →'}</a>
+                </td>
+                <td className="px-4 py-3 text-go-dark/60">{v.views || '–'}</td>
+                <td className="px-4 py-3">
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${v.video_type === 'ACC' ? 'bg-go-orange/10 text-go-orange' : 'bg-go-pink/20 text-pink-700'}`}>{v.video_type}</span>
+                </td>
+                <td className="px-4 py-3 text-go-dark/60 text-xs">{v.poi_name || '–'}</td>
+                <td className="px-4 py-3 text-go-dark/60 text-xs max-w-[200px] truncate">{v.notes || '–'}</td>
+                <td className="px-4 py-3">
+                  <button onClick={() => startTransition(async () => { await toggleViralVideo(v.id, !v.is_active); fb('✓') })} className={`text-xs font-semibold px-2.5 py-1 rounded-full ${v.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-400'}`}>
+                    {v.is_active ? 'Activo' : 'Inactivo'}
+                  </button>
+                </td>
+                <td className="px-4 py-3">
+                  <button onClick={() => { if (confirm('¿Eliminar?')) startTransition(async () => { await deleteViralVideo(v.id); fb('✓ Eliminado') }) }} className="text-xs text-red-400 hover:text-red-600">Eliminar</button>
+                </td>
+              </tr>
+            ))}
+            {videos.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-go-dark/40">No hay videos virales.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      </div>
+    </SectionCard>
+  )
+}
+
 // ── Main Component ────────────────────────────────────
 
 export default function AdminPanel({
@@ -155,6 +272,7 @@ export default function AdminPanel({
   templates,
   announcements,
   portfolios,
+  viralVideos,
 }: AdminPanelProps) {
   const [tab, setTab] = useState<Tab>('creators')
   const [isPending, startTransition] = useTransition()
@@ -165,6 +283,7 @@ export default function AdminPanel({
     { key: 'templates', label: 'CapCut Templates', count: templates.length },
     { key: 'announcements', label: 'Announcements', count: announcements.length },
     { key: 'portfolios', label: 'Portfolios', count: portfolios.length },
+    { key: 'viral', label: 'Videos Virales', count: viralVideos.length },
   ]
 
   return (
@@ -227,6 +346,9 @@ export default function AdminPanel({
         )}
         {tab === 'portfolios' && (
           <PortfoliosTab portfolios={portfolios} startTransition={startTransition} />
+        )}
+        {tab === 'viral' && (
+          <ViralVideosTab videos={viralVideos} startTransition={startTransition} />
         )}
       </main>
     </div>

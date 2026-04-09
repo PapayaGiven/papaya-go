@@ -123,3 +123,20 @@ CREATE TABLE IF NOT EXISTS go_announcements (
 ALTER TABLE go_announcements ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "go_announcements_read_all" ON go_announcements FOR SELECT TO authenticated USING (true);
 CREATE POLICY "go_announcements_service" ON go_announcements FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- 7. go_viral_videos
+CREATE TABLE IF NOT EXISTS go_viral_videos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tiktok_url text NOT NULL UNIQUE,
+  creator_name text,
+  views text,
+  poi_name text,
+  video_type text,
+  notes text,
+  is_active boolean DEFAULT true,
+  created_at timestamp DEFAULT now()
+);
+
+ALTER TABLE go_viral_videos ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "go_viral_read_all" ON go_viral_videos FOR SELECT TO authenticated USING (true);
+CREATE POLICY "go_viral_service" ON go_viral_videos FOR ALL TO service_role USING (true) WITH CHECK (true);

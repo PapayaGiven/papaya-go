@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { href: '/dashboard', icon: '🏠', label: 'Dashboard' },
   { href: '/estrategia', icon: '🎯', label: 'Mi Estrategia' },
   { href: '/ai-coach', icon: '✨', label: 'AI Coach' },
+  { href: '/viral-videos', icon: '🔥', label: 'Videos Virales' },
   { href: '/pois', icon: '📍', label: 'Hoteles & Atracciones' },
   { href: '/niveles', icon: '⭐', label: 'Niveles' },
 ]

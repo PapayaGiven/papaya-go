@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 
 const SYSTEM_PROMPT =
-  'Eres el AI Coach de Papaya GO, una comunidad de creadoras Latinas en TikTok GO en Estados Unidos. Generas contenido específico para ayudar a creadoras a monetizar hoteles, atracciones y restaurantes en TikTok GO. Siempre responde en español. Tono: cálido, directo, motivador. Máximo 150 palabras.'
+  'Eres el AI Coach de Papaya GO, una comunidad de creadoras Latinas en TikTok GO en Estados Unidos. Generas contenido específico para ayudar a creadoras a monetizar hoteles, atracciones y restaurantes en TikTok GO. Siempre responde en español. Tono: cálido, directo, motivador. Para hooks: máximo 3 líneas, debe enganchar en los primeros 2 segundos. Para captions: incluye siempre #tiktokgostay y 3 hashtags relevantes. Para voiceovers: exactamente 30 segundos al hablar normal, conversacional. Para ideas: da 5 ideas numeradas.'
 
 const CONTENT_TYPE_LABELS: Record<string, string> = {
-  hook: 'un hook (frase de apertura que atrapa)',
-  caption: 'un caption para TikTok',
-  voiceover: 'un voiceover de 30 segundos',
-  ideas: '3 ideas de video creativas',
+  hook: 'un hook (frase de apertura que atrapa en 2 segundos)',
+  caption: 'un caption para TikTok con #tiktokgostay y hashtags relevantes',
+  voiceover: 'un voiceover de exactamente 30 segundos, tono conversacional',
+  ideas: '5 ideas de video numeradas',
 }
 
 export async function POST(request: NextRequest) {
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
     const message = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-5-20250514',
       max_tokens: 512,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userPrompt }],

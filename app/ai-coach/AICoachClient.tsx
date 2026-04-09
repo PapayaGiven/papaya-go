@@ -5,10 +5,10 @@ import type { POI, CapCutTemplate } from '@/lib/types'
 import { POI_TYPE_LABELS } from '@/lib/types'
 
 const CONTENT_TYPES = [
-  { key: 'hook', label: 'Hook' },
-  { key: 'caption', label: 'Caption' },
-  { key: 'voiceover', label: 'Voiceover (30 seg)' },
-  { key: 'ideas', label: 'Ideas de video' },
+  { key: 'hook', label: '🎣 Hook' },
+  { key: 'caption', label: '✍️ Caption' },
+  { key: 'voiceover', label: '🎙️ Voiceover 30 seg' },
+  { key: 'ideas', label: '💡 Ideas de video' },
 ] as const
 
 type ContentType = (typeof CONTENT_TYPES)[number]['key']
@@ -205,7 +205,12 @@ export default function AICoachClient({ pois, templates, preselectedPoiId }: Pro
           disabled={!canGenerate || loading}
           className="flex-1 py-3.5 rounded-xl font-dm font-semibold text-sm text-white bg-go-orange hover:bg-go-orange/90 transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {loading ? 'Generando...' : 'Generar con AI Coach'}
+          {loading ? (
+            <span className="flex items-center justify-center gap-2">
+              <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              Generando...
+            </span>
+          ) : 'Generar con AI Coach'}
         </button>
       </div>
 
@@ -232,14 +237,14 @@ export default function AICoachClient({ pois, templates, preselectedPoiId }: Pro
                     : 'bg-white text-gray-600 border-go-border hover:border-go-orange hover:text-go-orange'
                 }`}
               >
-                {copied ? 'Copiado!' : 'Copiar'}
+                {copied ? '¡Copiado! ✓' : '📋 Copiar'}
               </button>
               <button
                 onClick={handleGenerate}
                 disabled={loading}
                 className="font-dm text-sm font-medium px-4 py-2 rounded-xl border border-go-border bg-white text-gray-600 hover:border-go-orange hover:text-go-orange transition disabled:opacity-50"
               >
-                Regenerar
+                🔄 Regenerar
               </button>
             </div>
           </div>
