@@ -1004,6 +1004,8 @@ function POIsTab({
     min_nivel: '1',
     capcut_template_url: '',
     image_emoji: '',
+    cta_label: '',
+    cta_url: '',
   })
 
   function handleAdd(e: React.FormEvent) {
@@ -1019,6 +1021,8 @@ function POIsTab({
         min_nivel: Number(form.min_nivel),
         capcut_template_url: form.capcut_template_url || undefined,
         image_emoji: form.image_emoji || undefined,
+        cta_label: form.cta_label || undefined,
+        cta_url: form.cta_url || undefined,
       })
       setShowAdd(false)
       setForm({
@@ -1031,6 +1035,8 @@ function POIsTab({
         min_nivel: '1',
         capcut_template_url: '',
         image_emoji: '',
+        cta_label: '',
+        cta_url: '',
       })
     })
   }
@@ -1069,6 +1075,8 @@ function POIsTab({
               options={[1, 2, 3, 4].map((n) => ({ value: String(n), label: `${n} - ${NIVEL_NAMES[n]}` }))}
             />
             <FormInput label="CapCut Template URL" value={form.capcut_template_url} onChange={(v) => setForm({ ...form, capcut_template_url: v })} />
+            <FormInput label="CTA Label" value={form.cta_label} onChange={(v) => setForm({ ...form, cta_label: v })} placeholder="Ej: Reservar ahora" />
+            <FormInput label="CTA URL" value={form.cta_url} onChange={(v) => setForm({ ...form, cta_url: v })} placeholder="https://..." />
             <FormInput label="Emoji" value={form.image_emoji} onChange={(v) => setForm({ ...form, image_emoji: v })} placeholder="🏨" />
             <div className="sm:col-span-3">
               <button type="submit" className="px-4 py-2 rounded-lg bg-go-orange text-white text-sm font-medium hover:bg-go-orange/90 transition">

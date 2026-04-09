@@ -31,6 +31,8 @@ export interface POI {
   min_nivel: number
   capcut_template_url: string | null
   image_emoji: string | null
+  cta_label: string | null
+  cta_url: string | null
   is_active: boolean
   times_sold: number
   created_at: string

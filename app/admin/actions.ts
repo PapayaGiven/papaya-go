@@ -161,6 +161,8 @@ export async function addPOI(data: {
   min_nivel: number
   capcut_template_url?: string
   image_emoji?: string
+  cta_label?: string
+  cta_url?: string
 }) {
   const supabase = createAdminClient()
   const { error } = await supabase.from('go_pois').insert({

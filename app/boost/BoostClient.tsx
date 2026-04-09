@@ -11,13 +11,6 @@ interface BoostClientProps {
   pastRequests: BoostRequest[]
 }
 
-const BOOST_REASONS = [
-  'Mas vistas',
-  'Mas ventas',
-  'Feedback',
-  'Llegar a mas hoteles',
-]
-
 function statusBadge(status: string) {
   switch (status) {
     case 'boosted':
@@ -35,7 +28,6 @@ function truncateUrl(url: string, max = 40) {
 
 export default function BoostClient({ creatorId, creatorName, tiktokHandle, pastRequests }: BoostClientProps) {
   const [tiktokUrl, setTiktokUrl] = useState('')
-  const [boostReason, setBoostReason] = useState('')
   const [notes, setNotes] = useState('')
   const [submitted, setSubmitted] = useState(false)
   const [error, setError] = useState('')
@@ -49,11 +41,6 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
       setError('Pega el link de tu TikTok')
       return
     }
-    if (!boostReason) {
-      setError('Selecciona una razon para el boost')
-      return
-    }
-
     setLoading(true)
     try {
       const result = await submitBoost({
@@ -61,7 +48,7 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
         creator_name: creatorName,
         tiktok_handle: tiktokHandle,
         tiktok_url: tiktokUrl.trim(),
-        boost_reason: boostReason,
+        boost_reason: null,
         notes: notes.trim() || null,
       })
       if (result.error) {
@@ -69,7 +56,6 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
       } else {
         setSubmitted(true)
         setTiktokUrl('')
-        setBoostReason('')
         setNotes('')
       }
     } catch {
@@ -112,23 +98,6 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
                 placeholder="https://www.tiktok.com/@..."
                 className="w-full border border-gray-200 rounded-xl px-4 py-2.5 font-dm text-sm text-go-dark placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition-all"
               />
-            </div>
-
-            {/* Boost reason */}
-            <div>
-              <label className="block font-dm text-sm font-medium text-go-dark mb-1">
-                ¿Por que quieres boostearlo?
-              </label>
-              <select
-                value={boostReason}
-                onChange={(e) => setBoostReason(e.target.value)}
-                className="w-full border border-gray-200 rounded-xl px-4 py-2.5 font-dm text-sm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition-all appearance-none bg-white"
-              >
-                <option value="">Selecciona una opcion...</option>
-                {BOOST_REASONS.map((reason) => (
-                  <option key={reason} value={reason}>{reason}</option>
-                ))}
-              </select>
             </div>
 
             {/* Notes */}

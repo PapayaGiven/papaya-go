@@ -134,12 +134,23 @@ export default function POIsClient({ pois, creatorNivel, creatorId, creatorName,
             <p className="font-dm text-xs text-gray-600">{poi.perk}</p>
           )}
         </div>
-        <Link
-          href={`/ai-coach?poi=${poi.id}`}
-          className="block text-center py-2 rounded-xl font-dm text-xs font-semibold text-white bg-go-orange hover:bg-go-orange/90 transition"
-        >
-          ✨ Usar en AI Coach
-        </Link>
+        {poi.cta_label && poi.cta_url ? (
+          <a
+            href={poi.cta_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block text-center py-2.5 rounded-xl font-dm text-xs font-semibold text-white bg-go-orange hover:bg-go-orange/90 transition"
+          >
+            {poi.cta_label}
+          </a>
+        ) : (
+          <Link
+            href="/ai-coach"
+            className="block text-center py-2 rounded-xl font-dm text-xs font-semibold text-gray-500 bg-gray-100 hover:bg-gray-200 transition"
+          >
+            ✨ Usar en AI Coach
+          </Link>
+        )}
       </div>
     )
   }

@@ -7,7 +7,7 @@ export async function submitBoost(data: {
   creator_name: string | null
   tiktok_handle: string | null
   tiktok_url: string
-  boost_reason: string
+  boost_reason: string | null
   notes: string | null
 }): Promise<{ error?: string }> {
   const supabase = await createClient()

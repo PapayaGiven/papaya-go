@@ -135,42 +135,47 @@ export default async function EstrategiaPage() {
             </p>
           </div>
 
-          {/* Special hashtags */}
-          {creator.special_hashtags && (
-            <div className="bg-white border border-go-border rounded-2xl p-5 md:p-6">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-lg">#</span>
-                <h2 className="font-syne font-extrabold text-lg text-go-dark">Hashtags especiales</h2>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {creator.special_hashtags.split(',').map((tag: string) => {
-                  const trimmed = tag.trim()
-                  if (!trimmed) return null
-                  return (
-                    <span
-                      key={trimmed}
-                      className="font-dm text-sm font-semibold px-3 py-1 rounded-full bg-orange-100 text-go-orange"
-                    >
-                      #{trimmed.replace(/^#/, '')}
-                    </span>
-                  )
-                })}
-              </div>
-            </div>
-          )}
+          {/* Creative Brief Card — FIRST thing they see */}
+          <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl overflow-hidden">
+            <div className="flex">
+              <div className="w-1 bg-go-orange shrink-0" />
+              <div className="p-5 md:p-6 flex-1">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-lg">📋</span>
+                  <h2 className="font-syne font-bold text-lg text-go-dark">Tu Brief Creativo</h2>
+                </div>
 
-          {/* Creative brief */}
-          {creator.creative_brief && (
-            <div className="bg-white border border-go-border rounded-2xl p-5 md:p-6">
-              <div className="flex items-center gap-2 mb-3">
-                <span className="text-lg">📝</span>
-                <h2 className="font-syne font-extrabold text-lg text-go-dark">Tu brief creativo</h2>
+                {creator.creative_brief ? (
+                  <p className="font-dm text-sm text-gray-600 leading-relaxed whitespace-pre-line mb-4">
+                    {creator.creative_brief}
+                  </p>
+                ) : !creator.special_hashtags ? (
+                  <p className="font-dm text-sm text-gray-400 mb-4">
+                    Tu admin agregará tu brief pronto 🧡
+                  </p>
+                ) : null}
+
+                {creator.special_hashtags && (
+                  <div>
+                    <p className="font-dm text-xs text-gray-400 mb-2">Hashtags especiales:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {creator.special_hashtags.split(',').map((tag: string) => {
+                        const trimmed = tag.trim()
+                        if (!trimmed) return null
+                        return (
+                          <span key={trimmed} className="font-dm text-sm font-semibold px-3 py-1 rounded-full bg-orange-100 text-go-orange">
+                            #{trimmed.replace(/^#/, '')}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {!creator.creative_brief && !creator.special_hashtags && null}
               </div>
-              <p className="font-dm text-sm text-gray-600 leading-relaxed whitespace-pre-line">
-                {creator.creative_brief}
-              </p>
             </div>
-          )}
+          </div>
 
           {/* Monthly goal */}
           <div className="bg-white border border-go-border rounded-2xl p-5 md:p-6">
