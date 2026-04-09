@@ -25,7 +25,7 @@ export async function submitPortfolio(formData: FormData) {
     return { error: 'Debes agregar al menos un enlace de video de TikTok.' }
   }
 
-  const { error } = await supabase.from('portfolio_submissions').insert({
+  const { error } = await supabase.from('go_portfolio_submissions').insert({
     creator_id: user.id,
     media_kit_url: mediaKitUrl,
     stats_screenshot_url: statsScreenshotUrl,

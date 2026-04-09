@@ -20,7 +20,7 @@ export default async function NivelesPage() {
   if (!user) redirect('/')
 
   const { data: creator } = await supabase
-    .from('creators')
+    .from('go_creators')
     .select('*')
     .eq('id', user.id)
     .single<Creator>()
@@ -28,13 +28,13 @@ export default async function NivelesPage() {
   if (!creator || creator.status !== 'active') redirect('/pending')
 
   const { data: requirements } = await supabase
-    .from('nivel_requirements')
+    .from('go_nivel_requirements')
     .select('*')
     .order('nivel', { ascending: true })
     .returns<NivelRequirement[]>()
 
   const { data: submissions } = await supabase
-    .from('portfolio_submissions')
+    .from('go_portfolio_submissions')
     .select('*')
     .eq('creator_id', user.id)
     .order('created_at', { ascending: false })

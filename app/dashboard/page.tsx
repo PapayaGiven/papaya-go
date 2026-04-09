@@ -31,17 +31,17 @@ export default async function DashboardPage() {
   } = await supabase.auth.getUser()
 
   if (!user) {
-    redirect('/login')
+    redirect('/')
   }
 
   const { data: creator } = await supabase
-    .from('creators')
+    .from('go_creators')
     .select('*')
     .eq('email', user.email!)
     .single<Creator>()
 
   if (!creator) {
-    redirect('/login')
+    redirect('/')
   }
 
   if (creator.status === 'pending') {
@@ -51,19 +51,19 @@ export default async function DashboardPage() {
   // Fetch announcement and nivel requirements in parallel
   const [announcementResult, currentNivelResult, nextNivelResult] = await Promise.all([
     supabase
-      .from('announcements')
+      .from('go_announcements')
       .select('*')
       .eq('is_active', true)
       .order('created_at', { ascending: false })
       .limit(1)
       .single<Announcement>(),
     supabase
-      .from('nivel_requirements')
+      .from('go_nivel_requirements')
       .select('*')
       .eq('nivel', creator.nivel)
       .single<NivelRequirement>(),
     supabase
-      .from('nivel_requirements')
+      .from('go_nivel_requirements')
       .select('*')
       .eq('nivel', creator.nivel + 1)
       .single<NivelRequirement>(),

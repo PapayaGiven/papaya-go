@@ -38,6 +38,8 @@ export default function LoginPage() {
     setLoading(true)
     setError(null)
 
+    const supabase = createClient()
+
     if (isNewUser) {
       // New user: create account + login
       if (password !== confirmPassword) {
@@ -51,32 +53,51 @@ export default function LoginPage() {
         return
       }
 
+      console.log('[login] Creating auth account for:', email)
       const createResult = await createAuthAndLogin(email, password)
       if (createResult.error) {
+        console.error('[login] Create error:', createResult.error)
         setError(createResult.error)
         setLoading(false)
         return
       }
 
-      // Now sign in
-      const supabase = createClient()
-      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
+      // Small delay to ensure user is fully created
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      console.log('[login] Signing in after create...')
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password })
       if (signInError) {
+        console.error('[login] Sign in after create error:', signInError.message)
         setError(signInError.message)
         setLoading(false)
         return
       }
+      console.log('[login] Sign in success, session:', !!data.session)
     } else {
       // Returning user: just sign in
-      const supabase = createClient()
-      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
+      console.log('[login] Signing in returning user:', email)
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password })
       if (signInError) {
+        console.error('[login] Sign in error:', signInError.message)
         setError('Contraseña incorrecta.')
         setLoading(false)
         return
       }
+      console.log('[login] Sign in success, session:', !!data.session)
     }
 
+    // Verify session is set before redirecting
+    const { data: { session } } = await supabase.auth.getSession()
+    console.log('[login] Session check before redirect:', !!session, session?.user?.email)
+
+    if (!session) {
+      setError('Error al iniciar sesión. Intenta de nuevo.')
+      setLoading(false)
+      return
+    }
+
+    console.log('[login] Redirecting to /dashboard')
     router.push('/dashboard')
     router.refresh()
   }

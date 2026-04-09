@@ -25,7 +25,7 @@ export default async function POIsPage({
   if (!user) redirect('/')
 
   const { data: creator } = await supabase
-    .from('creators')
+    .from('go_creators')
     .select('*')
     .eq('id', user.id)
     .single<Creator>()
@@ -36,7 +36,7 @@ export default async function POIsPage({
   const typeFilter = params.type ?? ''
 
   let query = supabase
-    .from('pois')
+    .from('go_pois')
     .select('*')
     .eq('is_active', true)
     .order('min_nivel', { ascending: true })

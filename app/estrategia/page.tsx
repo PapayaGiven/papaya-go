@@ -12,17 +12,17 @@ export default async function EstrategiaPage() {
   } = await supabase.auth.getUser()
 
   if (!user) {
-    redirect('/login')
+    redirect('/')
   }
 
   const { data: creator } = await supabase
-    .from('creators')
+    .from('go_creators')
     .select('*')
     .eq('email', user.email!)
     .single<Creator>()
 
   if (!creator) {
-    redirect('/login')
+    redirect('/')
   }
 
   if (creator.status === 'pending') {
@@ -32,12 +32,12 @@ export default async function EstrategiaPage() {
   // Fetch nivel requirements and suggested POIs in parallel
   const [nivelResult, poisResult] = await Promise.all([
     supabase
-      .from('nivel_requirements')
+      .from('go_nivel_requirements')
       .select('*')
       .eq('nivel', creator.nivel)
       .single<NivelRequirement>(),
     supabase
-      .from('pois')
+      .from('go_pois')
       .select('*')
       .eq('is_active', true)
       .lte('min_nivel', creator.nivel)

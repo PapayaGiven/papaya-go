@@ -17,7 +17,7 @@ export default async function AICoachPage({
   if (!user) redirect('/')
 
   const { data: creator } = await supabase
-    .from('creators')
+    .from('go_creators')
     .select('*')
     .eq('id', user.id)
     .single()
@@ -26,14 +26,14 @@ export default async function AICoachPage({
   if (creator.status === 'pending') redirect('/pending')
 
   const { data: pois } = await supabase
-    .from('pois')
+    .from('go_pois')
     .select('*')
     .eq('is_active', true)
     .lte('min_nivel', creator.nivel)
     .order('name')
 
   const { data: templates } = await supabase
-    .from('capcut_templates')
+    .from('go_capcut_templates')
     .select('*')
     .lte('min_nivel', creator.nivel)
     .order('created_at', { ascending: false })
