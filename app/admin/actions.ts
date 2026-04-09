@@ -243,11 +243,9 @@ export async function updatePortfolioStatus(
 
 export async function addViralVideo(data: {
   tiktok_url: string
-  creator_name: string
+  tiktok_handle: string
   views: string
-  poi_name: string
   video_type: string
-  notes: string
 }) {
   const supabase = createAdminClient()
   const { error } = await supabase.from('go_viral_videos').insert(data)
@@ -278,16 +276,30 @@ export async function syncViralVideosFromSheet(): Promise<{ error?: string; coun
   if (!sheetUrl) return { error: 'VIRAL_VIDEOS_SHEET_URL no está configurada.' }
 
   try {
-    const res = await fetch(sheetUrl)
+    const res = await fetch(sheetUrl, { cache: 'no-store' })
     if (!res.ok) return { error: `Error fetching sheet: ${res.status}` }
     const text = await res.text()
 
     const lines = text.split('\n').filter(l => l.trim())
     if (lines.length < 2) return { error: 'La hoja está vacía o no tiene datos.' }
 
-    const headers = lines[0].split(',').map(h => h.trim().toLowerCase())
+    // Parse CSV properly (handle quoted fields with commas)
+    const parseCSVLine = (line: string): string[] => {
+      const result: string[] = []
+      let current = ''
+      let inQuotes = false
+      for (const ch of line) {
+        if (ch === '"') { inQuotes = !inQuotes; continue }
+        if (ch === ',' && !inQuotes) { result.push(current.trim()); current = ''; continue }
+        current += ch
+      }
+      result.push(current.trim())
+      return result
+    }
+
+    const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase().replace(/\s+/g, '_'))
     const rows = lines.slice(1).map(line => {
-      const values = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''))
+      const values = parseCSVLine(line)
       const row: Record<string, string> = {}
       headers.forEach((h, i) => { row[h] = values[i] ?? '' })
       return row
@@ -296,17 +308,22 @@ export async function syncViralVideosFromSheet(): Promise<{ error?: string; coun
     const supabase = createAdminClient()
     let count = 0
 
+    const mapVideoType = (raw: string): string => {
+      const v = raw.trim().toLowerCase()
+      if (v === 'stays' || v === 'acc') return 'ACC'
+      if (v === 'experiences' || v === 'ttd') return 'TTD'
+      return 'ACC'
+    }
+
     for (const row of rows) {
       if (!row.tiktok_url) continue
       const { error } = await supabase.from('go_viral_videos').upsert(
         {
           tiktok_url: row.tiktok_url,
-          creator_name: row.creator_name || null,
+          tiktok_handle: row.tiktok_handle || null,
           views: row.views || null,
-          poi_name: row.poi_name || null,
-          video_type: row.video_type || 'ACC',
-          notes: row.notes || null,
-          is_active: true,
+          video_type: mapVideoType(row.video_type || ''),
+          is_active: row.is_active ? row.is_active.toLowerCase() !== 'false' : true,
         },
         { onConflict: 'tiktok_url' }
       )

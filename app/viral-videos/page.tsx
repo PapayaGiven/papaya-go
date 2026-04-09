@@ -7,13 +7,25 @@ import Link from 'next/link'
 interface ViralVideo {
   id: string
   tiktok_url: string
-  creator_name: string | null
+  tiktok_handle: string | null
   views: string | null
-  poi_name: string | null
   video_type: string | null
-  notes: string | null
   is_active: boolean
-  created_at: string
+}
+
+function parseViews(views: string | null): number {
+  if (!views) return 0
+  const cleaned = views.trim().toUpperCase()
+  const num = parseFloat(cleaned)
+  if (isNaN(num)) return 0
+  if (cleaned.endsWith('M')) return num * 1_000_000
+  if (cleaned.endsWith('K')) return num * 1_000
+  return num
+}
+
+function formatViews(views: string | null): string {
+  if (!views) return '0'
+  return views.trim()
 }
 
 export default async function ViralVideosPage({
@@ -38,24 +50,25 @@ export default async function ViralVideosPage({
   const params = await searchParams
   const activeType = params.type === 'TTD' ? 'TTD' : 'ACC'
 
-  const query = admin
+  const { data: videos } = await admin
     .from('go_viral_videos')
     .select('*')
     .eq('is_active', true)
     .eq('video_type', activeType)
-    .order('created_at', { ascending: false })
 
-  const { data: videos } = await query
-  const items = (videos ?? []) as ViralVideo[]
+  // Sort by parsed views descending
+  const items = ((videos ?? []) as ViralVideo[]).sort(
+    (a, b) => parseViews(b.views) - parseViews(a.views)
+  )
 
   return (
     <div className="min-h-screen bg-go-light">
       <Sidebar creatorName={creatorData.full_name} tiktokHandle={creatorData.tiktok_handle} nivel={creatorData.nivel} />
       <main className="md:ml-[220px] pb-20 md:pb-0 min-h-screen">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
           <div className="mb-6">
             <h1 className="font-syne font-extrabold text-2xl text-go-dark mb-1">🔥 Videos Virales</h1>
-            <p className="font-dm text-sm text-gray-500">Inspírate con los videos que más están funcionando en TikTok GO.</p>
+            <p className="font-dm text-sm text-gray-500">Los videos con más views en TikTok GO este mes.</p>
           </div>
 
           {/* Tabs */}
@@ -82,60 +95,56 @@ export default async function ViralVideosPage({
             </Link>
           </div>
 
-          {/* Grid */}
+          {/* Ranked list */}
           {items.length === 0 ? (
             <div className="bg-white rounded-2xl border border-go-border p-10 text-center">
               <p className="text-4xl mb-3">🎬</p>
               <p className="font-dm text-gray-500 text-sm">
-                Aún no hay videos de {activeType === 'ACC' ? 'hoteles' : 'atracciones'}. ¡Pronto se agregarán!
+                Aún no hay videos de {activeType === 'ACC' ? 'hoteles' : 'atracciones'}.
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {items.map((v) => (
-                <div key={v.id} className="bg-white rounded-2xl border border-go-border overflow-hidden flex flex-col">
-                  {/* Thumbnail / video link */}
-                  <a
-                    href={v.tiktok_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block bg-gradient-to-br from-go-light to-go-peach/20 p-6 text-center group hover:from-go-orange/5 transition"
-                  >
-                    <div className="w-14 h-14 rounded-full bg-go-orange/10 flex items-center justify-center mx-auto mb-2 group-hover:bg-go-orange/20 transition">
-                      <svg className="w-6 h-6 text-go-orange ml-0.5" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M8 5v14l11-7z" />
-                      </svg>
-                    </div>
-                    <p className="font-dm text-xs text-go-orange font-semibold">Ver en TikTok →</p>
-                  </a>
+            <div className="space-y-3">
+              {items.map((v, idx) => (
+                <div
+                  key={v.id}
+                  className={`bg-white rounded-2xl border overflow-hidden flex items-center gap-4 px-5 py-4 transition hover:shadow-sm ${
+                    idx === 0 ? 'border-go-orange/40' : idx === 1 ? 'border-go-peach/40' : idx === 2 ? 'border-go-pink/40' : 'border-go-border'
+                  }`}
+                >
+                  {/* Rank */}
+                  <span className={`font-syne font-extrabold text-2xl shrink-0 w-10 text-center ${
+                    idx === 0 ? 'text-go-orange' : idx === 1 ? 'text-go-peach' : idx === 2 ? 'text-go-pink' : 'text-gray-300'
+                  }`}>
+                    #{idx + 1}
+                  </span>
 
                   {/* Info */}
-                  <div className="p-4 flex-1 flex flex-col">
-                    <div className="flex items-center gap-2 mb-2 flex-wrap">
-                      {v.creator_name && (
-                        <span className="font-dm text-sm font-semibold text-go-dark">{v.creator_name}</span>
-                      )}
-                      {v.views && (
-                        <span className="font-dm text-xs font-bold bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{v.views} views</span>
-                      )}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-dm text-sm font-bold text-go-dark truncate">
+                      {v.tiktok_handle ? `@${v.tiktok_handle.replace(/^@/, '')}` : 'Creator'}
+                    </p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="font-dm text-xs text-gray-500 flex items-center gap-1">
+                        👁 {formatViews(v.views)}
+                      </span>
                       <span className={`font-dm text-xs font-bold px-2 py-0.5 rounded-full ${
                         v.video_type === 'ACC' ? 'bg-go-orange/10 text-go-orange' : 'bg-go-pink/20 text-pink-700'
                       }`}>
                         {v.video_type}
                       </span>
                     </div>
-
-                    {v.poi_name && (
-                      <p className="font-dm text-xs text-gray-500 mb-2">📍 {v.poi_name}</p>
-                    )}
-
-                    {v.notes && (
-                      <div className="mt-auto pt-3 border-t border-go-border">
-                        <p className="font-dm text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1">¿Por qué funciona?</p>
-                        <p className="font-dm text-xs text-gray-600 leading-relaxed">{v.notes}</p>
-                      </div>
-                    )}
                   </div>
+
+                  {/* CTA */}
+                  <a
+                    href={v.tiktok_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 font-dm text-xs font-semibold text-go-orange hover:text-go-orange/80 transition"
+                  >
+                    Ver en TikTok →
+                  </a>
                 </div>
               ))}
             </div>

@@ -128,11 +128,9 @@ CREATE POLICY "go_announcements_service" ON go_announcements FOR ALL TO service_
 CREATE TABLE IF NOT EXISTS go_viral_videos (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   tiktok_url text NOT NULL UNIQUE,
-  creator_name text,
+  tiktok_handle text,
   views text,
-  poi_name text,
   video_type text,
-  notes text,
   is_active boolean DEFAULT true,
   created_at timestamp DEFAULT now()
 );
