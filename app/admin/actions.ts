@@ -272,12 +272,10 @@ export async function updatePortfolioStatus(
 
 export async function addViralVideo(data: {
   tiktok_url: string
-  tiktok_handle: string
-  views: string
   video_type: string
 }) {
   const supabase = createAdminClient()
-  const { error } = await supabase.from('go_viral_videos').insert(data)
+  const { error } = await supabase.from('go_viral_videos').insert({ tiktok_url: data.tiktok_url.trim(), video_type: data.video_type.toUpperCase() === 'TTD' ? 'TTD' : 'ACC', is_active: true })
   if (error) return { error: error.message }
   revalidatePath('/admin')
   revalidatePath('/viral-videos')
@@ -340,22 +338,15 @@ export async function syncViralVideosFromSheet(): Promise<{ error?: string; coun
     const supabase = createAdminClient()
     let count = 0
 
-    const mapVideoType = (raw: string): string => {
-      const v = raw.trim().toLowerCase()
-      if (v === 'stays' || v === 'acc') return 'ACC'
-      if (v === 'experiences' || v === 'ttd') return 'TTD'
-      return 'ACC'
-    }
-
     for (const row of rows) {
-      if (!row.tiktok_url) continue
+      const url = (row.tiktok_url || '').trim()
+      if (!url) continue
+      const vt = (row.video_type || '').trim().toUpperCase()
       const { error } = await supabase.from('go_viral_videos').upsert(
         {
-          tiktok_url: row.tiktok_url,
-          tiktok_handle: row.tiktok_handle || null,
-          views: row.views || null,
-          video_type: mapVideoType(row.video_type || ''),
-          is_active: row.is_active ? row.is_active.toLowerCase() !== 'false' : true,
+          tiktok_url: url,
+          video_type: vt === 'TTD' ? 'TTD' : 'ACC',
+          is_active: true,
         },
         { onConflict: 'tiktok_url' }
       )

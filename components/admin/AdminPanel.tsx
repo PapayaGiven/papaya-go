@@ -168,7 +168,7 @@ function FormSelect({
 
 function ViralVideosTab({ videos, startTransition }: { videos: ViralVideo[]; startTransition: (fn: () => void) => void }) {
   const [showAdd, setShowAdd] = useState(false)
-  const [form, setForm] = useState({ tiktok_url: '', tiktok_handle: '', views: '', video_type: 'ACC' })
+  const [form, setForm] = useState({ tiktok_url: '', video_type: 'ACC' })
   const [feedback, setFeedback] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
 
@@ -209,13 +209,11 @@ function ViralVideosTab({ videos, startTransition }: { videos: ViralVideo[]; sta
               <option value="ACC">ACC (Hotel)</option>
               <option value="TTD">TTD (Atracción)</option>
             </select>
-            <input placeholder="@tiktok_handle" value={form.tiktok_handle} onChange={e => setForm(f => ({ ...f, tiktok_handle: e.target.value }))} className="input-field" />
-            <input placeholder="Views (ej: 2.3M)" value={form.views} onChange={e => setForm(f => ({ ...f, views: e.target.value }))} className="input-field" />
           </div>
           <button disabled={!form.tiktok_url} onClick={() => startTransition(async () => {
             const r = await addViralVideo(form)
             if (r.error) fb(`Error: ${r.error}`)
-            else { fb('✓ Video agregado'); setForm({ tiktok_url: '', tiktok_handle: '', views: '', video_type: 'ACC' }); setShowAdd(false) }
+            else { fb('✓ Video agregado'); setForm({ tiktok_url: '', video_type: 'ACC' }); setShowAdd(false) }
           })} className="mt-3 font-dm text-sm font-semibold bg-go-orange text-white px-5 py-2.5 rounded-xl hover:bg-go-orange/90 transition disabled:opacity-50">
             Guardar
           </button>
@@ -226,7 +224,7 @@ function ViralVideosTab({ videos, startTransition }: { videos: ViralVideo[]; sta
         <table className="w-full text-sm font-dm">
           <thead className="bg-go-dark/[0.03]">
             <tr>
-              {['Handle', 'Views', 'Tipo', 'Activo', 'Acciones'].map(h => (
+              {['URL', 'Tipo', 'Activo', 'Acciones'].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-xs text-go-dark/50 font-semibold uppercase tracking-wide">{h}</th>
               ))}
             </tr>
@@ -234,10 +232,9 @@ function ViralVideosTab({ videos, startTransition }: { videos: ViralVideo[]; sta
           <tbody className="divide-y divide-go-dark/5">
             {videos.map(v => (
               <tr key={v.id}>
-                <td className="px-4 py-3 font-medium text-go-dark">
-                  <a href={v.tiktok_url} target="_blank" rel="noopener noreferrer" className="hover:text-go-orange hover:underline">{v.tiktok_handle ? `@${v.tiktok_handle}` : 'Link →'}</a>
+                <td className="px-4 py-3 font-medium text-go-dark max-w-[250px]">
+                  <a href={v.tiktok_url} target="_blank" rel="noopener noreferrer" className="hover:text-go-orange hover:underline text-xs truncate block">{v.tiktok_url}</a>
                 </td>
-                <td className="px-4 py-3 text-go-dark/60">{v.views || '–'}</td>
                 <td className="px-4 py-3">
                   <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${v.video_type === 'ACC' ? 'bg-go-orange/10 text-go-orange' : 'bg-go-pink/20 text-pink-700'}`}>{v.video_type}</span>
                 </td>
@@ -251,7 +248,7 @@ function ViralVideosTab({ videos, startTransition }: { videos: ViralVideo[]; sta
                 </td>
               </tr>
             ))}
-            {videos.length === 0 && <tr><td colSpan={5} className="px-4 py-8 text-center text-go-dark/40">No hay videos virales.</td></tr>}
+            {videos.length === 0 && <tr><td colSpan={4} className="px-4 py-8 text-center text-go-dark/40">No hay videos virales.</td></tr>}
           </tbody>
         </table>
       </div>
