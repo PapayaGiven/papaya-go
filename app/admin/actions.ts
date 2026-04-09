@@ -254,7 +254,7 @@ export async function updateCreatorStrategy(id: string, data: {
   return {}
 }
 
-export async function setAnnouncement(message: string, image_url?: string) {
+export async function setAnnouncement(message: string, image_url?: string, display_type?: string) {
   const supabase = createAdminClient()
 
   // Deactivate all existing announcements
@@ -264,6 +264,7 @@ export async function setAnnouncement(message: string, image_url?: string) {
   const { error } = await supabase.from('go_announcements').insert({
     message,
     image_url: image_url || null,
+    display_type: display_type || 'banner',
     is_active: true,
   })
   if (error) return { error: error.message }

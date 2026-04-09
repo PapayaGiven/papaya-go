@@ -26,7 +26,9 @@ const MOBILE_NAV_ITEMS = [
   { href: '/dashboard', icon: '🏠', label: 'Dashboard' },
   { href: '/estrategia', icon: '🎯', label: 'Estrategia' },
   { href: '/ai-coach', icon: '🎬', label: 'Video' },
+  { href: '/viral-videos', icon: '🔥', label: 'Virales' },
   { href: '/boost', icon: '🚀', label: 'Boost' },
+  { href: '/pois', icon: '📍', label: 'Hoteles' },
   { href: '/niveles', icon: '⭐', label: 'Niveles' },
 ]
 
@@ -114,14 +116,14 @@ export default function Sidebar({ creatorName, tiktokHandle, nivel }: SidebarPro
       </aside>
 
       {/* Mobile bottom nav */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-go-border z-40 flex safe-area-bottom">
+      <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-go-border z-40 flex overflow-x-auto safe-area-bottom">
         {MOBILE_NAV_ITEMS.map((item) => {
           const isActive = pathname === item.href
           return (
             <Link
               key={item.href}
               href={item.href}
-              className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-xs font-dm transition-colors ${
+              className={`min-w-[60px] flex-shrink-0 flex flex-col items-center gap-0.5 py-2 px-1 text-xs font-dm transition-colors ${
                 isActive ? 'text-go-orange' : 'text-gray-400'
               }`}
             >

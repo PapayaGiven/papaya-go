@@ -1335,6 +1335,7 @@ function AnnouncementsTab({
 }) {
   const [newMessage, setNewMessage] = useState('')
   const [newImageUrl, setNewImageUrl] = useState('')
+  const [displayType, setDisplayType] = useState<'banner' | 'popup'>('banner')
 
   const activeAnnouncement = announcements.find((a) => a.is_active)
 
@@ -1342,9 +1343,10 @@ function AnnouncementsTab({
     e.preventDefault()
     if (!newMessage.trim()) return
     startTransition(async () => {
-      await setAnnouncement(newMessage.trim(), newImageUrl.trim() || undefined)
+      await setAnnouncement(newMessage.trim(), newImageUrl.trim() || undefined, displayType)
       setNewMessage('')
       setNewImageUrl('')
+      setDisplayType('banner')
     })
   }
 
@@ -1403,6 +1405,17 @@ function AnnouncementsTab({
               placeholder="URL de imagen (opcional)"
               className="px-4 py-2.5 rounded-xl border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition"
             />
+            <div className="flex gap-4 items-center">
+              <span className="font-dm text-xs text-gray-500">Tipo:</span>
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" checked={displayType === 'banner'} onChange={() => setDisplayType('banner')} className="accent-go-orange" />
+                <span className="font-dm text-xs text-go-dark">Banner</span>
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" checked={displayType === 'popup'} onChange={() => setDisplayType('popup')} className="accent-go-orange" />
+                <span className="font-dm text-xs text-go-dark">Pop-up</span>
+              </label>
+            </div>
           </div>
         </form>
       </SectionCard>

@@ -76,6 +76,7 @@ export interface Announcement {
   id: string
   message: string
   image_url: string | null
+  display_type: 'banner' | 'popup'
   is_active: boolean
   created_at: string
 }

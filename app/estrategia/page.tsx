@@ -137,44 +137,7 @@ export default async function EstrategiaPage() {
             </span>
           </div>
 
-          {/* ── 2. CREATIVE BRIEF ── */}
-          <div className="bg-white border border-[rgba(255,119,0,0.1)] rounded-2xl p-5 border-l-[3px] border-l-[#ff7700]">
-            <h2 className="font-syne font-bold text-base mb-3 text-gray-900">
-              📋 Tu Brief Creativo
-            </h2>
-
-            {creator.creative_brief ? (
-              <p className="font-dm text-sm text-gray-600 leading-relaxed whitespace-pre-line mb-4">
-                {creator.creative_brief}
-              </p>
-            ) : !creator.special_hashtags ? (
-              <p className="font-dm text-sm text-gray-400">
-                Tu admin agregará tu brief pronto 🧡
-              </p>
-            ) : null}
-
-            {creator.special_hashtags && (
-              <div className="mt-3">
-                <p className="font-dm text-xs text-gray-400 mb-2">Hashtags especiales:</p>
-                <div className="flex flex-wrap gap-2">
-                  {creator.special_hashtags.split(',').map((tag: string) => {
-                    const trimmed = tag.trim()
-                    if (!trimmed) return null
-                    return (
-                      <span
-                        key={trimmed}
-                        className="font-dm text-xs font-semibold px-3 py-1 rounded-full bg-[#ff7700]/10 text-[#ff7700]"
-                      >
-                        #{trimmed.replace(/^#/, '')}
-                      </span>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* ── 3. META MENSUAL ── */}
+          {/* ── 2. META MENSUAL ── */}
           <div className="bg-white border border-[rgba(255,119,0,0.1)] rounded-2xl p-5 relative overflow-hidden">
             <div className="flex items-start justify-between mb-4">
               <h2 className="font-syne font-bold text-base border-l-[3px] border-[#ff7700] pl-3 text-gray-900">

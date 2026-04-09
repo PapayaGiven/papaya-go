@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import Sidebar from '@/components/Sidebar'
 import DailyChecklist from '@/components/DailyChecklist'
 import { Creator, NivelRequirement, Announcement, NIVEL_NAMES, NIVEL_COLORS } from '@/lib/types'
+import AnnouncementPopup from '@/components/AnnouncementPopup'
 
 const CHECKLIST_BY_NIVEL: Record<number, string[]> = {
   1: [
@@ -117,17 +118,23 @@ export default async function DashboardPage() {
 
       <main className="md:ml-[220px] pb-20 md:pb-0">
         {/* Announcement banner */}
-        {announcement && (
+        {announcement && announcement.display_type !== 'popup' && (
           <div className="bg-go-orange text-white px-4 py-3 font-dm text-sm text-center">
             {announcement.image_url && (
+              // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={announcement.image_url}
                 alt=""
                 className="mx-auto mb-2 max-h-32 rounded-lg object-contain"
               />
             )}
-            {announcement.message}
+            📢 {announcement.message}
           </div>
+        )}
+
+        {/* Announcement popup */}
+        {announcement && announcement.display_type === 'popup' && (
+          <AnnouncementPopup announcement={announcement} />
         )}
 
         <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-8">
@@ -160,6 +167,47 @@ export default async function DashboardPage() {
               </div>
             </div>
           </div>
+
+          {/* Month progress */}
+          {nextNivel && (() => {
+            const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+            const monthName = monthNames[new Date().getMonth()]
+            const vidProgress = Math.min((creator.videos_this_month / nextNivel.total_videos_required) * 100, 100)
+            const gmvProg = Math.min((creator.gmv_this_month / nextNivel.gmv_required) * 100, 100)
+            return (
+              <div className="bg-[#fff8f2] border border-[rgba(255,119,0,0.12)] rounded-2xl p-5">
+                <h2 className="font-syne font-bold text-base text-go-dark mb-3">
+                  📅 {monthName} — Tu progreso
+                </h2>
+                <p className="font-dm text-sm text-gray-500 mb-4">
+                  Llevas <span className="font-semibold text-go-dark">{creator.videos_this_month} videos</span> este mes.
+                  Te faltan <span className="font-semibold text-go-orange">{videosRemaining} videos</span> y{' '}
+                  <span className="font-semibold text-go-orange">${gmvRemaining.toLocaleString()} GMV</span> para mantener tu{' '}
+                  <span className="font-semibold">Nivel {creator.nivel + 1}</span>.
+                </p>
+                <div className="space-y-3">
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <span className="font-dm text-xs text-gray-400">Videos</span>
+                      <span className="font-dm text-xs font-semibold text-go-dark">{creator.videos_this_month}/{nextNivel.total_videos_required}</span>
+                    </div>
+                    <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-go-orange to-go-peach rounded-full transition-all" style={{ width: `${vidProgress}%` }} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <span className="font-dm text-xs text-gray-400">GMV</span>
+                      <span className="font-dm text-xs font-semibold text-go-dark">${creator.gmv_this_month.toLocaleString()}/${nextNivel.gmv_required.toLocaleString()}</span>
+                    </div>
+                    <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-go-peach to-go-pink rounded-full transition-all" style={{ width: `${gmvProg}%` }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
 
           {/* Stats grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
