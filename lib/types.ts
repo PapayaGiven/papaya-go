@@ -36,6 +36,9 @@ export interface POI {
   cta_url: string | null
   is_active: boolean
   times_sold: number
+  poi_category: string | null
+  is_viral_poi: boolean
+  papaya_visited: boolean
   created_at: string
 }
 

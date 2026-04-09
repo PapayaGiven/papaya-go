@@ -163,6 +163,9 @@ export async function addPOI(data: {
   image_emoji?: string
   cta_label?: string
   cta_url?: string
+  poi_category?: string
+  is_viral_poi?: boolean
+  papaya_visited?: boolean
 }) {
   const supabase = createAdminClient()
   const { error } = await supabase.from('go_pois').insert({
@@ -174,25 +177,18 @@ export async function addPOI(data: {
   return { success: true }
 }
 
-export async function updatePOI(
-  id: string,
-  data: {
-    name?: string
-    type?: 'hotel' | 'attraction' | 'restaurant'
-    city?: string
-    state?: string
-    commission?: string
-    perk?: string
-    min_nivel?: number
-    capcut_template_url?: string
-    image_emoji?: string
-  }
-) {
+export async function updatePOI(id: string, data: Partial<{
+  name: string; type: string; city: string; state: string; commission: string;
+  perk: string; min_nivel: number; capcut_template_url: string; image_emoji: string;
+  cta_label: string; cta_url: string; poi_category: string;
+  is_viral_poi: boolean; papaya_visited: boolean; times_sold: number;
+}>): Promise<{ error?: string }> {
   const supabase = createAdminClient()
   const { error } = await supabase.from('go_pois').update(data).eq('id', id)
   if (error) return { error: error.message }
   revalidatePath('/admin')
-  return { success: true }
+  revalidatePath('/pois')
+  return {}
 }
 
 export async function togglePOI(id: string, isActive: boolean) {

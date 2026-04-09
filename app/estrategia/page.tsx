@@ -5,6 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import Sidebar from '@/components/Sidebar'
 import { Creator, NivelRequirement, POI, NIVEL_NAMES, POI_TYPE_LABELS } from '@/lib/types'
 import MediaKitCTA from './MediaKitCTA'
+import HashtagsCard from './HashtagsCard'
 
 export default async function EstrategiaPage() {
   const supabase = await createClient()
@@ -133,6 +134,11 @@ export default async function EstrategiaPage() {
               Meta: ${gmvGoal.toLocaleString()} GMV
             </span>
           </div>
+
+          {/* ── HASHTAGS ── */}
+          {creator.special_hashtags && (
+            <HashtagsCard hashtags={creator.special_hashtags} />
+          )}
 
           {/* ── 2. META MENSUAL ── */}
           <div className="bg-white border border-[rgba(255,119,0,0.1)] rounded-2xl p-5 relative overflow-hidden">

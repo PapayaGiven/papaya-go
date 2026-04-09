@@ -20,7 +20,7 @@ import {
   deleteCreator,
   updateCreatorStrategy,
   addPOI,
-  // updatePOI,
+  updatePOI,
   togglePOI,
   deletePOI,
   addTemplate,
@@ -1084,6 +1084,7 @@ function POIsTab({
   startTransition: (cb: () => void) => void
 }) {
   const [showAdd, setShowAdd] = useState(false)
+  const [editId, setEditId] = useState<string | null>(null)
   const [form, setForm] = useState({
     name: '',
     type: 'hotel' as POI['type'],
@@ -1096,12 +1097,32 @@ function POIsTab({
     image_emoji: '',
     cta_label: '',
     cta_url: '',
+    poi_category: 'viral',
+    is_viral_poi: 'false',
+    papaya_visited: 'false',
   })
+
+  const emptyForm = {
+    name: '',
+    type: 'hotel' as POI['type'],
+    city: '',
+    state: '',
+    commission: '',
+    perk: '',
+    min_nivel: '1',
+    capcut_template_url: '',
+    image_emoji: '',
+    cta_label: '',
+    cta_url: '',
+    poi_category: 'viral',
+    is_viral_poi: 'false',
+    papaya_visited: 'false',
+  }
 
   function handleAdd(e: React.FormEvent) {
     e.preventDefault()
     startTransition(async () => {
-      await addPOI({
+      const data = {
         name: form.name,
         type: form.type,
         city: form.city,
@@ -1113,21 +1134,18 @@ function POIsTab({
         image_emoji: form.image_emoji || undefined,
         cta_label: form.cta_label || undefined,
         cta_url: form.cta_url || undefined,
-      })
+        poi_category: form.poi_category,
+        is_viral_poi: form.is_viral_poi === 'true',
+        papaya_visited: form.papaya_visited === 'true',
+      }
+      if (editId) {
+        await updatePOI(editId, data)
+      } else {
+        await addPOI(data)
+      }
       setShowAdd(false)
-      setForm({
-        name: '',
-        type: 'hotel',
-        city: '',
-        state: '',
-        commission: '',
-        perk: '',
-        min_nivel: '1',
-        capcut_template_url: '',
-        image_emoji: '',
-        cta_label: '',
-        cta_url: '',
-      })
+      setEditId(null)
+      setForm(emptyForm)
     })
   }
 
@@ -1135,9 +1153,16 @@ function POIsTab({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="font-syne text-lg font-bold text-go-dark">Puntos de Interes</h2>
-        <ActionButton onClick={() => setShowAdd(!showAdd)}>
-          {showAdd ? 'Cancelar' : '+ Agregar POI'}
-        </ActionButton>
+        <div className="flex gap-2">
+          <ActionButton onClick={() => { setShowAdd(!showAdd); if (showAdd) { setEditId(null); setForm(emptyForm) } }}>
+            {showAdd ? 'Cancelar' : '+ Agregar POI'}
+          </ActionButton>
+          {showAdd && editId && (
+            <ActionButton variant="ghost" onClick={() => { setEditId(null); setForm(emptyForm) }}>
+              Cancelar edicion
+            </ActionButton>
+          )}
+        </div>
       </div>
 
       {showAdd && (
@@ -1168,9 +1193,12 @@ function POIsTab({
             <FormInput label="CTA Label" value={form.cta_label} onChange={(v) => setForm({ ...form, cta_label: v })} placeholder="Ej: Reservar ahora" />
             <FormInput label="CTA URL" value={form.cta_url} onChange={(v) => setForm({ ...form, cta_url: v })} placeholder="https://..." />
             <FormInput label="Emoji" value={form.image_emoji} onChange={(v) => setForm({ ...form, image_emoji: v })} placeholder="🏨" />
+            <FormSelect label="Categoria" value={form.poi_category} options={[{value:'viral',label:'Viral'},{value:'papaya_visit',label:'Papaya Visit'}]} onChange={v => setForm({...form, poi_category: v})} />
+            <label className="flex items-center gap-2 font-dm text-sm"><input type="checkbox" checked={form.is_viral_poi === 'true'} onChange={e => setForm({...form, is_viral_poi: String(e.target.checked)})} className="accent-go-orange" /> Viral POI</label>
+            <label className="flex items-center gap-2 font-dm text-sm"><input type="checkbox" checked={form.papaya_visited === 'true'} onChange={e => setForm({...form, papaya_visited: String(e.target.checked)})} className="accent-go-orange" /> Papaya Visit</label>
             <div className="sm:col-span-3">
               <button type="submit" className="px-4 py-2 rounded-lg bg-go-orange text-white text-sm font-medium hover:bg-go-orange/90 transition">
-                Agregar POI
+                {editId ? 'Guardar cambios' : 'Agregar POI'}
               </button>
             </div>
           </form>
@@ -1237,7 +1265,32 @@ function POIsTab({
                       />
                     </button>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right flex gap-2 justify-end">
+                    <ActionButton
+                      variant="ghost"
+                      onClick={() => {
+                        setEditId(p.id)
+                        setShowAdd(true)
+                        setForm({
+                          name: p.name,
+                          type: p.type,
+                          city: p.city,
+                          state: p.state,
+                          commission: p.commission,
+                          perk: p.perk ?? '',
+                          min_nivel: String(p.min_nivel),
+                          capcut_template_url: p.capcut_template_url ?? '',
+                          image_emoji: p.image_emoji ?? '',
+                          cta_label: p.cta_label ?? '',
+                          cta_url: p.cta_url ?? '',
+                          poi_category: p.poi_category ?? 'viral',
+                          is_viral_poi: String(p.is_viral_poi ?? false),
+                          papaya_visited: String(p.papaya_visited ?? false),
+                        })
+                      }}
+                    >
+                      Editar
+                    </ActionButton>
                     <ActionButton
                       variant="danger"
                       onClick={() => {
@@ -1426,6 +1479,7 @@ function AnnouncementsTab({
   const [newMessage, setNewMessage] = useState('')
   const [newImageUrl, setNewImageUrl] = useState('')
   const [displayType, setDisplayType] = useState<'banner' | 'popup'>('banner')
+  const [uploadingImg, setUploadingImg] = useState(false)
 
   const activeAnnouncement = announcements.find((a) => a.is_active)
 
@@ -1488,13 +1542,24 @@ function AnnouncementsTab({
                 Publicar
               </button>
             </div>
-            <input
-              type="url"
-              value={newImageUrl}
-              onChange={(e) => setNewImageUrl(e.target.value)}
-              placeholder="URL de imagen (opcional)"
-              className="px-4 py-2.5 rounded-xl border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition"
-            />
+            <div className="flex gap-2 items-center">
+              <input type="file" accept="image/*" onChange={async (e) => {
+                const file = e.target.files?.[0]
+                if (!file) return
+                setUploadingImg(true)
+                try {
+                  const { createClient } = await import('@/lib/supabase/client')
+                  const supabase = createClient()
+                  const path = `announcements/${Date.now()}-${file.name}`
+                  const { error } = await supabase.storage.from('announcements').upload(path, file, { upsert: true })
+                  if (error) { setUploadingImg(false); return }
+                  const { data } = supabase.storage.from('announcements').getPublicUrl(path)
+                  setNewImageUrl(data.publicUrl)
+                } catch {} finally { setUploadingImg(false) }
+              }} className="text-sm font-dm" />
+              {uploadingImg && <span className="text-xs text-go-orange animate-pulse">Subiendo...</span>}
+              {newImageUrl && <img src={newImageUrl} alt="" className="h-10 rounded object-cover" />}
+            </div>
             <div className="flex gap-4 items-center">
               <span className="font-dm text-xs text-gray-500">Tipo:</span>
               <label className="flex items-center gap-1.5 cursor-pointer">

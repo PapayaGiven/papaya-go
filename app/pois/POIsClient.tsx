@@ -15,24 +15,15 @@ interface Props {
 }
 
 const TABS = [
-  { id: 1, label: '🏨 Nuestros POIs' },
-  { id: 2, label: '🔥 POIs Virales' },
-  { id: 3, label: '📍 Explorar por Ciudad' },
-  { id: 4, label: '🙋 Solicitar Lugar' },
-]
-
-const TYPE_FILTERS = [
-  { label: 'Todos', value: '' },
-  { label: 'Hoteles', value: 'hotel' },
-  { label: 'Atracciones', value: 'attraction' },
-  { label: 'Restaurantes', value: 'restaurant' },
+  { id: 1, label: '🌺 Papaya Visit' },
+  { id: 2, label: '🔥 Virales' },
+  { id: 3, label: '📍 Explorar' },
+  { id: 4, label: '🙋 Solicitar' },
 ]
 
 export default function POIsClient({ pois, creatorNivel, creatorId, creatorName, tiktokHandle }: Props) {
   const [activeTab, setActiveTab] = useState(1)
   const [search, setSearch] = useState('')
-  const [typeFilter, setTypeFilter] = useState('')
-  const [cityFilter, setCityFilter] = useState('')
   const [requestForm, setRequestForm] = useState({
     place_name: '',
     city_state: '',
@@ -44,31 +35,29 @@ export default function POIsClient({ pois, creatorNivel, creatorId, creatorName,
   const [requestError, setRequestError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const uniqueCities = useMemo(() => {
-    const cities = Array.from(new Set(pois.map((p) => p.city))).sort()
-    return cities
+  // Tab 1: Papaya Visit POIs
+  const papayaVisitPois = useMemo(() => {
+    return pois.filter((p) => p.poi_category === 'papaya_visit' || p.papaya_visited === true)
   }, [pois])
 
-  const filteredPois = useMemo(() => {
-    let result = pois
-    if (typeFilter) result = result.filter((p) => p.type === typeFilter)
-    if (cityFilter) result = result.filter((p) => p.city === cityFilter)
-    return result
-  }, [pois, typeFilter, cityFilter])
-
+  // Tab 2: Viral POIs
   const viralPois = useMemo(() => {
+    const papayaIds = new Set(papayaVisitPois.map((p) => p.id))
     return pois
-      .filter((p) => p.times_sold > 0)
+      .filter((p) => p.poi_category === 'viral' || p.is_viral_poi === true || !papayaIds.has(p.id))
+      .filter((p) => p.poi_category !== 'papaya_visit' && !p.papaya_visited)
       .sort((a, b) => b.times_sold - a.times_sold)
-  }, [pois])
+  }, [pois, papayaVisitPois])
 
+  // Tab 3: Explorar search
   const citySearchPois = useMemo(() => {
     if (!search.trim()) return pois
     const q = search.toLowerCase()
     return pois.filter(
       (p) =>
         p.city.toLowerCase().includes(q) ||
-        p.state.toLowerCase().includes(q)
+        p.state.toLowerCase().includes(q) ||
+        p.name.toLowerCase().includes(q)
     )
   }, [pois, search])
 
@@ -93,68 +82,6 @@ export default function POIsClient({ pois, creatorNivel, creatorId, creatorName,
     }
   }
 
-  function renderPOICard(poi: POI) {
-    const isLocked = poi.min_nivel > creatorNivel
-    const typeInfo = POI_TYPE_LABELS[poi.type] ?? { label: poi.type, color: 'bg-gray-100 text-gray-700' }
-
-    if (isLocked) {
-      return (
-        <div key={poi.id} className="bg-white/60 rounded-2xl border border-[rgba(255,119,0,0.12)] p-5 opacity-60 select-none">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-3xl grayscale">{poi.image_emoji ?? '🔒'}</span>
-            <span className={`font-dm text-[11px] font-semibold px-2.5 py-1 rounded-full ${typeInfo.color}`}>
-              {typeInfo.label}
-            </span>
-          </div>
-          <h3 className="font-syne font-bold text-base text-gray-400 mb-1">{poi.name}</h3>
-          <p className="font-dm text-xs text-gray-400 mb-4">{poi.city}, {poi.state}</p>
-          <div className="flex items-center gap-2 text-gray-400">
-            <span className="text-lg">🔒</span>
-            <span className="font-dm text-xs font-medium">Disponible en Nivel {poi.min_nivel}</span>
-          </div>
-        </div>
-      )
-    }
-
-    return (
-      <div key={poi.id} className="bg-white rounded-2xl border border-[rgba(255,119,0,0.12)] p-5 hover:shadow-md transition-shadow">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-3xl">{poi.image_emoji ?? '📍'}</span>
-          <span className={`font-dm text-[11px] font-semibold px-2.5 py-1 rounded-full ${typeInfo.color}`}>
-            {typeInfo.label}
-          </span>
-        </div>
-        <h3 className="font-syne font-bold text-base text-go-dark mb-1">{poi.name}</h3>
-        <p className="font-dm text-xs text-gray-500 mb-3">{poi.city}, {poi.state}</p>
-        <div className="space-y-1.5 mb-4">
-          <p className="font-dm text-xs">
-            <span className="font-semibold text-go-orange">{poi.commission}</span>
-          </p>
-          {poi.perk && (
-            <p className="font-dm text-xs text-gray-600">{poi.perk}</p>
-          )}
-        </div>
-        {poi.cta_label && poi.cta_url ? (
-          <a
-            href={poi.cta_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block text-center py-2.5 rounded-xl font-dm text-xs font-semibold text-white bg-go-orange hover:bg-go-orange/90 transition"
-          >
-            {poi.cta_label}
-          </a>
-        ) : (
-          <Link
-            href="/ai-coach"
-            className="block text-center py-2 rounded-xl font-dm text-xs font-semibold text-gray-500 bg-gray-100 hover:bg-gray-200 transition"
-          >
-            ✨ Usar en AI Coach
-          </Link>
-        )}
-      </div>
-    )
-  }
-
   return (
     <>
       {/* Tab buttons */}
@@ -174,84 +101,87 @@ export default function POIsClient({ pois, creatorNivel, creatorId, creatorName,
         ))}
       </div>
 
-      {/* TAB 1: Nuestros POIs */}
+      {/* TAB 1: Papaya Visit */}
       {activeTab === 1 && (
         <div>
-          {/* City filter */}
-          <div className="flex flex-wrap items-center gap-3 mb-4">
-            <select
-              value={cityFilter}
-              onChange={(e) => setCityFilter(e.target.value)}
-              className="px-3 py-2 rounded-xl border border-[rgba(255,119,0,0.12)] bg-white font-dm text-sm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30"
-            >
-              <option value="">Todas las ciudades</option>
-              {uniqueCities.map((city) => (
-                <option key={city} value={city}>{city}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Type filter */}
-          <div className="flex gap-2 mb-6 overflow-x-auto pb-1">
-            {TYPE_FILTERS.map((f) => (
-              <button
-                key={f.value}
-                onClick={() => setTypeFilter(f.value)}
-                className={`px-4 py-2 rounded-xl font-dm text-sm font-medium whitespace-nowrap transition-colors ${
-                  typeFilter === f.value
-                    ? 'bg-go-orange text-white'
-                    : 'bg-white text-gray-600 border border-[rgba(255,119,0,0.12)] hover:border-go-orange/30 hover:text-go-orange'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Grid */}
-          {filteredPois.length === 0 ? (
+          {papayaVisitPois.length === 0 ? (
             <div className="bg-white rounded-2xl border border-[rgba(255,119,0,0.12)] p-10 text-center">
-              <p className="text-4xl mb-3">📍</p>
-              <p className="font-dm text-gray-500 text-sm">No se encontraron POIs con este filtro.</p>
+              <p className="text-4xl mb-3">🌺</p>
+              <p className="font-dm text-gray-500 text-sm">Pronto aparecerán los Papaya Visits.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredPois.map((poi) => renderPOICard(poi))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* TAB 2: POIs Virales */}
-      {activeTab === 2 && (
-        <div>
-          {viralPois.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-[rgba(255,119,0,0.12)] p-10 text-center">
-              <p className="text-4xl mb-3">🌞</p>
-              <p className="font-dm text-gray-500 text-sm">Pronto aparecerán los POIs más vendidos</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {viralPois.map((poi, index) => {
+              {papayaVisitPois.map((poi) => {
+                const isLocked = poi.min_nivel > creatorNivel
                 const typeInfo = POI_TYPE_LABELS[poi.type] ?? { label: poi.type, color: 'bg-gray-100 text-gray-700' }
+
+                if (isLocked) {
+                  return (
+                    <div key={poi.id} className="bg-white/60 rounded-2xl border border-[rgba(255,119,0,0.12)] p-5 opacity-60 select-none">
+                      <div className="h-[3px] rounded-t-2xl bg-gradient-to-r from-[#ff7700] to-[#ffcba4] -mx-5 -mt-5 mb-4" />
+                      <div className="flex items-center gap-3 mb-3">
+                        <span className="text-3xl grayscale">{poi.image_emoji ?? '🔒'}</span>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-syne font-bold text-base text-gray-400 truncate">{poi.name}</h3>
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+                            <span className={`font-dm text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${typeInfo.color}`}>
+                              {typeInfo.label}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <p className="font-dm text-xs text-gray-400 mb-3">{poi.city}, {poi.state}</p>
+                      <div className="flex items-center gap-2 text-gray-400">
+                        <span className="text-lg">🔒</span>
+                        <span className="font-dm text-xs font-medium">Disponible en Nivel {poi.min_nivel}</span>
+                      </div>
+                    </div>
+                  )
+                }
+
                 return (
-                  <div
-                    key={poi.id}
-                    className="bg-white rounded-2xl border border-[rgba(255,119,0,0.12)] p-5 flex items-center gap-4 hover:shadow-md transition-shadow"
-                  >
-                    <span className="font-syne font-extrabold text-2xl text-go-orange/40 w-10 text-center shrink-0">
-                      #{index + 1}
-                    </span>
-                    <span className="text-2xl shrink-0">{poi.image_emoji ?? '📍'}</span>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-syne font-bold text-base text-go-dark truncate">{poi.name}</h3>
-                      <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <span className={`font-dm text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${typeInfo.color}`}>
-                          {typeInfo.label}
-                        </span>
-                        <span className="font-dm text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-orange-100 text-go-orange">
-                          {poi.times_sold} veces vendido
-                        </span>
+                  <div key={poi.id} className="bg-white rounded-2xl border border-[rgba(255,119,0,0.12)] overflow-hidden hover:shadow-md transition-shadow">
+                    <div className="h-[3px] bg-gradient-to-r from-[#ff7700] to-[#ffcba4]" />
+                    <div className="p-5">
+                      <div className="flex items-center gap-3 mb-3">
+                        <span className="text-3xl">{poi.image_emoji ?? '🌺'}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-dm text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                              🌺 Papaya Visit
+                            </span>
+                            <span className={`font-dm text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${typeInfo.color}`}>
+                              {typeInfo.label}
+                            </span>
+                          </div>
+                          <h3 className="font-syne font-bold text-base text-go-dark truncate">{poi.name}</h3>
+                        </div>
+                      </div>
+                      <p className="font-dm text-xs text-gray-500 mb-3">{poi.city}, {poi.state}</p>
+
+                      {poi.perk && (
+                        <div className="bg-[#fff8f2] border border-[rgba(255,119,0,0.08)] rounded-xl p-3 mb-4">
+                          <p className="font-dm text-sm font-medium text-gray-800">{poi.perk}</p>
+                        </div>
+                      )}
+
+                      <div className="space-y-2">
+                        {poi.cta_label && poi.cta_url && (
+                          <a
+                            href={poi.cta_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block text-center py-2.5 rounded-xl font-dm text-xs font-semibold text-white bg-go-orange hover:bg-go-orange/90 transition"
+                          >
+                            {poi.cta_label}
+                          </a>
+                        )}
+                        <Link
+                          href={`/ai-coach?poi=${poi.id}`}
+                          className="block text-center py-2 rounded-xl font-dm text-xs font-semibold text-go-orange hover:text-orange-600 transition-colors"
+                        >
+                          ✨ Usar en AI Coach
+                        </Link>
                       </div>
                     </div>
                   </div>
@@ -262,12 +192,84 @@ export default function POIsClient({ pois, creatorNivel, creatorId, creatorName,
         </div>
       )}
 
-      {/* TAB 3: Explorar por Ciudad */}
+      {/* TAB 2: Virales */}
+      {activeTab === 2 && (
+        <div>
+          {viralPois.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-[rgba(255,119,0,0.12)] p-10 text-center">
+              <p className="text-4xl mb-3">🔥</p>
+              <p className="font-dm text-gray-500 text-sm">Pronto aparecerán los POIs virales.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {viralPois.map((poi) => {
+                const isLocked = poi.min_nivel > creatorNivel
+                const typeInfo = POI_TYPE_LABELS[poi.type] ?? { label: poi.type, color: 'bg-gray-100 text-gray-700' }
+
+                if (isLocked) {
+                  return (
+                    <div key={poi.id} className="bg-white/60 rounded-2xl border border-[rgba(255,119,0,0.12)] p-5 opacity-60 select-none">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-3xl grayscale">{poi.image_emoji ?? '🔒'}</span>
+                        <span className={`font-dm text-[11px] font-semibold px-2.5 py-1 rounded-full ${typeInfo.color}`}>
+                          {typeInfo.label}
+                        </span>
+                      </div>
+                      <h3 className="font-syne font-bold text-base text-gray-400 mb-1">{poi.name}</h3>
+                      <p className="font-dm text-xs text-gray-400 mb-4">{poi.city}, {poi.state}</p>
+                      <div className="flex items-center gap-2 text-gray-400">
+                        <span className="text-lg">🔒</span>
+                        <span className="font-dm text-xs font-medium">Disponible en Nivel {poi.min_nivel}</span>
+                      </div>
+                    </div>
+                  )
+                }
+
+                return (
+                  <div key={poi.id} className="bg-white rounded-2xl border border-[rgba(255,119,0,0.12)] p-5 hover:shadow-md transition-shadow">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-3xl">{poi.image_emoji ?? '📍'}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-dm text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-red-100 text-red-600">
+                          🔥 Viral
+                        </span>
+                        <span className={`font-dm text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${typeInfo.color}`}>
+                          {typeInfo.label}
+                        </span>
+                      </div>
+                    </div>
+                    <h3 className="font-syne font-bold text-base text-go-dark mb-1">{poi.name}</h3>
+                    <p className="font-dm text-xs text-gray-500 mb-3">{poi.city}, {poi.state}</p>
+
+                    <div className="space-y-1.5 mb-4">
+                      <p className="font-dm text-sm font-bold text-go-orange">{poi.commission}</p>
+                      {poi.times_sold > 0 && (
+                        <span className="inline-block font-dm text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-orange-100 text-go-orange">
+                          {poi.times_sold} bookings
+                        </span>
+                      )}
+                    </div>
+
+                    <Link
+                      href={`/ai-coach?poi=${poi.id}`}
+                      className="block text-center py-2 font-dm text-xs font-semibold text-go-orange hover:text-orange-600 transition-colors"
+                    >
+                      ✨ Usar en AI Coach
+                    </Link>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 3: Explorar */}
       {activeTab === 3 && (
         <div>
           <input
             type="text"
-            placeholder="Buscar ciudad o estado..."
+            placeholder="Buscar ciudad, estado o nombre..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full mb-6 px-4 py-3 rounded-xl border border-[rgba(255,119,0,0.12)] bg-white font-dm text-sm text-go-dark placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-go-orange/30"
@@ -287,7 +289,67 @@ export default function POIsClient({ pois, creatorNivel, creatorId, creatorName,
           ) : (
             <>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {citySearchPois.map((poi) => renderPOICard(poi))}
+                {citySearchPois.map((poi) => {
+                  const isLocked = poi.min_nivel > creatorNivel
+                  const typeInfo = POI_TYPE_LABELS[poi.type] ?? { label: poi.type, color: 'bg-gray-100 text-gray-700' }
+
+                  if (isLocked) {
+                    return (
+                      <div key={poi.id} className="bg-white/60 rounded-2xl border border-[rgba(255,119,0,0.12)] p-5 opacity-60 select-none">
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-3xl grayscale">{poi.image_emoji ?? '🔒'}</span>
+                          <span className={`font-dm text-[11px] font-semibold px-2.5 py-1 rounded-full ${typeInfo.color}`}>
+                            {typeInfo.label}
+                          </span>
+                        </div>
+                        <h3 className="font-syne font-bold text-base text-gray-400 mb-1">{poi.name}</h3>
+                        <p className="font-dm text-xs text-gray-400 mb-4">{poi.city}, {poi.state}</p>
+                        <div className="flex items-center gap-2 text-gray-400">
+                          <span className="text-lg">🔒</span>
+                          <span className="font-dm text-xs font-medium">Disponible en Nivel {poi.min_nivel}</span>
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <div key={poi.id} className="bg-white rounded-2xl border border-[rgba(255,119,0,0.12)] p-5 hover:shadow-md transition-shadow">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-3xl">{poi.image_emoji ?? '📍'}</span>
+                        <span className={`font-dm text-[11px] font-semibold px-2.5 py-1 rounded-full ${typeInfo.color}`}>
+                          {typeInfo.label}
+                        </span>
+                      </div>
+                      <h3 className="font-syne font-bold text-base text-go-dark mb-1">{poi.name}</h3>
+                      <p className="font-dm text-xs text-gray-500 mb-3">{poi.city}, {poi.state}</p>
+                      <div className="space-y-1.5 mb-4">
+                        <p className="font-dm text-xs">
+                          <span className="font-semibold text-go-orange">{poi.commission}</span>
+                        </p>
+                        {poi.perk && (
+                          <p className="font-dm text-xs text-gray-600">{poi.perk}</p>
+                        )}
+                      </div>
+                      {poi.cta_label && poi.cta_url ? (
+                        <a
+                          href={poi.cta_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block text-center py-2.5 rounded-xl font-dm text-xs font-semibold text-white bg-go-orange hover:bg-go-orange/90 transition"
+                        >
+                          {poi.cta_label}
+                        </a>
+                      ) : (
+                        <Link
+                          href={`/ai-coach?poi=${poi.id}`}
+                          className="block text-center py-2 rounded-xl font-dm text-xs font-semibold text-gray-500 bg-gray-100 hover:bg-gray-200 transition"
+                        >
+                          ✨ Usar en AI Coach
+                        </Link>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
               {search.trim() && (
                 <div className="mt-6 text-center">
@@ -304,7 +366,7 @@ export default function POIsClient({ pois, creatorNivel, creatorId, creatorName,
         </div>
       )}
 
-      {/* TAB 4: Solicitar Lugar */}
+      {/* TAB 4: Solicitar */}
       {activeTab === 4 && (
         <div className="max-w-lg mx-auto">
           {requestSubmitted ? (
