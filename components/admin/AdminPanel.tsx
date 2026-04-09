@@ -363,6 +363,8 @@ function CreatorsTab({
   const [showAdd, setShowAdd] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [editData, setEditData] = useState<Record<string, string | number>>({})
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
 
   // Add form state
   const [newEmail, setNewEmail] = useState('')
@@ -414,6 +416,12 @@ function CreatorsTab({
           {showAdd ? 'Cancelar' : '+ Agregar Creator'}
         </ActionButton>
       </div>
+
+      {feedback && (
+        <div className={`font-dm text-sm px-4 py-3 rounded-xl ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
+          {feedback}
+        </div>
+      )}
 
       {showAdd && (
         <SectionCard>
@@ -556,8 +564,8 @@ function CreatorsTab({
                               onClick={() =>
                                 startTransition(async () => {
                                   const r = await sendInvite(c.id)
-                                  if (r.error) alert(`Error: ${r.error}`)
-                                  else alert(`Invitación enviada a ${r.email} ✓`)
+                                  if (r.error) fb(`Error: ${r.error}`)
+                                  else fb(`✓ Invitación enviada a ${r.email}`)
                                 })
                               }
                             >
@@ -574,7 +582,7 @@ function CreatorsTab({
                             if (confirm(`¿Segura que quieres eliminar a ${c.full_name || c.email}? Esta acción no se puede deshacer.`)) {
                               startTransition(async () => {
                                 const r = await deleteCreator(c.id)
-                                if (r.error) alert(`Error: ${r.error}`)
+                                if (r.error) fb(`Error: ${r.error}`)
                               })
                             }
                           }}
