@@ -37,6 +37,7 @@ export default async function AdminPage() {
     { data: boostRequests },
     { data: rewardRequests },
     { data: weeklyPlan },
+    { data: challenges },
   ] = await Promise.all([
     supabase
       .from('go_creators')
@@ -70,6 +71,7 @@ export default async function AdminPage() {
     supabase.from('go_boost_requests').select('*').order('created_at', { ascending: false }),
     supabase.from('go_reward_requests').select('*').order('created_at', { ascending: false }),
     supabase.from('go_weekly_plan').select('*').order('sort_order'),
+    supabase.from('go_challenges').select('*').order('created_at', { ascending: false }),
   ])
 
   return (
@@ -88,6 +90,8 @@ export default async function AdminPage() {
       rewardRequests={(rewardRequests as RewardRequest[]) ?? []}
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       weeklyPlan={(weeklyPlan ?? []) as any}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      challenges={(challenges ?? []) as any}
     />
   )
 }

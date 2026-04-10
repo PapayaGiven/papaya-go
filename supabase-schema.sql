@@ -219,3 +219,20 @@ ALTER TABLE go_boost_requests ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "go_boost_insert" ON go_boost_requests FOR INSERT TO authenticated WITH CHECK (true);
 CREATE POLICY "go_boost_read_own" ON go_boost_requests FOR SELECT USING (creator_id IN (SELECT id FROM go_creators WHERE email = auth.email()));
 CREATE POLICY "go_boost_service" ON go_boost_requests FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- 12. go_challenges
+CREATE TABLE IF NOT EXISTS go_challenges (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  description text,
+  challenge_type text NOT NULL,
+  prize text,
+  prize_description text,
+  start_date date NOT NULL,
+  end_date date NOT NULL,
+  is_active boolean DEFAULT true,
+  created_at timestamp DEFAULT now()
+);
+ALTER TABLE go_challenges ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "go_challenges_read" ON go_challenges FOR SELECT TO authenticated USING (true);
+CREATE POLICY "go_challenges_service" ON go_challenges FOR ALL TO service_role USING (true) WITH CHECK (true);

@@ -140,6 +140,26 @@ export interface BoostRequest {
   created_at: string
 }
 
+export interface Challenge {
+  id: string
+  title: string
+  description: string | null
+  challenge_type: 'most_videos' | 'highest_gmv' | 'most_acc' | 'most_ttd'
+  prize: string | null
+  prize_description: string | null
+  start_date: string
+  end_date: string
+  is_active: boolean
+  created_at: string
+}
+
+export const CHALLENGE_TYPE_LABELS: Record<string, string> = {
+  most_videos: 'Más videos',
+  highest_gmv: 'Mayor GMV',
+  most_acc: 'Más ACC',
+  most_ttd: 'Más TTD',
+}
+
 export const NIVEL_BORDER_COLORS: Record<number, string> = {
   1: '#ff9ece',
   2: '#ffa552',

@@ -520,3 +520,34 @@ export async function deleteWeeklyPlan(id: string): Promise<void> {
   revalidatePath('/admin')
   revalidatePath('/estrategia')
 }
+
+// ── Challenges ───────────────────────────────────────
+
+export async function addChallenge(data: {
+  title: string; description: string | null; challenge_type: string;
+  prize: string | null; prize_description: string | null;
+  start_date: string; end_date: string
+}): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_challenges').insert({ ...data, is_active: true })
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/dashboard')
+  return {}
+}
+
+export async function toggleChallenge(id: string, isActive: boolean): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_challenges').update({ is_active: isActive }).eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/dashboard')
+  return {}
+}
+
+export async function deleteChallenge(id: string): Promise<void> {
+  const supabase = createAdminClient()
+  await supabase.from('go_challenges').delete().eq('id', id)
+  revalidatePath('/admin')
+  revalidatePath('/dashboard')
+}

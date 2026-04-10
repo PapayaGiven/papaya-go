@@ -14,21 +14,17 @@ interface SidebarProps {
 
 const NAV_ITEMS = [
   { href: '/dashboard', icon: '🏠', label: 'Dashboard' },
-  { href: '/estrategia', icon: '🎯', label: 'Mi Estrategia' },
   { href: '/ai-coach', icon: '🎬', label: 'Crea tu Video' },
-  { href: '/viral-videos', icon: '🔥', label: 'Videos Virales' },
-  { href: '/boost', icon: '🚀', label: 'Boost tu Video' },
-  { href: '/pois', icon: '📍', label: 'Hoteles & Atracciones' },
+  { href: '/papaya-visit', icon: '🌺', label: 'Papaya Visit' },
+  { href: '/inspiracion', icon: '🔥', label: 'Inspiración' },
   { href: '/niveles', icon: '⭐', label: 'Niveles' },
 ]
 
 const MOBILE_NAV_ITEMS = [
   { href: '/dashboard', icon: '🏠', label: 'Dashboard' },
-  { href: '/estrategia', icon: '🎯', label: 'Estrategia' },
   { href: '/ai-coach', icon: '🎬', label: 'Video' },
-  { href: '/viral-videos', icon: '🔥', label: 'Virales' },
-  { href: '/boost', icon: '🚀', label: 'Boost' },
-  { href: '/pois', icon: '📍', label: 'Hoteles' },
+  { href: '/papaya-visit', icon: '🌺', label: 'Visit' },
+  { href: '/inspiracion', icon: '🔥', label: 'Inspo' },
   { href: '/niveles', icon: '⭐', label: 'Niveles' },
 ]
 

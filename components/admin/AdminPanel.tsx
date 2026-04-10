@@ -10,8 +10,9 @@ import type {
   NivelReward,
   BoostRequest,
   RewardRequest,
+  Challenge,
 } from '@/lib/types'
-import { NIVEL_NAMES, POI_TYPE_LABELS } from '@/lib/types'
+import { NIVEL_NAMES, POI_TYPE_LABELS, CHALLENGE_TYPE_LABELS } from '@/lib/types'
 import {
   adminLogout,
   approveCreator,
@@ -43,6 +44,9 @@ import {
   // updateWeeklyPlan,
   toggleWeeklyPlan,
   deleteWeeklyPlan,
+  addChallenge,
+  toggleChallenge,
+  deleteChallenge,
 } from '@/app/admin/actions'
 
 // ── Types ─────────────────────────────────────────────
@@ -71,7 +75,7 @@ interface POIRequest {
   creator?: { full_name: string | null; email: string } | null
 }
 
-type Tab = 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests' | 'rewards-admin' | 'boosts' | 'reward-requests' | 'weekly-plan'
+type Tab = 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests' | 'rewards-admin' | 'boosts' | 'reward-requests' | 'weekly-plan' | 'challenges'
 
 interface AdminPanelProps {
   creators: Creator[]
@@ -85,6 +89,7 @@ interface AdminPanelProps {
   boostRequests: BoostRequest[]
   rewardRequests: RewardRequest[]
   weeklyPlan: WeeklyPlanItem[]
+  challenges: Challenge[]
 }
 
 interface WeeklyPlanItem {
@@ -662,6 +667,72 @@ function WeeklyPlanTab({ items, startTransition }: { items: WeeklyPlanItem[]; st
   )
 }
 
+// ── Challenges Tab ───────────────────────────────────
+
+function ChallengesTab({ challenges, startTransition }: { challenges: Challenge[]; startTransition: (fn: () => void) => void }) {
+  const [showAdd, setShowAdd] = useState(false)
+  const [form, setForm] = useState({ title: '', description: '', challenge_type: 'most_videos', prize: '', prize_description: '', start_date: '', end_date: '' })
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 4000) }
+
+  return (
+    <SectionCard>
+      <div className="p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-syne font-bold text-lg text-go-dark">Retos ({challenges.length})</h2>
+          <ActionButton onClick={() => setShowAdd(!showAdd)}>{showAdd ? 'Cancelar' : '+ Nuevo reto'}</ActionButton>
+        </div>
+        {feedback && <p className={`text-sm font-dm mb-3 px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{feedback}</p>}
+
+        {showAdd && (
+          <div className="bg-go-light border border-go-border rounded-2xl p-4 mb-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2"><label className="block text-xs font-medium text-gray-500 mb-1">Título</label><input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} className="input-field" placeholder='Ej: Reina del ACC 👑' /></div>
+              <div className="col-span-2"><label className="block text-xs font-medium text-gray-500 mb-1">Descripción</label><textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} className="input-field" rows={2} /></div>
+              <div><label className="block text-xs font-medium text-gray-500 mb-1">Tipo</label>
+                <select value={form.challenge_type} onChange={e => setForm(f => ({ ...f, challenge_type: e.target.value }))} className="input-field">
+                  {Object.entries(CHALLENGE_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+              </div>
+              <div><label className="block text-xs font-medium text-gray-500 mb-1">Premio</label><input value={form.prize} onChange={e => setForm(f => ({ ...f, prize: e.target.value }))} className="input-field" placeholder="1 noche gratis" /></div>
+              <div><label className="block text-xs font-medium text-gray-500 mb-1">Fecha inicio</label><input type="date" value={form.start_date} onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} className="input-field" /></div>
+              <div><label className="block text-xs font-medium text-gray-500 mb-1">Fecha fin</label><input type="date" value={form.end_date} onChange={e => setForm(f => ({ ...f, end_date: e.target.value }))} className="input-field" /></div>
+            </div>
+            <button disabled={!form.title || !form.start_date || !form.end_date} onClick={() => startTransition(async () => {
+              const r = await addChallenge({ title: form.title, description: form.description || null, challenge_type: form.challenge_type, prize: form.prize || null, prize_description: form.prize_description || null, start_date: form.start_date, end_date: form.end_date })
+              if (r.error) fb(`Error: ${r.error}`)
+              else { fb('✓ Reto creado'); setForm({ title: '', description: '', challenge_type: 'most_videos', prize: '', prize_description: '', start_date: '', end_date: '' }); setShowAdd(false) }
+            })} className="mt-3 font-dm text-sm font-semibold bg-go-orange text-white px-4 py-2 rounded-xl disabled:opacity-50">Guardar</button>
+          </div>
+        )}
+
+        <div className="space-y-3">
+          {challenges.map(ch => (
+            <div key={ch.id} className={`border rounded-2xl p-4 flex items-center gap-4 ${ch.is_active ? 'border-[#ff7700]/40 bg-[#ff7700]/5' : 'border-go-dark/5'}`}>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-syne font-bold text-sm text-go-dark">{ch.title}</span>
+                  <span className="font-dm text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">{CHALLENGE_TYPE_LABELS[ch.challenge_type] ?? ch.challenge_type}</span>
+                  {ch.is_active && <span className="font-dm text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#ff7700] text-white">ACTIVO</span>}
+                </div>
+                {ch.prize && <p className="font-dm text-xs text-gray-500">🎁 {ch.prize}</p>}
+                <p className="font-dm text-xs text-gray-400">{ch.start_date} → {ch.end_date}</p>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button onClick={() => startTransition(async () => { await toggleChallenge(ch.id, !ch.is_active); fb('✓') })} className={`text-xs font-semibold px-2 py-1 rounded-full ${ch.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-400'}`}>
+                  {ch.is_active ? 'Activo' : 'Inactivo'}
+                </button>
+                <button onClick={() => { if (confirm('¿Eliminar?')) startTransition(async () => { await deleteChallenge(ch.id); fb('✓ Eliminado') }) }} className="text-xs text-red-400 hover:text-red-600">Eliminar</button>
+              </div>
+            </div>
+          ))}
+          {challenges.length === 0 && <p className="text-center text-gray-400 py-6 font-dm text-sm">No hay retos configurados.</p>}
+        </div>
+      </div>
+    </SectionCard>
+  )
+}
+
 // ── Main Component ────────────────────────────────────
 
 export default function AdminPanel({
@@ -676,6 +747,7 @@ export default function AdminPanel({
   boostRequests,
   rewardRequests,
   weeklyPlan,
+  challenges,
 }: AdminPanelProps) {
   const [tab, setTab] = useState<Tab>('creators')
   const [isPending, startTransition] = useTransition()
@@ -692,6 +764,7 @@ export default function AdminPanel({
     { key: 'boosts', label: '🚀 Boosts', count: boostRequests.length },
     { key: 'reward-requests', label: '🎀 Reward Requests', count: rewardRequests.length },
     { key: 'weekly-plan', label: '📅 Plan Semanal', count: weeklyPlan.length },
+    { key: 'challenges', label: '🏆 Retos', count: challenges.length },
   ]
 
   return (
@@ -765,6 +838,7 @@ export default function AdminPanel({
         {tab === 'boosts' && <BoostsTab boosts={boostRequests} startTransition={startTransition} />}
         {tab === 'reward-requests' && <RewardRequestsTab requests={rewardRequests} startTransition={startTransition} />}
         {tab === 'weekly-plan' && <WeeklyPlanTab items={weeklyPlan} startTransition={startTransition} />}
+        {tab === 'challenges' && <ChallengesTab challenges={challenges} startTransition={startTransition} />}
       </main>
     </div>
   )

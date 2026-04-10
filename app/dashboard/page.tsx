@@ -1,313 +1,162 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import Sidebar from '@/components/Sidebar'
-import DailyChecklist from '@/components/DailyChecklist'
-import { Creator, NivelRequirement, Announcement, NIVEL_NAMES, NIVEL_COLORS } from '@/lib/types'
 import AnnouncementPopup from '@/components/AnnouncementPopup'
-
-const CHECKLIST_BY_NIVEL: Record<number, string[]> = {
-  1: [
-    'Postea 1 video ACC hoy',
-    'Usa el tag verde (no el blanco)',
-    'Agrega #tiktokgostay',
-  ],
-  2: [
-    'Postea 1 video ACC hoy',
-    'Revisa tus POIs disponibles',
-    'Usa AI Coach para tu caption',
-  ],
-}
-
-const CHECKLIST_DEFAULT = [
-  'Postea 1 video ACC hoy',
-  'Postea 1 video TTD esta semana',
-  'Revisa tu portfolio',
-]
+import DashboardClient from './DashboardClient'
+import { Creator, NivelRequirement, Announcement, Challenge, NIVEL_NAMES, NIVEL_COLORS } from '@/lib/types'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/')
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { data: creator } = await supabase.from('go_creators').select('*').eq('email', user.email!).single<Creator>()
+  if (!creator) redirect('/')
+  if (creator.status === 'pending') redirect('/pending')
 
-  if (!user) {
-    redirect('/')
-  }
-
-  const { data: creator } = await supabase
-    .from('go_creators')
-    .select('*')
-    .eq('email', user.email!)
-    .single<Creator>()
-
-  if (!creator) {
-    redirect('/')
-  }
-
-  if (creator.status === 'pending') {
-    redirect('/pending')
-  }
-
-  // Fetch announcement and nivel requirements in parallel
-  const [announcementResult, currentNivelResult, nextNivelResult] = await Promise.all([
-    supabase
-      .from('go_announcements')
-      .select('*')
-      .eq('is_active', true)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single<Announcement>(),
-    supabase
-      .from('go_nivel_requirements')
-      .select('*')
-      .eq('nivel', creator.nivel)
-      .single<NivelRequirement>(),
-    supabase
-      .from('go_nivel_requirements')
-      .select('*')
-      .eq('nivel', creator.nivel + 1)
-      .single<NivelRequirement>(),
+  const admin = createAdminClient()
+  const [announcementRes, nextNivelRes, challengeRes, leaderboardRes] = await Promise.all([
+    admin.from('go_announcements').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    admin.from('go_nivel_requirements').select('*').eq('nivel', creator.nivel + 1).maybeSingle(),
+    admin.from('go_challenges').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    admin.from('go_creators').select('id, full_name, nivel, videos_this_month, gmv_this_month, acc_this_month, ttd_this_month').eq('status', 'active').order('videos_this_month', { ascending: false }).limit(10),
   ])
 
-  const announcement = announcementResult.data
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const currentNivel = currentNivelResult.data
-  const nextNivel = nextNivelResult.data
+  const announcement = announcementRes.data as Announcement | null
+  const nextNivel = nextNivelRes.data as NivelRequirement | null
+  const challenge = challengeRes.data as Challenge | null
+  const allCreators = (leaderboardRes.data ?? []) as Pick<Creator, 'id' | 'full_name' | 'nivel' | 'videos_this_month' | 'gmv_this_month' | 'acc_this_month' | 'ttd_this_month'>[]
+
+  // Challenge leaderboard
+  let challengeLeaderboard: { name: string; nivel: number; score: number }[] = []
+  if (challenge) {
+    const fieldMap: Record<string, keyof Pick<Creator, 'videos_this_month' | 'gmv_this_month' | 'acc_this_month' | 'ttd_this_month'>> = {
+      most_videos: 'videos_this_month', highest_gmv: 'gmv_this_month', most_acc: 'acc_this_month', most_ttd: 'ttd_this_month',
+    }
+    const field = fieldMap[challenge.challenge_type] ?? 'videos_this_month'
+    challengeLeaderboard = allCreators
+      .map(c => ({ name: c.full_name?.split(' ')[0] ?? 'Creator', nivel: c.nivel, score: Number(c[field] ?? 0) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+  }
 
   const firstName = creator.full_name?.split(' ')[0] ?? 'Creadora'
   const nivelColor = NIVEL_COLORS[creator.nivel] ?? NIVEL_COLORS[1]
+  const videosRequired = nextNivel?.total_videos_required ?? 0
+  const gmvRequired = nextNivel?.gmv_required ?? 0
+  const videosRemaining = Math.max(videosRequired - creator.videos_this_month, 0)
+  const gmvRemaining = Math.max(gmvRequired - creator.gmv_this_month, 0)
+  const videosProgress = videosRequired > 0 ? Math.min((creator.videos_this_month / videosRequired) * 100, 100) : 100
 
-  // Progress calculations
-  const videosProgress = nextNivel
-    ? Math.min((creator.videos_this_month / nextNivel.total_videos_required) * 100, 100)
-    : 100
-  const gmvProgress = nextNivel
-    ? Math.min((creator.gmv_this_month / nextNivel.gmv_required) * 100, 100)
-    : 100
-  const videosRemaining = nextNivel
-    ? Math.max(nextNivel.total_videos_required - creator.videos_this_month, 0)
-    : 0
-  const gmvRemaining = nextNivel
-    ? Math.max(nextNivel.gmv_required - creator.gmv_this_month, 0)
-    : 0
-
-  const checklistItems = CHECKLIST_BY_NIVEL[creator.nivel] ?? CHECKLIST_DEFAULT
-
-  const stats = [
-    { value: `$${creator.gmv_this_month.toLocaleString()}`, label: 'GMV este mes' },
-    { value: creator.videos_this_month, label: 'Videos publicados' },
-    { value: creator.acc_this_month, label: 'ACC completados' },
-    { value: creator.ttd_this_month, label: 'TTD completados' },
-  ]
+  let challengeDaysLeft = 0
+  if (challenge) {
+    challengeDaysLeft = Math.max(Math.ceil((new Date(challenge.end_date).getTime() - Date.now()) / 86400000), 0)
+  }
 
   return (
-    <div className="min-h-screen bg-go-light">
-      <Sidebar
-        creatorName={creator.full_name}
-        tiktokHandle={creator.tiktok_handle}
-        nivel={creator.nivel}
-      />
+    <div className="min-h-screen bg-[#fff8f2]">
+      <Sidebar creatorName={creator.full_name} tiktokHandle={creator.tiktok_handle} nivel={creator.nivel} />
 
-      {/* Sun watermark */}
-      <img
-        src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png"
-        alt=""
-        className="fixed top-4 right-4 w-40 h-40 opacity-[0.04] pointer-events-none select-none z-0"
-      />
+      {announcement && announcement.display_type !== 'popup' && (
+        <div className="md:ml-[220px] bg-go-orange text-white px-4 py-3 font-dm text-sm text-center">
+          📢 {announcement.message}
+        </div>
+      )}
+      {announcement && announcement.display_type === 'popup' && <AnnouncementPopup announcement={announcement} />}
 
       <main className="md:ml-[220px] pb-20 md:pb-0">
-        {/* Announcement banner */}
-        {announcement && announcement.display_type !== 'popup' && (
-          <div className="bg-go-orange text-white px-4 py-3 font-dm text-sm text-center">
-            {announcement.image_url && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={announcement.image_url}
-                alt=""
-                className="mx-auto mb-2 max-h-32 rounded-lg object-contain"
-              />
-            )}
-            📢 {announcement.message}
-          </div>
-        )}
+        <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-6">
 
-        {/* Announcement popup */}
-        {announcement && announcement.display_type === 'popup' && (
-          <AnnouncementPopup announcement={announcement} />
-        )}
-
-        <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-8">
-          {/* Welcome hero */}
+          {/* HERO */}
           <div className="rounded-2xl overflow-hidden relative" style={{ background: 'linear-gradient(135deg, #fff8f2 0%, #ffe8d0 100%)' }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png"
-              alt=""
-              className="absolute right-4 top-1/2 -translate-y-1/2 w-32 md:w-44 h-32 md:h-44 opacity-[0.15] pointer-events-none select-none"
-              aria-hidden="true"
-            />
+            <img src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png" alt="" className="absolute right-4 top-1/2 -translate-y-1/2 w-32 md:w-44 h-32 md:h-44 opacity-[0.15] pointer-events-none select-none" aria-hidden="true" />
             <div className="p-6 md:p-8 relative z-10">
-              <h1 className="font-syne font-bold text-2xl md:text-3xl text-go-dark">
-                ¡Hola, {firstName}! 🧡
-              </h1>
-              <p className="font-dm text-sm text-go-dark/60 mt-2 max-w-md">
+              <h1 className="font-syne font-bold text-2xl md:text-3xl text-[#1a0800]">¡Hola, {firstName}! 🧡</h1>
+              <p className="font-dm text-sm text-[#1a0800]/60 mt-2 max-w-md">
                 {creator.nivel === 1 && 'Estás comenzando tu journey. ¡Cada video te acerca más! 🌱'}
                 {creator.nivel === 2 && '¡Vas increíble! Sigue posteando y los deals llegarán. 🔥'}
                 {creator.nivel === 3 && 'Eres Partner de Papaya GO. ¡El mundo te está viendo! ⭐'}
                 {creator.nivel >= 4 && 'Elite. La mejor de las mejores. Tú inspiras a todas. 👑'}
               </p>
               <div className="flex items-center gap-3 mt-4">
-                <span className={`font-dm text-xs font-bold px-3 py-1 rounded-full ${nivelColor.bg} ${nivelColor.text}`}>
-                  Nivel {creator.nivel} · {NIVEL_NAMES[creator.nivel]}
-                </span>
-                <span className="font-dm text-xs text-go-dark/50">
-                  {creator.videos_this_month} videos este mes
-                </span>
+                <span className={`font-dm text-xs font-bold px-3 py-1 rounded-full ${nivelColor.bg} ${nivelColor.text}`}>Nivel {creator.nivel} · {NIVEL_NAMES[creator.nivel]}</span>
+                <span className="font-dm text-xs text-[#1a0800]/50">{creator.videos_this_month} videos este mes</span>
               </div>
             </div>
           </div>
 
-          {/* Month progress */}
-          {nextNivel && (() => {
-            const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
-            const monthName = monthNames[new Date().getMonth()]
-            const vidProgress = Math.min((creator.videos_this_month / nextNivel.total_videos_required) * 100, 100)
-            const gmvProg = Math.min((creator.gmv_this_month / nextNivel.gmv_required) * 100, 100)
-            return (
-              <div className="bg-[#fff8f2] border border-[rgba(255,119,0,0.12)] rounded-2xl p-5">
-                <h2 className="font-syne font-bold text-base text-go-dark mb-3">
-                  📅 {monthName} — Tu progreso
-                </h2>
-                <p className="font-dm text-sm text-gray-500 mb-4">
-                  Llevas <span className="font-semibold text-go-dark">{creator.videos_this_month} videos</span> este mes.
-                  Te faltan <span className="font-semibold text-go-orange">{videosRemaining} videos</span> y{' '}
-                  <span className="font-semibold text-go-orange">${gmvRemaining.toLocaleString()} GMV</span> para mantener tu{' '}
-                  <span className="font-semibold">Nivel {creator.nivel + 1}</span>.
-                </p>
-                <div className="space-y-3">
-                  <div>
-                    <div className="flex justify-between mb-1">
-                      <span className="font-dm text-xs text-gray-400">Videos</span>
-                      <span className="font-dm text-xs font-semibold text-go-dark">{creator.videos_this_month}/{nextNivel.total_videos_required}</span>
-                    </div>
-                    <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-go-orange to-go-peach rounded-full transition-all" style={{ width: `${vidProgress}%` }} />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="flex justify-between mb-1">
-                      <span className="font-dm text-xs text-gray-400">GMV</span>
-                      <span className="font-dm text-xs font-semibold text-go-dark">${creator.gmv_this_month.toLocaleString()}/${nextNivel.gmv_required.toLocaleString()}</span>
-                    </div>
-                    <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-go-peach to-go-pink rounded-full transition-all" style={{ width: `${gmvProg}%` }} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )
-          })()}
-
-          {/* Stats grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-            {stats.map((stat) => (
-              <div
-                key={stat.label}
-                className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5 flex flex-col gap-1"
-              >
-                <span className="font-syne font-bold text-2xl text-go-orange">
-                  {stat.value}
-                </span>
-                <span className="font-dm text-xs text-gray-400">{stat.label}</span>
-              </div>
-            ))}
+          {/* CARD 1: Tu tarea de hoy */}
+          <div className="bg-white border-2 border-[#ff7700]/30 rounded-2xl p-6 shadow-sm">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xl">🎯</span>
+              <h2 className="font-syne font-bold text-lg text-[#1a0800]">Tu tarea de hoy</h2>
+            </div>
+            <p className="font-dm text-sm text-gray-500 mb-4">
+              {creator.nivel <= 2 ? 'Postea 1 video ACC de un hotel hoy. Usa el tag verde y agrega #tiktokgostay' : 'Postea 1 video ACC o TTD hoy. Revisa tus Papaya Visits para inspiración.'}
+            </p>
+            <div className="flex flex-wrap gap-2 mb-4">
+              <span className="font-dm text-xs font-semibold px-3 py-1 rounded-full bg-blue-100 text-blue-700">ACC</span>
+              <span className="font-dm text-xs font-semibold px-3 py-1 rounded-full bg-[#ff7700]/10 text-[#ff7700]">#tiktokgostay</span>
+            </div>
+            <a href="/ai-coach" className="block text-center py-3 rounded-xl font-dm text-sm font-semibold text-white bg-[#ff7700] hover:bg-[#ff7700]/90 transition">
+              ✨ Crear contenido →
+            </a>
           </div>
 
-          {/* Progress to next level */}
-          {nextNivel && (
-            <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5 md:p-6">
-              <h2 className="font-syne font-bold text-lg text-go-dark mb-4">
-                Progreso al siguiente nivel
-              </h2>
+          {/* CARD 2: Progress */}
+          <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5">
+            <h2 className="font-syne font-bold text-base text-[#1a0800] mb-3">📅 Tu progreso este mes</h2>
+            <div className="flex flex-wrap gap-2 mb-4">
+              <span className="font-dm text-xs font-semibold px-3 py-1.5 rounded-full bg-[#ff7700]/10 text-[#ff7700]">${creator.gmv_this_month.toLocaleString()} GMV</span>
+              <span className="font-dm text-xs font-semibold px-3 py-1.5 rounded-full bg-gray-100 text-gray-600">{creator.videos_this_month} videos</span>
+              <span className="font-dm text-xs font-semibold px-3 py-1.5 rounded-full bg-gray-100 text-gray-600">{creator.acc_this_month} ACC</span>
+              <span className="font-dm text-xs font-semibold px-3 py-1.5 rounded-full bg-gray-100 text-gray-600">{creator.ttd_this_month} TTD</span>
+            </div>
+            {nextNivel && (
+              <>
+                <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden mb-2">
+                  <div className="h-full bg-gradient-to-r from-[#ff7700] to-[#ffa552] rounded-full transition-all" style={{ width: `${videosProgress}%` }} />
+                </div>
+                <p className="font-dm text-xs text-gray-400">Te faltan <span className="font-semibold text-[#1a0800]">{videosRemaining} videos</span> y <span className="font-semibold text-[#1a0800]">${gmvRemaining.toLocaleString()} GMV</span> para Nivel {creator.nivel + 1}</p>
+              </>
+            )}
+          </div>
 
-              <div className="flex items-center gap-2 mb-5">
-                <span
-                  className={`font-dm text-xs font-bold px-2.5 py-1 rounded-full ${nivelColor.bg} ${nivelColor.text}`}
-                >
-                  Nivel {creator.nivel} · {NIVEL_NAMES[creator.nivel]}
-                </span>
-                <span className="text-gray-400">→</span>
-                <span
-                  className={`font-dm text-xs font-bold px-2.5 py-1 rounded-full ${(NIVEL_COLORS[creator.nivel + 1] ?? NIVEL_COLORS[4]).bg} ${(NIVEL_COLORS[creator.nivel + 1] ?? NIVEL_COLORS[4]).text}`}
-                >
-                  Nivel {creator.nivel + 1} · {NIVEL_NAMES[creator.nivel + 1] ?? 'Elite'}
-                </span>
+          {/* CARD 3: Challenge */}
+          {challenge && (
+            <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">🏆</span>
+                  <h2 className="font-syne font-bold text-base text-[#1a0800]">{challenge.title}</h2>
+                </div>
+                <span className="font-dm text-xs font-semibold px-3 py-1 rounded-full bg-[#ff7700] text-white">{challengeDaysLeft} días</span>
               </div>
-
-              {/* Videos progress */}
-              <div className="mb-4">
-                <div className="flex justify-between mb-1">
-                  <span className="font-dm text-sm text-gray-600">Videos</span>
-                  <span className="font-dm text-sm font-semibold text-go-dark">
-                    {creator.videos_this_month}/{nextNivel.total_videos_required}
-                  </span>
+              {challenge.description && <p className="font-dm text-sm text-gray-500 mb-3">{challenge.description}</p>}
+              {challenge.prize && (
+                <div className="bg-[#fff8f2] border border-[rgba(255,119,0,0.08)] rounded-xl p-3 mb-4">
+                  <p className="font-dm text-sm font-medium text-[#1a0800]">🎁 Premio: {challenge.prize}</p>
                 </div>
-                <div className="h-1 bg-gray-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-go-orange rounded-full transition-all"
-                    style={{ width: `${videosProgress}%` }}
-                  />
+              )}
+              {challengeLeaderboard.length > 0 && (
+                <div className="space-y-2">
+                  <p className="font-dm text-xs font-semibold text-gray-400 uppercase tracking-wider">Top 3</p>
+                  {challengeLeaderboard.map((c, i) => (
+                    <div key={i} className="flex items-center gap-3 py-1.5">
+                      <span className={`font-syne font-bold text-base w-6 text-center ${i === 0 ? 'text-[#ff7700]' : i === 1 ? 'text-[#ffa552]' : 'text-[#ff9ece]'}`}>#{i + 1}</span>
+                      <span className="font-dm text-sm text-[#1a0800]">{c.name}</span>
+                      <span className="font-dm text-xs text-gray-400 ml-auto">{c.score}</span>
+                    </div>
+                  ))}
                 </div>
-              </div>
-
-              {/* GMV progress */}
-              <div className="mb-4">
-                <div className="flex justify-between mb-1">
-                  <span className="font-dm text-sm text-gray-600">GMV</span>
-                  <span className="font-dm text-sm font-semibold text-go-dark">
-                    ${creator.gmv_this_month.toLocaleString()}/${nextNivel.gmv_required.toLocaleString()}
-                  </span>
-                </div>
-                <div className="h-1 bg-gray-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-go-peach rounded-full transition-all"
-                    style={{ width: `${gmvProgress}%` }}
-                  />
-                </div>
-              </div>
-
-              <p className="font-dm text-sm text-gray-500">
-                Te faltan <span className="font-semibold text-go-dark">{videosRemaining} videos</span> y{' '}
-                <span className="font-semibold text-go-dark">${gmvRemaining.toLocaleString()} GMV</span> para
-                subir a{' '}
-                <span className="font-semibold text-go-orange">
-                  Nivel {creator.nivel + 1} ({NIVEL_NAMES[creator.nivel + 1] ?? 'Elite'})
-                </span>
-              </p>
+              )}
             </div>
           )}
 
-          {/* If max level */}
-          {!nextNivel && (
-            <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5 md:p-6 text-center">
-              <span className="text-4xl mb-2 block">🏆</span>
-              <h2 className="font-syne font-bold text-lg text-go-dark mb-1">
-                ¡Estás en el nivel máximo!
-              </h2>
-              <p className="font-dm text-sm text-gray-500">
-                Nivel {creator.nivel} · {NIVEL_NAMES[creator.nivel]}. Sigue creando contenido increíble.
-              </p>
-            </div>
-          )}
-
-          {/* Today's checklist */}
-          <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5 md:p-6">
-            <h2 className="font-syne font-bold text-lg text-go-dark mb-4">
-              Checklist de hoy
-            </h2>
-            <DailyChecklist items={checklistItems} />
-          </div>
+          {/* CARD 4: Boost rápido */}
+          <DashboardClient creatorId={creator.id} creatorName={creator.full_name} tiktokHandle={creator.tiktok_handle} />
         </div>
       </main>
     </div>
