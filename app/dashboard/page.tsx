@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import Sidebar from '@/components/Sidebar'
 import AnnouncementPopup from '@/components/AnnouncementPopup'
 import DashboardClient from './DashboardClient'
+import DashboardHashtags from './DashboardHashtags'
 import { Creator, NivelRequirement, Announcement, Challenge, NIVEL_NAMES, NIVEL_COLORS } from '@/lib/types'
 
 export default async function DashboardPage() {
@@ -93,22 +94,31 @@ export default async function DashboardPage() {
           </div>
 
           {/* CARD 1: Tu tarea de hoy */}
-          <div className="bg-white border-2 border-[#ff7700]/30 rounded-2xl p-6 shadow-sm">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-xl">🎯</span>
-              <h2 className="font-syne font-bold text-lg text-[#1a0800]">Tu tarea de hoy</h2>
-            </div>
-            <p className="font-dm text-sm text-gray-500 mb-4">
-              {creator.nivel <= 2 ? 'Postea 1 video ACC de un hotel hoy. Usa el tag verde y agrega #tiktokgostay' : 'Postea 1 video ACC o TTD hoy. Revisa tus Papaya Visits para inspiración.'}
-            </p>
-            <div className="flex flex-wrap gap-2 mb-4">
-              <span className="font-dm text-xs font-semibold px-3 py-1 rounded-full bg-blue-100 text-blue-700">ACC</span>
-              <span className="font-dm text-xs font-semibold px-3 py-1 rounded-full bg-[#ff7700]/10 text-[#ff7700]">#tiktokgostay</span>
-            </div>
-            <a href="/ai-coach" className="block text-center py-3 rounded-xl font-dm text-sm font-semibold text-white bg-[#ff7700] hover:bg-[#ff7700]/90 transition">
-              ✨ Crear contenido →
-            </a>
-          </div>
+          {(() => {
+            const rawHashtags = creator.special_hashtags ?? '#tiktokgostay'
+            const tags = rawHashtags.replace(/,/g, ' ').split(/\s+/).filter(Boolean).map(t => t.startsWith('#') ? t : `#${t}`)
+            return (
+              <div className="bg-white border-2 border-[#ff7700]/30 rounded-2xl p-6 shadow-sm">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xl">🎯</span>
+                  <h2 className="font-syne font-bold text-lg text-[#1a0800]">Tu tarea de hoy</h2>
+                </div>
+                <p className="font-dm text-sm text-gray-500 mb-4">
+                  {creator.nivel <= 2 ? 'Postea 1 video ACC de un hotel hoy. Usa el tag verde.' : 'Postea 1 video ACC o TTD hoy. Revisa tus Papaya Visits para inspiración.'}
+                </p>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  <span className="font-dm text-xs font-semibold px-3 py-1 rounded-full bg-blue-100 text-blue-700">ACC</span>
+                  {tags.map(tag => (
+                    <span key={tag} className="font-dm text-xs font-semibold px-3 py-1 rounded-full bg-[#ff7700]/10 text-[#ff7700]">{tag}</span>
+                  ))}
+                </div>
+                <DashboardHashtags tags={tags} />
+                <a href="/ai-coach" className="block text-center py-3 rounded-xl font-dm text-sm font-semibold text-white bg-[#ff7700] hover:bg-[#ff7700]/90 transition mt-3">
+                  ✨ Crear contenido →
+                </a>
+              </div>
+            )
+          })()}
 
           {/* CARD 2: Progress */}
           <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5">
@@ -163,12 +173,10 @@ export default async function DashboardPage() {
           {/* CARD 4: Boost rápido */}
           <DashboardClient creatorId={creator.id} creatorName={creator.full_name} tiktokHandle={creator.tiktok_handle} />
 
-          {/* WhatsApp community card */}
-          <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-4 flex items-center gap-3">
-            <span className="text-lg">💬</span>
-            <p className="font-dm text-xs text-gray-500 flex-1">¿Tienes dudas? Únete a nuestra comunidad</p>
-            <a href="https://chat.whatsapp.com/IKy0BMc8ROl55Hm4r47C2Z?mode=gi_t" target="_blank" rel="noopener noreferrer" className="font-dm text-xs font-semibold text-white bg-[#25D366] hover:bg-[#20BD5A] px-4 py-2 rounded-xl transition shrink-0">
-              Unirse →
+          {/* WhatsApp */}
+          <div className="text-center">
+            <a href="https://chat.whatsapp.com/IKy0BMc8ROl55Hm4r47C2Z?mode=gi_t" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 font-dm text-xs font-semibold text-white bg-[#25D366] hover:bg-[#20BD5A] px-4 py-2 rounded-full transition">
+              💬 Grupo de WhatsApp
             </a>
           </div>
         </div>

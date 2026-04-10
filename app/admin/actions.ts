@@ -255,10 +255,15 @@ export async function updateCreatorStrategy(id: string, data: {
   special_hashtags?: string | null
   creative_brief?: string | null
 }): Promise<{ error?: string }> {
+  // Normalize hashtags: strip commas, make space-separated
+  if (data.special_hashtags) {
+    data.special_hashtags = data.special_hashtags.replace(/,/g, ' ').split(/\s+/).filter(Boolean).map(t => t.startsWith('#') ? t : `#${t}`).join(' ')
+  }
   const supabase = createAdminClient()
   const { error } = await supabase.from('go_creators').update(data).eq('id', id)
   if (error) return { error: error.message }
   revalidatePath('/admin')
+  revalidatePath('/dashboard')
   return {}
 }
 

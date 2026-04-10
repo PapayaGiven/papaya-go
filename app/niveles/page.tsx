@@ -36,13 +36,6 @@ export default async function NivelesPage() {
             rewards={(rewardsRes.data ?? []) as NivelReward[]}
             myRequests={(myRequestsRes.data ?? []) as RewardRequest[]}
           />
-          <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-4 flex items-center gap-3 mt-6">
-            <span className="text-lg">💬</span>
-            <p className="font-dm text-xs text-gray-500 flex-1">¿Preguntas sobre tus rewards? Escríbenos en WhatsApp</p>
-            <a href="https://chat.whatsapp.com/IKy0BMc8ROl55Hm4r47C2Z?mode=gi_t" target="_blank" rel="noopener noreferrer" className="font-dm text-xs font-semibold text-white bg-[#25D366] hover:bg-[#20BD5A] px-4 py-2 rounded-xl transition shrink-0">
-              WhatsApp →
-            </a>
-          </div>
         </div>
       </main>
     </div>

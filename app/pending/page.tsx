@@ -18,10 +18,6 @@ export default function PendingPage() {
         <Link href="/" className="font-dm text-sm text-go-orange hover:underline">
           ← Volver al inicio
         </Link>
-        <br />
-        <a href="https://chat.whatsapp.com/IKy0BMc8ROl55Hm4r47C2Z?mode=gi_t" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 font-dm text-sm font-semibold text-white bg-[#25D366] hover:bg-[#20BD5A] px-5 py-2.5 rounded-xl transition mt-4">
-          💬 ¿Ya tienes tu código? Pregunta en WhatsApp →
-        </a>
       </div>
     </div>
   )

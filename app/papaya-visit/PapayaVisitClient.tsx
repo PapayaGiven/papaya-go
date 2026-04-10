@@ -90,9 +90,6 @@ export default function PapayaVisitClient({ pois, creatorNivel, creatorId, creat
           <p className="font-dm text-sm text-gray-400">
             Pronto añadiremos más Papaya Visits 🌺
           </p>
-          <a href="https://chat.whatsapp.com/IKy0BMc8ROl55Hm4r47C2Z?mode=gi_t" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 font-dm text-xs font-semibold text-white bg-[#25D366] hover:bg-[#20BD5A] px-4 py-2 rounded-xl transition mt-3">
-            💬 Únete a nuestra comunidad →
-          </a>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
