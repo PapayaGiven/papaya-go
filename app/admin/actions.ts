@@ -110,6 +110,18 @@ export async function addCreator(data: {
   return { success: true, access_code: accessCode }
 }
 
+// ── Email Check ─────────────────────────────────────
+
+export async function checkEmail(email: string): Promise<{ error?: string; hasAuth?: boolean }> {
+  const supabase = createAdminClient()
+  const { data: creator } = await supabase.from('go_creators').select('id, status').eq('email', email.toLowerCase().trim()).single()
+  if (!creator) return { error: 'Este email no está registrado. Contacta a tu admin.' }
+  if (creator.status !== 'active') return { error: 'Tu cuenta aún no está activa. Contacta a tu agencia.' }
+  const { data: { users } } = await supabase.auth.admin.listUsers()
+  const hasAuth = users.some(u => u.email === email.toLowerCase().trim())
+  return { hasAuth }
+}
+
 // ── Access Code Auth ─────────────────────────────────
 
 export async function verifyAccessCode(email: string, code: string): Promise<{ error?: string; hasAuthAccount?: boolean }> {
@@ -428,11 +440,29 @@ export async function addNivelReward(data: {
   reward_name: string
   reward_description: string | null
   reward_emoji: string
+  cta_label?: string | null
+  cta_url?: string | null
 }): Promise<{ error?: string }> {
   const supabase = createAdminClient()
   const { error } = await supabase.from('go_nivel_rewards').insert(data)
   if (error) return { error: error.message }
   revalidatePath('/admin')
+  return {}
+}
+
+export async function updateNivelReward(id: string, data: {
+  nivel?: number
+  reward_name?: string
+  reward_description?: string | null
+  reward_emoji?: string
+  cta_label?: string | null
+  cta_url?: string | null
+}): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_nivel_rewards').update(data).eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/niveles')
   return {}
 }
 

@@ -82,6 +82,17 @@ export default function Sidebar({ creatorName, tiktokHandle, nivel }: SidebarPro
         })}
       </nav>
 
+      <div className="px-3 mb-2">
+        <a
+          href="https://chat.whatsapp.com/IKy0BMc8ROl55Hm4r47C2Z?mode=gi_t"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#25D366] text-white font-dm text-xs font-semibold hover:bg-[#20BD5A] transition w-full"
+        >
+          💬 Grupo de WhatsApp
+        </a>
+      </div>
+
       <div className="p-4 border-t border-go-border">
         <div className="flex items-center gap-3 mb-3">
           <div className="w-9 h-9 rounded-full bg-go-orange/10 flex items-center justify-center text-sm font-syne font-bold text-go-orange">

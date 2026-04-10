@@ -29,10 +29,10 @@ export default function AnnouncementPopup({ announcement }: { announcement: Anno
         >
           ✕
         </button>
-        {announcement.image_url && (
+        {(announcement.image_url || announcement.image_file_url) && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={announcement.image_url}
+            src={announcement.image_url || announcement.image_file_url || undefined}
             alt=""
             className="w-full rounded-xl mb-4 max-h-48 object-cover"
           />

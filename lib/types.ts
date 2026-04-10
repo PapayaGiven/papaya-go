@@ -79,6 +79,7 @@ export interface Announcement {
   id: string
   message: string
   image_url: string | null
+  image_file_url?: string | null
   display_type: 'banner' | 'popup'
   is_active: boolean
   created_at: string
@@ -110,6 +111,8 @@ export interface NivelReward {
   reward_name: string
   reward_description: string | null
   reward_emoji: string
+  cta_label: string | null
+  cta_url: string | null
   is_active: boolean
   created_at: string
 }

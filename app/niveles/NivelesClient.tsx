@@ -213,7 +213,7 @@ export default function NivelesClient({ creator, requirements, rewards, myReques
                               )}
                             </div>
                             {(isPast || isCurrent) && !isFuture && (
-                              <div className="shrink-0">
+                              <div className="shrink-0 flex items-center gap-2">
                                 {alreadyRequested ? (
                                   <span className="font-dm text-[11px] text-gray-400 font-medium whitespace-nowrap">
                                     Solicitado ✓
@@ -230,6 +230,16 @@ export default function NivelesClient({ creator, requirements, rewards, myReques
                                   >
                                     Solicitar →
                                   </button>
+                                )}
+                                {reward.cta_url && (
+                                  <a
+                                    href={reward.cta_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-dm text-[11px] font-semibold text-go-orange border border-go-orange px-2 py-0.5 rounded-lg hover:bg-go-orange/10 transition whitespace-nowrap"
+                                  >
+                                    {reward.cta_label ?? 'Ver'}
+                                  </a>
                                 )}
                               </div>
                             )}

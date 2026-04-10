@@ -59,8 +59,13 @@ export default async function DashboardPage() {
       <Sidebar creatorName={creator.full_name} tiktokHandle={creator.tiktok_handle} nivel={creator.nivel} />
 
       {announcement && announcement.display_type !== 'popup' && (
-        <div className="md:ml-[220px] bg-go-orange text-white px-4 py-3 font-dm text-sm text-center">
-          📢 {announcement.message}
+        <div className="md:ml-[220px] bg-go-orange text-white px-4 py-3 font-dm text-sm">
+          <div className="max-w-5xl mx-auto flex items-center gap-4">
+            {announcement.image_url && (
+              <img src={announcement.image_url} alt="" className="h-16 w-16 rounded-xl object-cover shrink-0" />
+            )}
+            <span className="flex-1">📢 {announcement.message}</span>
+          </div>
         </div>
       )}
       {announcement && announcement.display_type === 'popup' && <AnnouncementPopup announcement={announcement} />}
@@ -157,6 +162,15 @@ export default async function DashboardPage() {
 
           {/* CARD 4: Boost rápido */}
           <DashboardClient creatorId={creator.id} creatorName={creator.full_name} tiktokHandle={creator.tiktok_handle} />
+
+          {/* WhatsApp community card */}
+          <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-4 flex items-center gap-3">
+            <span className="text-lg">💬</span>
+            <p className="font-dm text-xs text-gray-500 flex-1">¿Tienes dudas? Únete a nuestra comunidad</p>
+            <a href="https://chat.whatsapp.com/IKy0BMc8ROl55Hm4r47C2Z?mode=gi_t" target="_blank" rel="noopener noreferrer" className="font-dm text-xs font-semibold text-white bg-[#25D366] hover:bg-[#20BD5A] px-4 py-2 rounded-xl transition shrink-0">
+              Unirse →
+            </a>
+          </div>
         </div>
       </main>
     </div>

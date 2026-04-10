@@ -36,6 +36,7 @@ import {
   updatePOIRequestStatus,
   updatePOITimesSold,
   addNivelReward,
+  updateNivelReward,
   toggleNivelReward,
   deleteNivelReward,
   updateBoostStatus,
@@ -374,9 +375,29 @@ function POIRequestsTab({ requests, startTransition }: { requests: POIRequest[];
 
 function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[]; startTransition: (fn: () => void) => void }) {
   const [showAdd, setShowAdd] = useState(false)
-  const [form, setForm] = useState({ nivel: '1', reward_name: '', reward_description: '', reward_emoji: '🎁' })
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [form, setForm] = useState({ nivel: '1', reward_name: '', reward_description: '', reward_emoji: '🎁', cta_label: '', cta_url: '' })
   const [feedback, setFeedback] = useState<string | null>(null)
   function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
+
+  function startEdit(r: NivelReward) {
+    setEditingId(r.id)
+    setForm({
+      nivel: String(r.nivel),
+      reward_name: r.reward_name,
+      reward_description: r.reward_description ?? '',
+      reward_emoji: r.reward_emoji,
+      cta_label: r.cta_label ?? '',
+      cta_url: r.cta_url ?? '',
+    })
+    setShowAdd(true)
+  }
+
+  function resetForm() {
+    setEditingId(null)
+    setForm({ nivel: '1', reward_name: '', reward_description: '', reward_emoji: '🎁', cta_label: '', cta_url: '' })
+    setShowAdd(false)
+  }
 
   const grouped = [1, 2, 3, 4].map(n => ({ nivel: n, items: rewards.filter(r => r.nivel === n) }))
 
@@ -385,7 +406,7 @@ function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[];
       <div className="p-6">
         <h2 className="font-syne font-bold text-lg text-go-dark mb-4">Rewards por Nivel ({rewards.length})</h2>
 
-        <button onClick={() => setShowAdd(!showAdd)} className="font-dm text-sm font-semibold bg-go-orange text-white px-4 py-2 rounded-xl hover:bg-go-orange/90 transition mb-4">
+        <button onClick={() => { if (showAdd) resetForm(); else setShowAdd(true) }} className="font-dm text-sm font-semibold bg-go-orange text-white px-4 py-2 rounded-xl hover:bg-go-orange/90 transition mb-4">
           {showAdd ? 'Cancelar' : '+ Agregar Reward'}
         </button>
 
@@ -396,14 +417,29 @@ function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[];
             onSubmit={(e) => {
               e.preventDefault()
               startTransition(async () => {
-                const res = await addNivelReward({
-                  nivel: parseInt(form.nivel),
-                  reward_name: form.reward_name,
-                  reward_description: form.reward_description || null,
-                  reward_emoji: form.reward_emoji,
-                })
-                if (res.error) fb(`Error: ${res.error}`)
-                else { fb('Reward agregado'); setForm({ nivel: '1', reward_name: '', reward_description: '', reward_emoji: '🎁' }); setShowAdd(false) }
+                if (editingId) {
+                  const res = await updateNivelReward(editingId, {
+                    nivel: parseInt(form.nivel),
+                    reward_name: form.reward_name,
+                    reward_description: form.reward_description || null,
+                    reward_emoji: form.reward_emoji,
+                    cta_label: form.cta_label || null,
+                    cta_url: form.cta_url || null,
+                  })
+                  if (res.error) fb(`Error: ${res.error}`)
+                  else { fb('Reward actualizado'); resetForm() }
+                } else {
+                  const res = await addNivelReward({
+                    nivel: parseInt(form.nivel),
+                    reward_name: form.reward_name,
+                    reward_description: form.reward_description || null,
+                    reward_emoji: form.reward_emoji,
+                    cta_label: form.cta_label || null,
+                    cta_url: form.cta_url || null,
+                  })
+                  if (res.error) fb(`Error: ${res.error}`)
+                  else { fb('Reward agregado'); resetForm() }
+                }
               })
             }}
             className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-6 p-4 bg-go-light rounded-xl border border-go-border"
@@ -418,7 +454,11 @@ function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[];
             <FormInput label="Descripcion" value={form.reward_description} onChange={(v) => setForm({ ...form, reward_description: v })} />
             <div className="flex items-end gap-2">
               <FormInput label="Emoji" value={form.reward_emoji} onChange={(v) => setForm({ ...form, reward_emoji: v })} />
-              <ActionButton onClick={() => {}} variant="primary">Guardar</ActionButton>
+            </div>
+            <FormInput label="CTA Label" value={form.cta_label} onChange={(v) => setForm({ ...form, cta_label: v })} />
+            <FormInput label="CTA URL" value={form.cta_url} onChange={(v) => setForm({ ...form, cta_url: v })} />
+            <div className="sm:col-span-2 flex items-end">
+              <ActionButton onClick={() => {}} variant="primary">{editingId ? 'Actualizar' : 'Guardar'}</ActionButton>
             </div>
           </form>
         )}
@@ -430,7 +470,7 @@ function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[];
               <table className="w-full text-sm font-dm">
                 <thead className="bg-go-dark/[0.03]">
                   <tr>
-                    {['Emoji', 'Nombre', 'Descripcion', 'Activo', 'Acciones'].map(h => (
+                    {['Emoji', 'Nombre', 'Descripcion', 'CTA', 'Activo', 'Acciones'].map(h => (
                       <th key={h} className="px-4 py-3 text-left text-xs text-go-dark/50 font-semibold uppercase tracking-wide">{h}</th>
                     ))}
                   </tr>
@@ -441,6 +481,7 @@ function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[];
                       <td className="px-4 py-3 text-lg">{r.reward_emoji}</td>
                       <td className="px-4 py-3 font-medium text-go-dark">{r.reward_name}</td>
                       <td className="px-4 py-3 text-go-dark/60 text-xs">{r.reward_description ?? '—'}</td>
+                      <td className="px-4 py-3 text-go-dark/60 text-xs">{r.cta_label ? `${r.cta_label}` : '—'}</td>
                       <td className="px-4 py-3">
                         <ActionButton onClick={() => startTransition(async () => {
                           const res = await toggleNivelReward(r.id, !r.is_active)
@@ -450,7 +491,10 @@ function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[];
                           {r.is_active ? 'Desactivar' : 'Activar'}
                         </ActionButton>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 flex gap-2">
+                        <ActionButton onClick={() => startEdit(r)} variant="ghost">
+                          Editar
+                        </ActionButton>
                         <ActionButton onClick={() => startTransition(async () => {
                           await deleteNivelReward(r.id)
                           fb('Reward eliminado')
@@ -460,7 +504,7 @@ function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[];
                       </td>
                     </tr>
                   ))}
-                  {g.items.length === 0 && <tr><td colSpan={5} className="px-4 py-4 text-center text-go-dark/40 text-xs">Sin rewards para este nivel.</td></tr>}
+                  {g.items.length === 0 && <tr><td colSpan={6} className="px-4 py-4 text-center text-go-dark/40 text-xs">Sin rewards para este nivel.</td></tr>}
                 </tbody>
               </table>
             </div>
