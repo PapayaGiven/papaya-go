@@ -28,6 +28,8 @@ import {
   deleteTemplate,
   setAnnouncement,
   toggleAnnouncement,
+  updateAnnouncement,
+  deleteAnnouncement,
   updatePortfolioStatus,
   addViralVideo,
   toggleViralVideo,
@@ -1594,89 +1596,88 @@ function AnnouncementsTab({
   announcements: Announcement[]
   startTransition: (cb: () => void) => void
 }) {
-  const [newMessage, setNewMessage] = useState('')
-  const [newImageUrl, setNewImageUrl] = useState('')
+  const [showForm, setShowForm] = useState(false)
+  const [editId, setEditId] = useState<string | null>(null)
+  const [message, setMessage] = useState('')
+  const [imageUrl, setImageUrl] = useState('')
   const [displayType, setDisplayType] = useState<'banner' | 'popup'>('banner')
   const [uploadingImg, setUploadingImg] = useState(false)
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 4000) }
 
-  const activeAnnouncement = announcements.find((a) => a.is_active)
+  function resetForm() {
+    setEditId(null)
+    setMessage('')
+    setImageUrl('')
+    setDisplayType('banner')
+    setShowForm(false)
+  }
 
-  function handleSet(e: React.FormEvent) {
+  function startEdit(a: Announcement) {
+    setEditId(a.id)
+    setMessage(a.message)
+    setImageUrl(a.image_url || '')
+    setDisplayType(a.display_type || 'banner')
+    setShowForm(true)
+  }
+
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!newMessage.trim()) return
+    if (!message.trim()) return
     startTransition(async () => {
-      await setAnnouncement(newMessage.trim(), newImageUrl.trim() || undefined, displayType)
-      setNewMessage('')
-      setNewImageUrl('')
-      setDisplayType('banner')
+      if (editId) {
+        const r = await updateAnnouncement(editId, { message: message.trim(), image_url: imageUrl.trim() || null, display_type: displayType })
+        if (r.error) fb(`Error: ${r.error}`)
+        else fb('✓ Anuncio actualizado')
+      } else {
+        await setAnnouncement(message.trim(), imageUrl.trim() || undefined, displayType)
+        fb('✓ Anuncio publicado')
+      }
+      resetForm()
     })
+  }
+
+  async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadingImg(true)
+    try {
+      const { createClient } = await import('@/lib/supabase/client')
+      const supabase = createClient()
+      const path = `announcements/${Date.now()}-${file.name}`
+      const { error } = await supabase.storage.from('announcements').upload(path, file, { upsert: true })
+      if (error) { fb(`Error subiendo: ${error.message}`); return }
+      const { data } = supabase.storage.from('announcements').getPublicUrl(path)
+      setImageUrl(data.publicUrl)
+    } catch { fb('Error subiendo imagen') } finally { setUploadingImg(false) }
   }
 
   return (
     <div className="space-y-4">
-      <h2 className="font-syne text-lg font-bold text-go-dark">Anuncios</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="font-syne text-lg font-bold text-go-dark">Anuncios ({announcements.length})</h2>
+        <ActionButton onClick={() => { if (showForm) resetForm(); else setShowForm(true) }}>
+          {showForm ? 'Cancelar' : '+ Nuevo anuncio'}
+        </ActionButton>
+      </div>
 
-      {/* Current active */}
-      {activeAnnouncement && (
-        <div className="bg-go-orange/10 border border-go-orange/30 rounded-xl p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-medium text-go-orange mb-1">Anuncio activo</p>
-              <p className="text-sm text-go-dark">{activeAnnouncement.message}</p>
-            </div>
-            <button
-              onClick={() =>
-                startTransition(() =>
-                  toggleAnnouncement(activeAnnouncement.id, false)
-                )
-              }
-              className="text-xs text-red-600 hover:text-red-700 whitespace-nowrap"
-            >
-              Desactivar
-            </button>
-          </div>
-        </div>
-      )}
+      {feedback && <p className={`text-sm font-dm px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{feedback}</p>}
 
-      {/* New announcement form */}
-      <SectionCard>
-        <form onSubmit={handleSet} className="p-4">
-          <label className="block text-xs font-medium text-go-dark/60 mb-2">
-            Nuevo anuncio
-          </label>
-          <div className="flex flex-col gap-2">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-                placeholder="Escribe el mensaje del anuncio..."
-                className="flex-1 px-4 py-2.5 rounded-xl border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2.5 rounded-xl bg-go-orange text-white text-sm font-medium hover:bg-go-orange/90 transition"
-              >
-                Publicar
-              </button>
-            </div>
+      {showForm && (
+        <SectionCard>
+          <form onSubmit={handleSubmit} className="p-4 space-y-3">
+            <label className="block text-xs font-medium text-go-dark/60 mb-1">{editId ? 'Editar anuncio' : 'Nuevo anuncio'}</label>
+            <input type="text" value={message} onChange={e => setMessage(e.target.value)} placeholder="Mensaje del anuncio..." className="w-full px-4 py-2.5 rounded-xl border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition" />
             <div className="flex gap-2 items-center">
-              <input type="file" accept="image/*" onChange={async (e) => {
-                const file = e.target.files?.[0]
-                if (!file) return
-                setUploadingImg(true)
-                try {
-                  const { createClient } = await import('@/lib/supabase/client')
-                  const supabase = createClient()
-                  const path = `announcements/${Date.now()}-${file.name}`
-                  const { error } = await supabase.storage.from('announcements').upload(path, file, { upsert: true })
-                  if (error) { setUploadingImg(false); return }
-                  const { data } = supabase.storage.from('announcements').getPublicUrl(path)
-                  setNewImageUrl(data.publicUrl)
-                } catch {} finally { setUploadingImg(false) }
-              }} className="text-sm font-dm" />
+              <input type="file" accept="image/*" onChange={handleImageUpload} className="text-sm font-dm" />
               {uploadingImg && <span className="text-xs text-go-orange animate-pulse">Subiendo...</span>}
-              {newImageUrl && <img src={newImageUrl} alt="" className="h-10 rounded object-cover" />}
+              {imageUrl && (
+                <div className="flex items-center gap-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={imageUrl} alt="" className="h-10 rounded object-cover" />
+                  <button type="button" onClick={() => setImageUrl('')} className="text-xs text-red-400">✕</button>
+                </div>
+              )}
             </div>
             <div className="flex gap-4 items-center">
               <span className="font-dm text-xs text-gray-500">Tipo:</span>
@@ -1689,52 +1690,67 @@ function AnnouncementsTab({
                 <span className="font-dm text-xs text-go-dark">Pop-up</span>
               </label>
             </div>
-          </div>
-        </form>
-      </SectionCard>
-
-      {/* History */}
-      {announcements.length > 0 && (
-        <SectionCard>
-          <div className="p-4">
-            <h3 className="text-xs font-medium text-go-dark/60 mb-3">Historial</h3>
-            <div className="space-y-2">
-              {announcements.map((a) => (
-                <div
-                  key={a.id}
-                  className={`flex items-center justify-between gap-3 p-3 rounded-lg border ${a.is_active ? 'border-go-orange/30 bg-go-orange/5' : 'border-go-border bg-go-light/50'}`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-go-dark truncate">{a.message}</p>
-                    <p className="text-xs text-go-dark/40 mt-0.5">
-                      {new Date(a.created_at).toLocaleDateString('es-MX', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                      })}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <StatusBadge status={a.is_active ? 'active' : 'pending'} />
-                    <button
-                      onClick={() =>
-                        startTransition(() =>
-                          toggleAnnouncement(a.id, !a.is_active)
-                        )
-                      }
-                      className={`w-10 h-5 rounded-full relative transition ${a.is_active ? 'bg-emerald-500' : 'bg-gray-300'}`}
-                    >
-                      <span
-                        className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${a.is_active ? 'translate-x-5' : 'translate-x-0.5'}`}
-                      />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+            <button type="submit" disabled={!message.trim()} className="px-5 py-2.5 rounded-xl bg-go-orange text-white text-sm font-medium hover:bg-go-orange/90 transition disabled:opacity-50">
+              {editId ? 'Guardar cambios' : 'Publicar'}
+            </button>
+          </form>
         </SectionCard>
       )}
+
+      {/* All announcements table */}
+      <SectionCard>
+        <div className="p-4">
+          <div className="overflow-x-auto rounded-xl border border-go-dark/5">
+            <table className="w-full text-sm font-dm">
+              <thead className="bg-go-dark/[0.03]">
+                <tr>
+                  {['Mensaje', 'Tipo', 'Imagen', 'Estado', 'Fecha', 'Acciones'].map(h => (
+                    <th key={h} className="px-4 py-3 text-left text-xs text-go-dark/50 font-semibold uppercase tracking-wide">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-go-dark/5">
+                {announcements.map(a => (
+                  <tr key={a.id} className={a.is_active ? 'bg-go-orange/5' : ''}>
+                    <td className="px-4 py-3 text-go-dark max-w-[200px] truncate">{a.message}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${a.display_type === 'popup' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                        {a.display_type === 'popup' ? 'Pop-up' : 'Banner'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {(a.image_url || a.image_file_url) ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={a.image_url || a.image_file_url || ''} alt="" className="h-8 w-12 object-cover rounded" />
+                      ) : <span className="text-xs text-gray-300">—</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => startTransition(() => toggleAnnouncement(a.id, !a.is_active))}
+                        className={`text-xs font-semibold px-2.5 py-1 rounded-full ${a.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-400'}`}
+                      >
+                        {a.is_active ? 'Activo' : 'Inactivo'}
+                      </button>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-go-dark/40 whitespace-nowrap">
+                      {new Date(a.created_at).toLocaleDateString('es-MX', { day: 'numeric', month: 'short' })}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-2">
+                        <button onClick={() => startEdit(a)} className="text-xs text-go-orange hover:underline">Editar</button>
+                        <button onClick={() => { if (confirm('¿Segura que quieres eliminar este anuncio?')) startTransition(async () => { await deleteAnnouncement(a.id); fb('✓ Eliminado') }) }} className="text-xs text-red-400 hover:text-red-600">Eliminar</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {announcements.length === 0 && (
+                  <tr><td colSpan={6} className="px-4 py-8 text-center text-go-dark/40">No hay anuncios</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </SectionCard>
     </div>
   )
 }

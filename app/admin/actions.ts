@@ -311,6 +311,31 @@ export async function toggleAnnouncement(id: string, isActive: boolean) {
   return { success: true }
 }
 
+export async function updateAnnouncement(id: string, data: {
+  message: string
+  image_url?: string | null
+  display_type?: string
+}): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_announcements').update({
+    message: data.message,
+    image_url: data.image_url ?? null,
+    image_file_url: data.image_url ?? null,
+    display_type: data.display_type || 'banner',
+  }).eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/dashboard')
+  return {}
+}
+
+export async function deleteAnnouncement(id: string): Promise<void> {
+  const supabase = createAdminClient()
+  await supabase.from('go_announcements').delete().eq('id', id)
+  revalidatePath('/admin')
+  revalidatePath('/dashboard')
+}
+
 // ── Portfolio Submissions ─────────────────────────────
 
 export async function updatePortfolioStatus(
