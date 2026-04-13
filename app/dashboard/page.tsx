@@ -18,14 +18,16 @@ export default async function DashboardPage() {
 
   const admin = createAdminClient()
   const [announcementRes, currentNivelRes, nextNivelRes, challengeRes, leaderboardRes] = await Promise.all([
-    admin.from('go_announcements').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    admin.from('go_announcements').select('*').eq('is_active', true).order('created_at', { ascending: false }),
     admin.from('go_nivel_requirements').select('*').eq('nivel', creator.nivel).maybeSingle(),
     admin.from('go_nivel_requirements').select('*').eq('nivel', creator.nivel + 1).maybeSingle(),
     admin.from('go_challenges').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1).maybeSingle(),
     admin.from('go_creators').select('id, full_name, nivel, videos_this_month, gmv_this_month, acc_this_month, ttd_this_month').eq('status', 'active').order('videos_this_month', { ascending: false }).limit(10),
   ])
 
-  const announcement = announcementRes.data as Announcement | null
+  const allAnnouncements = (announcementRes.data ?? []) as Announcement[]
+  const banners = allAnnouncements.filter(a => a.display_type !== 'popup')
+  const popup = allAnnouncements.find(a => a.display_type === 'popup') ?? null
   const currentNivelReq = currentNivelRes.data as NivelRequirement | null
   const nextNivel = nextNivelRes.data as NivelRequirement | null
   const challenge = challengeRes.data as Challenge | null
@@ -65,19 +67,21 @@ export default async function DashboardPage() {
     <div className="min-h-screen bg-[#fff8f2]">
       <Sidebar creatorName={creator.full_name} tiktokHandle={creator.tiktok_handle} nivel={creator.nivel} />
 
-      {announcement && announcement.display_type !== 'popup' && (() => {
-        const imgUrl = announcement.image_url || announcement.image_file_url
+      {/* Banners — multiple can be active, stacked */}
+      {banners.map(b => {
+        const imgUrl = b.image_url || b.image_file_url
         return (
-          <div className="md:ml-[220px] bg-go-orange text-white font-dm text-sm">
+          <div key={b.id} className="md:ml-[220px] bg-go-orange text-white font-dm text-sm">
             {imgUrl && (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={imgUrl} alt="" className="w-full max-h-48 object-cover" style={{ borderRadius: '0 0 12px 12px' }} />
             )}
-            <div className="px-4 py-3 max-w-5xl mx-auto">📢 {announcement.message}</div>
+            <div className="px-4 py-3 max-w-5xl mx-auto">📢 {b.message}</div>
           </div>
         )
-      })()}
-      {announcement && announcement.display_type === 'popup' && <AnnouncementPopup announcement={announcement} />}
+      })}
+      {/* Popup — only one */}
+      {popup && <AnnouncementPopup announcement={popup} />}
 
       <main className="md:ml-[220px] pb-20 md:pb-0">
         <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-6">

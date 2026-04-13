@@ -276,38 +276,41 @@ export async function updateCreatorStrategy(id: string, data: {
 
 export async function setAnnouncement(message: string, image_url?: string, display_type?: string) {
   const supabase = createAdminClient()
-  console.log('[setAnnouncement] message:', message, 'image_url:', image_url, 'display_type:', display_type)
+  const dtype = display_type || 'banner'
 
-  // Deactivate all existing announcements
-  await supabase.from('go_announcements').update({ is_active: false }).eq('is_active', true)
+  // Popups: only one active at a time — deactivate other active popups
+  if (dtype === 'popup') {
+    await supabase.from('go_announcements').update({ is_active: false }).eq('is_active', true).eq('display_type', 'popup')
+  }
 
-  // Insert new active announcement — save image to both fields for compatibility
   const { error } = await supabase.from('go_announcements').insert({
     message,
     image_url: image_url || null,
     image_file_url: image_url || null,
-    display_type: display_type || 'banner',
+    display_type: dtype,
     is_active: true,
   })
   if (error) return { error: error.message }
   revalidatePath('/admin')
+  revalidatePath('/dashboard')
   return { success: true }
 }
 
 export async function toggleAnnouncement(id: string, isActive: boolean) {
   const supabase = createAdminClient()
 
-  // If activating, deactivate all others first
+  // If activating a popup, deactivate other active popups first
   if (isActive) {
-    await supabase.from('go_announcements').update({ is_active: false }).eq('is_active', true)
+    const { data: ann } = await supabase.from('go_announcements').select('display_type').eq('id', id).single()
+    if (ann?.display_type === 'popup') {
+      await supabase.from('go_announcements').update({ is_active: false }).eq('is_active', true).eq('display_type', 'popup')
+    }
   }
 
-  const { error } = await supabase
-    .from('go_announcements')
-    .update({ is_active: isActive })
-    .eq('id', id)
+  const { error } = await supabase.from('go_announcements').update({ is_active: isActive }).eq('id', id)
   if (error) return { error: error.message }
   revalidatePath('/admin')
+  revalidatePath('/dashboard')
   return { success: true }
 }
 
