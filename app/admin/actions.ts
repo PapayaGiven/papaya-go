@@ -97,13 +97,12 @@ export async function addCreator(data: {
   const accessCode = generateAccessCode()
 
   const { error } = await supabase.from('go_creators').insert({
-    email: data.email,
+    email: data.email.toLowerCase().trim(),
     full_name: data.full_name,
     tiktok_handle: data.tiktok_handle,
     nivel: data.nivel ?? 1,
-    status: 'active',
+    status: 'pending',
     access_code: accessCode,
-    approved_at: new Date().toISOString(),
   })
   if (error) return { error: error.message }
   revalidatePath('/admin')
@@ -116,7 +115,8 @@ export async function checkEmail(email: string): Promise<{ error?: string; hasAu
   const supabase = createAdminClient()
   const { data: creator } = await supabase.from('go_creators').select('id, status').eq('email', email.toLowerCase().trim()).single()
   if (!creator) return { error: 'Este email no está registrado. Contacta a tu admin.' }
-  if (creator.status !== 'active') return { error: 'Tu cuenta aún no está activa. Contacta a tu agencia.' }
+  if (creator.status === 'suspended') return { error: 'Tu cuenta está suspendida. Contacta a tu agencia.' }
+  // Check if Supabase auth user exists (returning creator)
   const { data: { users } } = await supabase.auth.admin.listUsers()
   const hasAuth = users.some(u => u.email === email.toLowerCase().trim())
   return { hasAuth }
@@ -136,8 +136,8 @@ export async function verifyAccessCode(email: string, code: string): Promise<{ e
   if (!creator || creator.access_code !== code.toUpperCase().trim()) {
     return { error: 'Código incorrecto o email no registrado.' }
   }
-  if (creator.status !== 'active') {
-    return { error: 'Tu cuenta aún no está activa. Contacta a tu agencia.' }
+  if (creator.status === 'suspended') {
+    return { error: 'Tu cuenta está suspendida. Contacta a tu agencia.' }
   }
 
   // Check if auth user exists
@@ -149,14 +149,21 @@ export async function verifyAccessCode(email: string, code: string): Promise<{ e
 
 export async function createAuthAndLogin(email: string, password: string): Promise<{ error?: string }> {
   const supabase = createAdminClient()
+  const emailNorm = email.toLowerCase().trim()
 
-  // Create auth user
+  // Create Supabase auth user
   const { error: createError } = await supabase.auth.admin.createUser({
-    email: email.toLowerCase().trim(),
+    email: emailNorm,
     password,
     email_confirm: true,
   })
   if (createError) return { error: createError.message }
+
+  // Activate creator
+  await supabase.from('go_creators').update({
+    status: 'active',
+    approved_at: new Date().toISOString(),
+  }).eq('email', emailNorm)
 
   return {}
 }
