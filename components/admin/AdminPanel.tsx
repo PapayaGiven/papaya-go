@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, useRef } from 'react'
 import type {
   Creator,
   POI,
@@ -393,6 +393,12 @@ interface FormFieldBuilderProps {
 function FormFieldRow({ field, onUpdate, onRemove }: { field: FormFieldItem; onUpdate: (key: string, value: unknown) => void; onRemove: () => void }) {
   const [label, setLabel] = useState(field.label)
   const [optionsText, setOptionsText] = useState((field.options ?? []).join(', '))
+  const labelRef = useRef(field.label)
+  // Sync local state when parent field changes (e.g. loading saved reward)
+  if (field.label !== labelRef.current && label !== field.label) {
+    setLabel(field.label)
+    labelRef.current = field.label
+  }
 
   return (
     <div className="border border-go-border rounded-xl p-3 space-y-2">
