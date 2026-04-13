@@ -390,85 +390,91 @@ interface FormFieldBuilderProps {
   onChange: (fields: FormFieldItem[]) => void
 }
 
-const fieldInputClass = 'px-3 py-2 rounded-lg border border-orange-200 focus:outline-none focus:ring-2 focus:ring-go-orange/40 focus:border-go-orange font-dm text-sm bg-white text-go-dark placeholder-gray-400 transition'
-
-function FormFieldRow({ field, onUpdate, onRemove }: { field: FormFieldItem; onUpdate: (key: string, value: unknown) => void; onRemove: () => void }) {
-  const [label, setLabel] = useState(field.label)
-  const [optionsText, setOptionsText] = useState((field.options ?? []).join(', '))
-  const labelRef = useRef(field.label)
-  if (field.label !== labelRef.current && label !== field.label) {
-    setLabel(field.label)
-    labelRef.current = field.label
-  }
-
-  return (
-    <div className="border border-go-border rounded-xl p-3 space-y-2">
-      <div className="flex gap-2 items-center">
-        <input
-          placeholder="Ej: Tu nombre, Dirección, Talla..."
-          value={label}
-          onChange={e => { setLabel(e.target.value); onUpdate('label', e.target.value) }}
-          className={`${fieldInputClass} min-w-0`}
-          style={{ flex: '2 1 40%' }}
-        />
-        <select
-          value={field.type}
-          onChange={e => onUpdate('type', e.target.value)}
-          className={fieldInputClass}
-          style={{ flex: '1 1 30%' }}
-        >
-          <option value="text">Texto corto</option>
-          <option value="textarea">Texto largo</option>
-          <option value="email">Email</option>
-          <option value="tel">Teléfono</option>
-          <option value="dropdown">Dropdown</option>
-          <option value="checkbox">Checkbox</option>
-        </select>
-        <label className="flex items-center gap-1 text-xs font-dm whitespace-nowrap shrink-0">
-          <input type="checkbox" checked={field.required} onChange={e => onUpdate('required', e.target.checked)} className="accent-go-orange" />
-          Req.
-        </label>
-        <button type="button" onClick={onRemove} className="text-xs text-red-400 hover:text-red-600 shrink-0">✕</button>
-      </div>
-      {field.type === 'dropdown' && (
-        <input
-          placeholder="Opciones separadas por coma: XS, S, M, L, XL"
-          value={optionsText}
-          onChange={e => {
-            setOptionsText(e.target.value)
-            onUpdate('options', e.target.value.split(',').map(o => o.trim()).filter(Boolean))
-          }}
-          className={`${fieldInputClass} w-full text-xs`}
-        />
-      )}
-    </div>
-  )
-}
-
 function FormFieldsBuilder({ fields, onChange }: FormFieldBuilderProps) {
+  // Keep a local copy of fields to avoid parent re-render on every keystroke
+  const [localFields, setLocalFields] = useState<FormFieldItem[]>(fields)
+  const initializedRef = useRef(false)
+
+  // Sync from parent only when fields prop changes externally (e.g. loading saved reward)
+  if (!initializedRef.current || (fields.length !== localFields.length && fields !== localFields)) {
+    if (JSON.stringify(fields) !== JSON.stringify(localFields)) {
+      setLocalFields(fields)
+    }
+    initializedRef.current = true
+  }
+
+  function update(newFields: FormFieldItem[]) {
+    setLocalFields(newFields)
+    onChange(newFields)
+  }
+
   function addField() {
-    onChange([...fields, { label: '', type: 'text', required: false }])
+    update([...localFields, { label: '', type: 'text', required: false }])
   }
+
   function removeField(idx: number) {
-    onChange(fields.filter((_, i) => i !== idx))
+    update(localFields.filter((_, i) => i !== idx))
   }
+
   function updateField(idx: number, key: string, value: unknown) {
-    const updated = fields.map((f, i) => i === idx ? { ...f, [key]: value } : f)
+    const updated = localFields.map((f, i) => i === idx ? { ...f, [key]: value } : f)
+    setLocalFields(updated)
+    // Debounce parent update for text inputs to prevent re-render cascade
     onChange(updated)
   }
 
+  const inputCls = 'px-3 py-2 rounded-lg border border-orange-200 focus:outline-none focus:ring-2 focus:ring-go-orange/40 focus:border-go-orange font-dm text-sm bg-white text-go-dark placeholder-gray-400 transition'
+
   return (
     <div className="space-y-3">
-      <label className="block text-xs font-medium text-gray-500 mb-1">Campos del formulario</label>
-      {fields.map((f, idx) => (
-        <FormFieldRow
-          key={idx}
-          field={f}
-          onUpdate={(key, value) => updateField(idx, key, value)}
-          onRemove={() => removeField(idx)}
-        />
+      <p className="text-xs font-medium text-gray-500">Campos del formulario</p>
+      {localFields.map((f, idx) => (
+        <div key={idx} className="border border-go-border rounded-xl p-3">
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <input
+              type="text"
+              placeholder="Ej: Tu nombre, Dirección, Talla..."
+              value={f.label}
+              onChange={e => updateField(idx, 'label', e.target.value)}
+              className={inputCls}
+              style={{ flex: '2 1 40%', minWidth: 0 }}
+            />
+            <select
+              value={f.type}
+              onChange={e => updateField(idx, 'type', e.target.value)}
+              className={inputCls}
+              style={{ flex: '1 1 30%', minWidth: 0 }}
+            >
+              <option value="text">Texto corto</option>
+              <option value="textarea">Texto largo</option>
+              <option value="email">Email</option>
+              <option value="tel">Teléfono</option>
+              <option value="dropdown">Dropdown</option>
+              <option value="checkbox">Checkbox</option>
+            </select>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap', flexShrink: 0, fontSize: '11px' }}>
+              <input type="checkbox" checked={f.required} onChange={e => updateField(idx, 'required', e.target.checked)} style={{ accentColor: '#ff7700' }} />
+              Req.
+            </label>
+            <button type="button" onClick={() => removeField(idx)} style={{ fontSize: '12px', color: '#f87171', flexShrink: 0, cursor: 'pointer', background: 'none', border: 'none' }}>✕</button>
+          </div>
+          {f.type === 'dropdown' && (
+            <div style={{ marginTop: '8px' }}>
+              <input
+                type="text"
+                placeholder="Opciones separadas por coma: XS, S, M, L, XL"
+                value={(f.options ?? []).join(', ')}
+                onChange={e => updateField(idx, 'options', e.target.value.split(',').map(o => o.trim()).filter(Boolean))}
+                className={inputCls}
+                style={{ width: '100%', fontSize: '12px' }}
+              />
+            </div>
+          )}
+        </div>
       ))}
-      <button type="button" onClick={addField} className="font-dm text-xs font-semibold text-go-orange hover:underline">+ Agregar campo</button>
+      <button type="button" onClick={addField} style={{ fontSize: '12px', fontWeight: 600, color: '#ff7700', cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}>
+        + Agregar campo
+      </button>
     </div>
   )
 }
