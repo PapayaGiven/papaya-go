@@ -390,11 +390,12 @@ interface FormFieldBuilderProps {
   onChange: (fields: FormFieldItem[]) => void
 }
 
+const fieldInputClass = 'px-3 py-2 rounded-lg border border-orange-200 focus:outline-none focus:ring-2 focus:ring-go-orange/40 focus:border-go-orange font-dm text-sm bg-white text-go-dark placeholder-gray-400 transition'
+
 function FormFieldRow({ field, onUpdate, onRemove }: { field: FormFieldItem; onUpdate: (key: string, value: unknown) => void; onRemove: () => void }) {
   const [label, setLabel] = useState(field.label)
   const [optionsText, setOptionsText] = useState((field.options ?? []).join(', '))
   const labelRef = useRef(field.label)
-  // Sync local state when parent field changes (e.g. loading saved reward)
   if (field.label !== labelRef.current && label !== field.label) {
     setLabel(field.label)
     labelRef.current = field.label
@@ -404,12 +405,18 @@ function FormFieldRow({ field, onUpdate, onRemove }: { field: FormFieldItem; onU
     <div className="border border-go-border rounded-xl p-3 space-y-2">
       <div className="flex gap-2 items-center">
         <input
-          placeholder="Nombre del campo"
+          placeholder="Ej: Tu nombre, Dirección, Talla..."
           value={label}
           onChange={e => { setLabel(e.target.value); onUpdate('label', e.target.value) }}
-          className="input-field flex-1"
+          className={`${fieldInputClass} min-w-0`}
+          style={{ flex: '2 1 40%' }}
         />
-        <select value={field.type} onChange={e => onUpdate('type', e.target.value)} className="input-field w-32">
+        <select
+          value={field.type}
+          onChange={e => onUpdate('type', e.target.value)}
+          className={fieldInputClass}
+          style={{ flex: '1 1 30%' }}
+        >
           <option value="text">Texto corto</option>
           <option value="textarea">Texto largo</option>
           <option value="email">Email</option>
@@ -417,11 +424,11 @@ function FormFieldRow({ field, onUpdate, onRemove }: { field: FormFieldItem; onU
           <option value="dropdown">Dropdown</option>
           <option value="checkbox">Checkbox</option>
         </select>
-        <label className="flex items-center gap-1 text-xs font-dm whitespace-nowrap">
+        <label className="flex items-center gap-1 text-xs font-dm whitespace-nowrap shrink-0">
           <input type="checkbox" checked={field.required} onChange={e => onUpdate('required', e.target.checked)} className="accent-go-orange" />
           Req.
         </label>
-        <button type="button" onClick={onRemove} className="text-xs text-red-400 hover:text-red-600">✕</button>
+        <button type="button" onClick={onRemove} className="text-xs text-red-400 hover:text-red-600 shrink-0">✕</button>
       </div>
       {field.type === 'dropdown' && (
         <input
@@ -431,7 +438,7 @@ function FormFieldRow({ field, onUpdate, onRemove }: { field: FormFieldItem; onU
             setOptionsText(e.target.value)
             onUpdate('options', e.target.value.split(',').map(o => o.trim()).filter(Boolean))
           }}
-          className="input-field text-xs"
+          className={`${fieldInputClass} w-full text-xs`}
         />
       )}
     </div>
