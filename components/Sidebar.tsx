@@ -128,15 +128,6 @@ export default function Sidebar({ creatorName, tiktokHandle, nivel }: SidebarPro
             </Link>
           )
         })}
-        <a
-          href="https://chatgpt.com/g/g-69dd64b134d48191aa96bec485de4cf5-papaya-go-viral-coach"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="min-w-[60px] flex-shrink-0 flex flex-col items-center gap-0.5 py-2 px-1 text-xs font-dm text-gray-400"
-        >
-          <span className="text-lg">💬</span>
-          <span className="truncate text-[10px]">Coach</span>
-        </a>
       </nav>
     </>
   )
