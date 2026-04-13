@@ -236,3 +236,20 @@ CREATE TABLE IF NOT EXISTS go_challenges (
 ALTER TABLE go_challenges ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "go_challenges_read" ON go_challenges FOR SELECT TO authenticated USING (true);
 CREATE POLICY "go_challenges_service" ON go_challenges FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- 13. go_content_plan
+CREATE TABLE IF NOT EXISTS go_content_plan (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  creator_id uuid REFERENCES go_creators(id) ON DELETE CASCADE,
+  week_start date NOT NULL,
+  day_of_week text NOT NULL,
+  video_type text DEFAULT 'ACC',
+  place_name text,
+  hashtags text,
+  is_admin_assigned boolean DEFAULT true,
+  created_at timestamp DEFAULT now(),
+  UNIQUE(creator_id, week_start, day_of_week)
+);
+ALTER TABLE go_content_plan ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "go_content_plan_read_own" ON go_content_plan FOR SELECT USING (creator_id IN (SELECT id FROM go_creators WHERE email = auth.email()));
+CREATE POLICY "go_content_plan_service" ON go_content_plan FOR ALL TO service_role USING (true) WITH CHECK (true);

@@ -629,3 +629,104 @@ export async function deleteChallenge(id: string): Promise<void> {
   revalidatePath('/admin')
   revalidatePath('/dashboard')
 }
+
+// ── Content Plan ─────────────────────────────────────
+
+function getCurrentWeekMonday(): string {
+  const now = new Date()
+  const day = now.getDay()
+  const diff = day === 0 ? -6 : 1 - day
+  const monday = new Date(now)
+  monday.setDate(now.getDate() + diff)
+  return monday.toISOString().split('T')[0]
+}
+
+export async function saveContentPlan(
+  creatorId: string,
+  slots: Array<{ day_of_week: string; video_type: string; place_name: string; hashtags: string }>,
+  applyToAll: boolean
+): Promise<{ error?: string; count?: number }> {
+  const supabase = createAdminClient()
+  const weekStart = getCurrentWeekMonday()
+
+  // Delete existing plan for this creator this week
+  await supabase.from('go_content_plan').delete().eq('creator_id', creatorId).eq('week_start', weekStart)
+
+  // Insert new slots
+  if (slots.length > 0) {
+    const rows = slots.map(s => ({
+      creator_id: creatorId,
+      week_start: weekStart,
+      day_of_week: s.day_of_week,
+      video_type: s.video_type,
+      place_name: s.place_name || null,
+      hashtags: s.hashtags || null,
+      is_admin_assigned: true,
+    }))
+    const { error } = await supabase.from('go_content_plan').insert(rows)
+    if (error) return { error: error.message }
+  }
+
+  let count = 1
+  // Apply to all active creators if checked
+  if (applyToAll) {
+    const { data: creators } = await supabase.from('go_creators').select('id').eq('status', 'active').neq('id', creatorId)
+    if (creators) {
+      for (const c of creators) {
+        await supabase.from('go_content_plan').delete().eq('creator_id', c.id).eq('week_start', weekStart)
+        if (slots.length > 0) {
+          const rows = slots.map(s => ({
+            creator_id: c.id,
+            week_start: weekStart,
+            day_of_week: s.day_of_week,
+            video_type: s.video_type,
+            place_name: s.place_name || null,
+            hashtags: s.hashtags || null,
+            is_admin_assigned: true,
+          }))
+          await supabase.from('go_content_plan').insert(rows)
+        }
+        count++
+      }
+    }
+  }
+
+  revalidatePath('/admin')
+  revalidatePath('/dashboard')
+  return { count }
+}
+
+export async function getCreatorPlan(creatorId: string): Promise<Array<{ day_of_week: string; video_type: string; place_name: string | null; hashtags: string | null }>> {
+  const supabase = createAdminClient()
+  const weekStart = getCurrentWeekMonday()
+  const { data } = await supabase.from('go_content_plan').select('day_of_week, video_type, place_name, hashtags').eq('creator_id', creatorId).eq('week_start', weekStart).order('day_of_week')
+  return (data ?? []) as Array<{ day_of_week: string; video_type: string; place_name: string | null; hashtags: string | null }>
+}
+
+export async function applyGlobalPlan(
+  creatorIds: string[],
+  slots: Array<{ day_of_week: string; video_type: string; place_name: string; hashtags: string }>
+): Promise<{ error?: string; count?: number }> {
+  const supabase = createAdminClient()
+  const weekStart = getCurrentWeekMonday()
+
+  for (const cid of creatorIds) {
+    await supabase.from('go_content_plan').delete().eq('creator_id', cid).eq('week_start', weekStart)
+    if (slots.length > 0) {
+      const rows = slots.map(s => ({
+        creator_id: cid,
+        week_start: weekStart,
+        day_of_week: s.day_of_week,
+        video_type: s.video_type,
+        place_name: s.place_name || null,
+        hashtags: s.hashtags || null,
+        is_admin_assigned: true,
+      }))
+      await supabase.from('go_content_plan').insert(rows)
+    }
+  }
+
+  revalidatePath('/admin')
+  revalidatePath('/dashboard')
+  return { count: creatorIds.length }
+}

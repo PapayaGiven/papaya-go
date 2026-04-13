@@ -50,6 +50,9 @@ import {
   addChallenge,
   toggleChallenge,
   deleteChallenge,
+  saveContentPlan,
+  getCreatorPlan,
+  applyGlobalPlan,
 } from '@/app/admin/actions'
 
 // ── Types ─────────────────────────────────────────────
@@ -78,7 +81,7 @@ interface POIRequest {
   creator?: { full_name: string | null; email: string } | null
 }
 
-type Tab = 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests' | 'rewards-admin' | 'boosts' | 'reward-requests' | 'weekly-plan' | 'challenges'
+type Tab = 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests' | 'rewards-admin' | 'boosts' | 'reward-requests' | 'weekly-plan' | 'challenges' | 'global-plan'
 
 interface AdminPanelProps {
   creators: Creator[]
@@ -876,6 +879,85 @@ function ChallengesTab({ challenges, startTransition }: { challenges: Challenge[
   )
 }
 
+// ── Global Plan Tab ──────────────────────────────────
+
+function GlobalPlanTab({ creators, startTransition }: { creators: Creator[]; startTransition: (fn: () => void) => void }) {
+  const activeCreators = creators.filter(c => c.status === 'active')
+  const [slots, setSlots] = useState<Array<{day_of_week: string; video_type: string; place_name: string; hashtags: string}>>([])
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(activeCreators.map(c => c.id)))
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
+
+  function toggleAll(checked: boolean) {
+    setSelectedIds(checked ? new Set(activeCreators.map(c => c.id)) : new Set())
+  }
+  function toggleCreator(id: string) {
+    const next = new Set(selectedIds)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    setSelectedIds(next)
+  }
+
+  return (
+    <SectionCard>
+      <div className="p-6">
+        <h2 className="font-syne font-bold text-lg text-go-dark mb-4">📅 Plan Global</h2>
+        <p className="font-dm text-xs text-gray-400 mb-4">Crea un plan semanal y aplícalo a múltiples creadoras</p>
+
+        {feedback && <p className={`text-sm font-dm mb-3 px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{feedback}</p>}
+
+        {/* Slot builder */}
+        <div className="space-y-2 mb-6">
+          {slots.map((slot, idx) => (
+            <div key={idx} className="flex gap-2 items-center">
+              <select value={slot.day_of_week} onChange={e => { const u = [...slots]; u[idx] = {...slot, day_of_week: e.target.value}; setSlots(u) }} className="input-field w-28 text-xs">
+                {['lunes','martes','miercoles','jueves','viernes','sabado','domingo'].map(d => <option key={d} value={d}>{d.charAt(0).toUpperCase()+d.slice(1)}</option>)}
+              </select>
+              <select value={slot.video_type} onChange={e => { const u = [...slots]; u[idx] = {...slot, video_type: e.target.value}; setSlots(u) }} className="input-field w-20 text-xs">
+                <option value="ACC">ACC</option><option value="TTD">TTD</option><option value="general">Orgánico</option>
+              </select>
+              <input placeholder="Lugar" value={slot.place_name} onChange={e => { const u = [...slots]; u[idx] = {...slot, place_name: e.target.value}; setSlots(u) }} className="input-field flex-1 text-xs" />
+              <input placeholder="Hashtags" value={slot.hashtags} onChange={e => { const u = [...slots]; u[idx] = {...slot, hashtags: e.target.value}; setSlots(u) }} className="input-field flex-1 text-xs" />
+              <button onClick={() => setSlots(slots.filter((_, i) => i !== idx))} className="text-xs text-red-400">✕</button>
+            </div>
+          ))}
+          {slots.length < 7 && (
+            <button onClick={() => setSlots([...slots, { day_of_week: 'lunes', video_type: 'ACC', place_name: '', hashtags: '' }])} className="font-dm text-xs font-semibold text-go-orange hover:underline">+ Agregar día</button>
+          )}
+        </div>
+
+        {/* Creator checklist */}
+        <div className="border border-go-border rounded-xl p-4 mb-4">
+          <label className="flex items-center gap-2 mb-3 font-dm text-sm font-semibold text-go-dark cursor-pointer">
+            <input type="checkbox" checked={selectedIds.size === activeCreators.length} onChange={e => toggleAll(e.target.checked)} className="accent-go-orange" />
+            Seleccionar todas ({activeCreators.length})
+          </label>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto">
+            {activeCreators.map(c => (
+              <label key={c.id} className="flex items-center gap-2 font-dm text-xs text-go-dark cursor-pointer">
+                <input type="checkbox" checked={selectedIds.has(c.id)} onChange={() => toggleCreator(c.id)} className="accent-go-orange" />
+                {c.full_name ?? c.email}
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <button
+          disabled={slots.length === 0 || selectedIds.size === 0}
+          onClick={() => startTransition(async () => {
+            const ids = Array.from(selectedIds)
+            const r = await applyGlobalPlan(ids, slots)
+            if (r.error) fb(`Error: ${r.error}`)
+            else fb(`Plan aplicado a ${r.count} creadoras`)
+          })}
+          className="w-full py-3 rounded-xl font-dm text-sm font-semibold text-white bg-go-orange hover:bg-go-orange/90 transition disabled:opacity-50"
+        >
+          Aplicar a seleccionadas
+        </button>
+      </div>
+    </SectionCard>
+  )
+}
+
 // ── Main Component ────────────────────────────────────
 
 export default function AdminPanel({
@@ -908,6 +990,7 @@ export default function AdminPanel({
     { key: 'reward-requests', label: '🎀 Reward Requests', count: rewardRequests.length },
     { key: 'weekly-plan', label: '📅 Plan Semanal', count: weeklyPlan.length },
     { key: 'challenges', label: '🏆 Retos', count: challenges.length },
+    { key: 'global-plan', label: '📅 Plan Global', count: 0 },
   ]
 
   return (
@@ -982,6 +1065,7 @@ export default function AdminPanel({
         {tab === 'reward-requests' && <RewardRequestsTab requests={rewardRequests} startTransition={startTransition} />}
         {tab === 'weekly-plan' && <WeeklyPlanTab items={weeklyPlan} startTransition={startTransition} />}
         {tab === 'challenges' && <ChallengesTab challenges={challenges} startTransition={startTransition} />}
+        {tab === 'global-plan' && <GlobalPlanTab creators={creators} startTransition={startTransition} />}
       </main>
     </div>
   )
@@ -1003,6 +1087,9 @@ function CreatorsTab({
   const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
   const [strategyId, setStrategyId] = useState<string | null>(null)
   const [strategyForm, setStrategyForm] = useState({ acc_goal: '', ttd_goal: '', gmv_goal: '', special_hashtags: '', creative_brief: '' })
+  const [planSlots, setPlanSlots] = useState<Array<{day_of_week: string; video_type: string; place_name: string; hashtags: string}>>([])
+  const [applyToAll, setApplyToAll] = useState(false)
+  const [planLoading, setPlanLoading] = useState(false)
 
   // Add form state
   const [newEmail, setNewEmail] = useState('')
@@ -1228,6 +1315,11 @@ function CreatorsTab({
                             special_hashtags: c.special_hashtags ?? '',
                             creative_brief: c.creative_brief ?? '',
                           })
+                          setPlanLoading(true)
+                          getCreatorPlan(c.id).then(p => {
+                            setPlanSlots(p.map(s => ({ day_of_week: s.day_of_week, video_type: s.video_type, place_name: s.place_name ?? '', hashtags: s.hashtags ?? '' })))
+                            setPlanLoading(false)
+                          })
                         }}>
                           Estrategia
                         </ActionButton>
@@ -1271,6 +1363,44 @@ function CreatorsTab({
           </div>
           <div className="mt-3"><label className="block text-xs font-medium text-gray-500 mb-1">Hashtags especiales (separados por coma)</label><input value={strategyForm.special_hashtags} onChange={e => setStrategyForm(f => ({...f, special_hashtags: e.target.value}))} className="w-full px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition" /></div>
           <div className="mt-3"><label className="block text-xs font-medium text-gray-500 mb-1">Brief creativo</label><textarea value={strategyForm.creative_brief} onChange={e => setStrategyForm(f => ({...f, creative_brief: e.target.value}))} className="w-full px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition" rows={3} /></div>
+          {/* Plan Semanal */}
+          <div className="mt-4 pt-4 border-t border-go-border">
+            <h4 className="font-syne font-bold text-sm text-go-dark mb-3">📅 Plan Semanal</h4>
+            {planLoading ? (
+              <p className="font-dm text-xs text-gray-400">Cargando plan...</p>
+            ) : (
+              <div className="space-y-2">
+                {planSlots.map((slot, idx) => (
+                  <div key={idx} className="flex gap-2 items-center">
+                    <select value={slot.day_of_week} onChange={e => {
+                      const updated = [...planSlots]; updated[idx] = {...slot, day_of_week: e.target.value}; setPlanSlots(updated)
+                    }} className="input-field w-24 text-xs">
+                      {['lunes','martes','miercoles','jueves','viernes','sabado','domingo'].map(d => <option key={d} value={d}>{d.charAt(0).toUpperCase()+d.slice(1)}</option>)}
+                    </select>
+                    <select value={slot.video_type} onChange={e => {
+                      const updated = [...planSlots]; updated[idx] = {...slot, video_type: e.target.value}; setPlanSlots(updated)
+                    }} className="input-field w-20 text-xs">
+                      <option value="ACC">ACC</option><option value="TTD">TTD</option><option value="general">Orgánico</option>
+                    </select>
+                    <input placeholder="Lugar" value={slot.place_name} onChange={e => {
+                      const updated = [...planSlots]; updated[idx] = {...slot, place_name: e.target.value}; setPlanSlots(updated)
+                    }} className="input-field flex-1 text-xs" />
+                    <input placeholder="Hashtags" value={slot.hashtags} onChange={e => {
+                      const updated = [...planSlots]; updated[idx] = {...slot, hashtags: e.target.value}; setPlanSlots(updated)
+                    }} className="input-field flex-1 text-xs" />
+                    <button onClick={() => setPlanSlots(planSlots.filter((_, i) => i !== idx))} className="text-xs text-red-400">✕</button>
+                  </div>
+                ))}
+                {planSlots.length < 7 && (
+                  <button onClick={() => setPlanSlots([...planSlots, { day_of_week: 'lunes', video_type: 'ACC', place_name: '', hashtags: '' }])} className="font-dm text-xs font-semibold text-go-orange hover:underline">+ Agregar día</button>
+                )}
+                <label className="flex items-center gap-2 mt-3 font-dm text-xs text-gray-600">
+                  <input type="checkbox" checked={applyToAll} onChange={e => setApplyToAll(e.target.checked)} className="accent-go-orange" />
+                  Aplicar este plan a todas las creadoras activas
+                </label>
+              </div>
+            )}
+          </div>
           <div className="flex gap-2 mt-3">
             <button onClick={() => startTransition(async () => {
               const r = await updateCreatorStrategy(strategyId, {
@@ -1280,9 +1410,14 @@ function CreatorsTab({
                 special_hashtags: strategyForm.special_hashtags || null,
                 creative_brief: strategyForm.creative_brief || null,
               })
-              if (r.error) fb(`Error: ${r.error}`)
-              else { fb('Estrategia guardada'); setStrategyId(null) }
-            })} className="font-dm text-sm font-semibold bg-go-orange text-white px-4 py-2 rounded-xl">Guardar</button>
+              if (r.error) { fb(`Error: ${r.error}`); return }
+              const p = await saveContentPlan(strategyId, planSlots, applyToAll)
+              if (p.error) { fb(`Error plan: ${p.error}`); return }
+              fb(applyToAll ? `✓ Estrategia y plan guardados. Plan aplicado a ${p.count} creadoras` : '✓ Estrategia y plan guardados')
+              setStrategyId(null)
+              setPlanSlots([])
+              setApplyToAll(false)
+            })} className="font-dm text-sm font-semibold bg-go-orange text-white px-4 py-2 rounded-xl">Guardar todo</button>
             <button onClick={() => setStrategyId(null)} className="font-dm text-sm text-gray-500 px-4 py-2">Cancelar</button>
           </div>
         </div>
