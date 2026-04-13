@@ -113,8 +113,18 @@ export interface NivelReward {
   reward_emoji: string
   cta_label: string | null
   cta_url: string | null
+  cta_type: 'none' | 'link' | 'form' | 'upload' | 'whatsapp'
+  cta_whatsapp_message: string | null
+  form_fields: FormField[] | null
   is_active: boolean
   created_at: string
+}
+
+export interface FormField {
+  label: string
+  type: 'text' | 'textarea' | 'email' | 'tel' | 'dropdown' | 'checkbox'
+  required: boolean
+  options?: string[]
 }
 
 export interface RewardRequest {

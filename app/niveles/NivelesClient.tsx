@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, useRef } from 'react'
 import { requestReward } from './actions'
+import { createClient } from '@/lib/supabase/client'
 import { NIVEL_NAMES, NIVEL_BORDER_COLORS } from '@/lib/types'
-import type { Creator, NivelRequirement, NivelReward, RewardRequest } from '@/lib/types'
+import type { Creator, NivelRequirement, NivelReward, RewardRequest, FormField } from '@/lib/types'
 
 interface Props {
   creator: Creator
@@ -22,8 +23,20 @@ export default function NivelesClient({ creator, requirements, rewards, myReques
     new Set(myRequests.map((r) => r.reward_id))
   )
 
+  // Form modal state (for cta_type === 'form')
+  const [formModalReward, setFormModalReward] = useState<NivelReward | null>(null)
+  const [formAnswers, setFormAnswers] = useState<Record<string, string | boolean>>({})
+  const [formError, setFormError] = useState('')
+  const [formSuccess, setFormSuccess] = useState('')
+
+  // Upload state (for cta_type === 'upload')
+  const [uploadingRewardId, setUploadingRewardId] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [uploadReward, setUploadReward] = useState<NivelReward | null>(null)
+
   const rewardsForNivel = (nivel: number) => rewards.filter((r) => r.nivel === nivel)
 
+  // Handle submit for 'none' type (existing modal)
   function handleSubmit() {
     if (!modalReward) return
     setErrorMsg('')
@@ -52,8 +65,291 @@ export default function NivelesClient({ creator, requirements, rewards, myReques
     })
   }
 
+  // Handle submit for 'form' type
+  function handleFormSubmit() {
+    if (!formModalReward || !formModalReward.form_fields) return
+    setFormError('')
+    setFormSuccess('')
+
+    // Validate required fields
+    for (const field of formModalReward.form_fields) {
+      const value = formAnswers[field.label]
+      if (field.required) {
+        if (field.type === 'checkbox') {
+          if (!value) {
+            setFormError(`El campo "${field.label}" es obligatorio.`)
+            return
+          }
+        } else {
+          if (!value || (typeof value === 'string' && !value.trim())) {
+            setFormError(`El campo "${field.label}" es obligatorio.`)
+            return
+          }
+        }
+      }
+    }
+
+    const notesJson = JSON.stringify(formAnswers)
+
+    startTransition(async () => {
+      const result = await requestReward({
+        creator_id: creator.id,
+        creator_name: creator.full_name,
+        tiktok_handle: creator.tiktok_handle,
+        nivel: creator.nivel,
+        reward_id: formModalReward.id,
+        reward_name: formModalReward.reward_name,
+        notes: notesJson,
+      })
+      if (result.error) {
+        setFormError(result.error)
+      } else {
+        setRequestedIds((prev) => new Set([...Array.from(prev), formModalReward.id]))
+        setFormSuccess('¡Solicitud enviada! Te contactamos pronto 🧡')
+        setTimeout(() => {
+          setFormModalReward(null)
+          setFormAnswers({})
+          setFormSuccess('')
+        }, 2000)
+      }
+    })
+  }
+
+  // Handle file upload for 'upload' type
+  async function handleFileUpload(file: File, reward: NivelReward) {
+    setUploadingRewardId(reward.id)
+    try {
+      const supabase = createClient()
+      const path = `${reward.id}/${creator.id}/${file.name}`
+      const { error: uploadError } = await supabase.storage
+        .from('rewards')
+        .upload(path, file, { upsert: true })
+
+      if (uploadError) {
+        alert('Error al subir archivo: ' + uploadError.message)
+        setUploadingRewardId(null)
+        return
+      }
+
+      const { data: urlData } = supabase.storage
+        .from('rewards')
+        .getPublicUrl(path)
+
+      const fileUrl = urlData.publicUrl
+
+      startTransition(async () => {
+        const result = await requestReward({
+          creator_id: creator.id,
+          creator_name: creator.full_name,
+          tiktok_handle: creator.tiktok_handle,
+          nivel: creator.nivel,
+          reward_id: reward.id,
+          reward_name: reward.reward_name,
+          notes: fileUrl,
+        })
+        if (result.error) {
+          alert('Error: ' + result.error)
+        } else {
+          setRequestedIds((prev) => new Set([...Array.from(prev), reward.id]))
+        }
+        setUploadingRewardId(null)
+      })
+    } catch {
+      alert('Error al subir archivo.')
+      setUploadingRewardId(null)
+    }
+  }
+
+  // Render the CTA button for a reward
+  function renderRewardCta(reward: NivelReward) {
+    const alreadyRequested = requestedIds.has(reward.id)
+
+    if (alreadyRequested) {
+      return (
+        <span className="font-dm text-[11px] text-gray-400 font-medium whitespace-nowrap">
+          Solicitado ✓
+        </span>
+      )
+    }
+
+    const ctaType = reward.cta_type ?? 'none'
+
+    switch (ctaType) {
+      case 'none':
+        return (
+          <button
+            onClick={() => {
+              setModalReward(reward)
+              setNotes('')
+              setErrorMsg('')
+              setSuccessMsg('')
+            }}
+            className="font-dm text-[11px] text-white font-semibold bg-go-orange px-3 py-1 rounded-lg hover:bg-go-orange/90 transition whitespace-nowrap"
+          >
+            Solicitar →
+          </button>
+        )
+
+      case 'link':
+        return (
+          <a
+            href={reward.cta_url ?? '#'}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-dm text-[11px] font-semibold text-go-orange border border-go-orange px-3 py-1 rounded-lg hover:bg-go-orange/10 transition whitespace-nowrap"
+          >
+            {reward.cta_label ?? 'Ver más'}
+          </a>
+        )
+
+      case 'form':
+        return (
+          <button
+            onClick={() => {
+              setFormModalReward(reward)
+              setFormAnswers({})
+              setFormError('')
+              setFormSuccess('')
+            }}
+            className="font-dm text-[11px] text-white font-semibold bg-go-orange px-3 py-1 rounded-lg hover:bg-go-orange/90 transition whitespace-nowrap"
+          >
+            {reward.cta_label ?? 'Llenar formulario'}
+          </button>
+        )
+
+      case 'upload':
+        return (
+          <>
+            <button
+              onClick={() => {
+                setUploadReward(reward)
+                fileInputRef.current?.click()
+              }}
+              disabled={uploadingRewardId === reward.id}
+              className="font-dm text-[11px] text-white font-semibold bg-go-orange px-3 py-1 rounded-lg hover:bg-go-orange/90 transition whitespace-nowrap disabled:opacity-50"
+            >
+              {uploadingRewardId === reward.id ? 'Subiendo...' : '📎 Subir archivo'}
+            </button>
+          </>
+        )
+
+      case 'whatsapp':
+        return (
+          <a
+            href={`https://wa.me/?text=${encodeURIComponent(reward.cta_whatsapp_message ?? '')}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-dm text-[11px] font-semibold text-go-orange border border-go-orange px-3 py-1 rounded-lg hover:bg-go-orange/10 transition whitespace-nowrap"
+          >
+            💬 Solicitar por WhatsApp
+          </a>
+        )
+
+      default:
+        return null
+    }
+  }
+
+  // Render a single form field
+  function renderFormField(field: FormField) {
+    const value = formAnswers[field.label] ?? (field.type === 'checkbox' ? false : '')
+    const labelEl = (
+      <label className="block font-dm text-xs font-semibold text-gray-500 mb-1">
+        {field.label}
+        {field.required && <span className="text-red-500 ml-0.5">*</span>}
+      </label>
+    )
+
+    switch (field.type) {
+      case 'text':
+      case 'email':
+      case 'tel':
+        return (
+          <div key={field.label} className="mb-3">
+            {labelEl}
+            <input
+              type={field.type}
+              value={value as string}
+              onChange={(e) => setFormAnswers((prev) => ({ ...prev, [field.label]: e.target.value }))}
+              required={field.required}
+              className="w-full rounded-xl border border-gray-200 px-3 py-2 font-dm text-sm text-go-dark placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-go-orange/30"
+            />
+          </div>
+        )
+
+      case 'textarea':
+        return (
+          <div key={field.label} className="mb-3">
+            {labelEl}
+            <textarea
+              value={value as string}
+              onChange={(e) => setFormAnswers((prev) => ({ ...prev, [field.label]: e.target.value }))}
+              required={field.required}
+              rows={3}
+              className="w-full rounded-xl border border-gray-200 px-3 py-2 font-dm text-sm text-go-dark placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-go-orange/30 resize-none"
+            />
+          </div>
+        )
+
+      case 'dropdown':
+        return (
+          <div key={field.label} className="mb-3">
+            {labelEl}
+            <select
+              value={value as string}
+              onChange={(e) => setFormAnswers((prev) => ({ ...prev, [field.label]: e.target.value }))}
+              required={field.required}
+              className="w-full rounded-xl border border-gray-200 px-3 py-2 font-dm text-sm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30"
+            >
+              <option value="">Seleccionar...</option>
+              {(field.options ?? []).map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          </div>
+        )
+
+      case 'checkbox':
+        return (
+          <div key={field.label} className="mb-3 flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={value as boolean}
+              onChange={(e) => setFormAnswers((prev) => ({ ...prev, [field.label]: e.target.checked }))}
+              required={field.required}
+              className="h-4 w-4 rounded border-gray-300 text-go-orange focus:ring-go-orange/30"
+            />
+            <label className="font-dm text-xs font-semibold text-gray-500">
+              {field.label}
+              {field.required && <span className="text-red-500 ml-0.5">*</span>}
+            </label>
+          </div>
+        )
+
+      default:
+        return null
+    }
+  }
+
   return (
     <>
+      {/* Hidden file input for upload type */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pdf,.jpg,.jpeg,.png"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file && uploadReward) {
+            handleFileUpload(file, uploadReward)
+          }
+          e.target.value = ''
+        }}
+      />
+
       <div className="space-y-5">
         {[1, 2, 3, 4].map((nivel) => {
           const req = requirements.find((r) => r.nivel === nivel)
@@ -195,57 +491,28 @@ export default function NivelesClient({ creator, requirements, rewards, myReques
                       🎁 Lo que puedes pedir
                     </h4>
                     <div className="space-y-2">
-                      {nivelRewards.map((reward) => {
-                        const alreadyRequested = requestedIds.has(reward.id)
-                        return (
-                          <div
-                            key={reward.id}
-                            className="flex items-start justify-between gap-2 bg-gray-50 rounded-xl px-3 py-2"
-                          >
-                            <div className="min-w-0">
-                              <p className="font-dm text-xs font-semibold text-go-dark">
-                                {reward.reward_emoji} {reward.reward_name}
+                      {nivelRewards.map((reward) => (
+                        <div
+                          key={reward.id}
+                          className="flex items-start justify-between gap-2 bg-gray-50 rounded-xl px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="font-dm text-xs font-semibold text-go-dark">
+                              {reward.reward_emoji} {reward.reward_name}
+                            </p>
+                            {reward.reward_description && (
+                              <p className="font-dm text-[11px] text-gray-400 mt-0.5 leading-tight">
+                                {reward.reward_description}
                               </p>
-                              {reward.reward_description && (
-                                <p className="font-dm text-[11px] text-gray-400 mt-0.5 leading-tight">
-                                  {reward.reward_description}
-                                </p>
-                              )}
-                            </div>
-                            {(isPast || isCurrent) && !isFuture && (
-                              <div className="shrink-0 flex items-center gap-2">
-                                {alreadyRequested ? (
-                                  <span className="font-dm text-[11px] text-gray-400 font-medium whitespace-nowrap">
-                                    Solicitado ✓
-                                  </span>
-                                ) : (
-                                  <button
-                                    onClick={() => {
-                                      setModalReward(reward)
-                                      setNotes('')
-                                      setErrorMsg('')
-                                      setSuccessMsg('')
-                                    }}
-                                    className="font-dm text-[11px] text-go-orange font-semibold hover:underline whitespace-nowrap"
-                                  >
-                                    Solicitar →
-                                  </button>
-                                )}
-                                {reward.cta_url && (
-                                  <a
-                                    href={reward.cta_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="font-dm text-[11px] font-semibold text-go-orange border border-go-orange px-2 py-0.5 rounded-lg hover:bg-go-orange/10 transition whitespace-nowrap"
-                                  >
-                                    {reward.cta_label ?? 'Ver'}
-                                  </a>
-                                )}
-                              </div>
                             )}
                           </div>
-                        )
-                      })}
+                          {(isPast || isCurrent) && !isFuture && (
+                            <div className="shrink-0 flex items-center gap-2">
+                              {renderRewardCta(reward)}
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -255,7 +522,7 @@ export default function NivelesClient({ creator, requirements, rewards, myReques
         })}
       </div>
 
-      {/* Request Modal */}
+      {/* Request Modal (cta_type === 'none') */}
       {modalReward && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 relative">
@@ -306,6 +573,58 @@ export default function NivelesClient({ creator, requirements, rewards, myReques
                   className="w-full bg-go-orange text-white font-syne font-bold text-sm py-3 rounded-xl hover:bg-go-orange/90 transition-colors disabled:opacity-50"
                 >
                   {isPending ? 'Enviando...' : 'Solicitar reward'}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Form Modal (cta_type === 'form') */}
+      {formModalReward && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 relative max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => {
+                setFormModalReward(null)
+                setFormAnswers({})
+                setFormError('')
+                setFormSuccess('')
+              }}
+              className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 text-xl leading-none"
+            >
+              ×
+            </button>
+
+            {formSuccess ? (
+              <div className="text-center py-6">
+                <p className="font-syne font-bold text-lg text-go-dark">
+                  ✅ ¡Solicitud enviada! Te contactamos pronto 🧡
+                </p>
+              </div>
+            ) : (
+              <>
+                <h3 className="font-syne font-bold text-lg text-go-dark mb-1">
+                  {formModalReward.reward_emoji} {formModalReward.reward_name}
+                </h3>
+                {formModalReward.reward_description && (
+                  <p className="font-dm text-sm text-gray-400 mb-5">
+                    {formModalReward.reward_description}
+                  </p>
+                )}
+
+                {(formModalReward.form_fields ?? []).map((field) => renderFormField(field))}
+
+                {formError && (
+                  <p className="font-dm text-xs text-red-500 mb-3">{formError}</p>
+                )}
+
+                <button
+                  onClick={handleFormSubmit}
+                  disabled={isPending}
+                  className="w-full bg-go-orange text-white font-syne font-bold text-sm py-3 rounded-xl hover:bg-go-orange/90 transition-colors disabled:opacity-50 mt-2"
+                >
+                  {isPending ? 'Enviando...' : 'Enviar'}
                 </button>
               </>
             )}

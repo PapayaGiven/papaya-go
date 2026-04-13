@@ -484,6 +484,9 @@ export async function addNivelReward(data: {
   reward_emoji: string
   cta_label?: string | null
   cta_url?: string | null
+  cta_type?: string
+  cta_whatsapp_message?: string | null
+  form_fields?: unknown | null
 }): Promise<{ error?: string }> {
   const supabase = createAdminClient()
   const { error } = await supabase.from('go_nivel_rewards').insert(data)
@@ -499,6 +502,9 @@ export async function updateNivelReward(id: string, data: {
   reward_emoji?: string
   cta_label?: string | null
   cta_url?: string | null
+  cta_type?: string
+  cta_whatsapp_message?: string | null
+  form_fields?: unknown | null
 }): Promise<{ error?: string }> {
   const supabase = createAdminClient()
   const { error } = await supabase.from('go_nivel_rewards').update(data).eq('id', id)

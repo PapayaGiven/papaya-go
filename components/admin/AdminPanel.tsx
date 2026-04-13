@@ -373,12 +373,61 @@ function POIRequestsTab({ requests, startTransition }: { requests: POIRequest[];
   )
 }
 
+// ── Form Fields Builder ─────────────────────────────
+
+interface FormFieldBuilderProps {
+  fields: Array<{label: string; type: string; required: boolean; options?: string[]}>
+  onChange: (fields: Array<{label: string; type: string; required: boolean; options?: string[]}>) => void
+}
+
+function FormFieldsBuilder({ fields, onChange }: FormFieldBuilderProps) {
+  function addField() {
+    onChange([...fields, { label: '', type: 'text', required: false }])
+  }
+  function removeField(idx: number) {
+    onChange(fields.filter((_, i) => i !== idx))
+  }
+  function updateField(idx: number, key: string, value: unknown) {
+    onChange(fields.map((f, i) => i === idx ? { ...f, [key]: value } : f))
+  }
+
+  return (
+    <div className="space-y-3">
+      <label className="block text-xs font-medium text-gray-500 mb-1">Campos del formulario</label>
+      {fields.map((f, idx) => (
+        <div key={idx} className="border border-go-border rounded-xl p-3 space-y-2">
+          <div className="flex gap-2 items-center">
+            <input placeholder="Nombre del campo" value={f.label} onChange={e => updateField(idx, 'label', e.target.value)} className="input-field flex-1" />
+            <select value={f.type} onChange={e => updateField(idx, 'type', e.target.value)} className="input-field w-32">
+              <option value="text">Texto corto</option>
+              <option value="textarea">Texto largo</option>
+              <option value="email">Email</option>
+              <option value="tel">Telefono</option>
+              <option value="dropdown">Dropdown</option>
+              <option value="checkbox">Checkbox</option>
+            </select>
+            <label className="flex items-center gap-1 text-xs font-dm whitespace-nowrap">
+              <input type="checkbox" checked={f.required} onChange={e => updateField(idx, 'required', e.target.checked)} className="accent-go-orange" />
+              Req.
+            </label>
+            <button type="button" onClick={() => removeField(idx)} className="text-xs text-red-400 hover:text-red-600">✕</button>
+          </div>
+          {f.type === 'dropdown' && (
+            <input placeholder="Opciones (separadas por coma): XS, S, M, L, XL" value={(f.options ?? []).join(', ')} onChange={e => updateField(idx, 'options', e.target.value.split(',').map(o => o.trim()).filter(Boolean))} className="input-field text-xs" />
+          )}
+        </div>
+      ))}
+      <button type="button" onClick={addField} className="font-dm text-xs font-semibold text-go-orange hover:underline">+ Agregar campo</button>
+    </div>
+  )
+}
+
 // ── Nivel Rewards Tab ────────────────────────────────
 
 function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[]; startTransition: (fn: () => void) => void }) {
   const [showAdd, setShowAdd] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [form, setForm] = useState({ nivel: '1', reward_name: '', reward_description: '', reward_emoji: '🎁', cta_label: '', cta_url: '' })
+  const [form, setForm] = useState({ nivel: '1', reward_name: '', reward_description: '', reward_emoji: '🎁', cta_label: '', cta_url: '', cta_type: 'none', cta_whatsapp_message: '', form_fields: [] as Array<{label: string; type: string; required: boolean; options?: string[]}> })
   const [feedback, setFeedback] = useState<string | null>(null)
   function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
 
@@ -391,13 +440,16 @@ function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[];
       reward_emoji: r.reward_emoji,
       cta_label: r.cta_label ?? '',
       cta_url: r.cta_url ?? '',
+      cta_type: r.cta_type ?? 'none',
+      cta_whatsapp_message: r.cta_whatsapp_message ?? '',
+      form_fields: r.form_fields ?? [],
     })
     setShowAdd(true)
   }
 
   function resetForm() {
     setEditingId(null)
-    setForm({ nivel: '1', reward_name: '', reward_description: '', reward_emoji: '🎁', cta_label: '', cta_url: '' })
+    setForm({ nivel: '1', reward_name: '', reward_description: '', reward_emoji: '🎁', cta_label: '', cta_url: '', cta_type: 'none', cta_whatsapp_message: '', form_fields: [] })
     setShowAdd(false)
   }
 
@@ -427,6 +479,9 @@ function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[];
                     reward_emoji: form.reward_emoji,
                     cta_label: form.cta_label || null,
                     cta_url: form.cta_url || null,
+                    cta_type: form.cta_type,
+                    cta_whatsapp_message: form.cta_whatsapp_message || null,
+                    form_fields: form.form_fields.length > 0 ? form.form_fields : null,
                   })
                   if (res.error) fb(`Error: ${res.error}`)
                   else { fb('Reward actualizado'); resetForm() }
@@ -438,6 +493,9 @@ function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[];
                     reward_emoji: form.reward_emoji,
                     cta_label: form.cta_label || null,
                     cta_url: form.cta_url || null,
+                    cta_type: form.cta_type,
+                    cta_whatsapp_message: form.cta_whatsapp_message || null,
+                    form_fields: form.form_fields.length > 0 ? form.form_fields : null,
                   })
                   if (res.error) fb(`Error: ${res.error}`)
                   else { fb('Reward agregado'); resetForm() }
@@ -457,8 +515,31 @@ function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[];
             <div className="flex items-end gap-2">
               <FormInput label="Emoji" value={form.reward_emoji} onChange={(v) => setForm({ ...form, reward_emoji: v })} />
             </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Tipo de CTA</label>
+              <select value={form.cta_type} onChange={e => setForm({...form, cta_type: e.target.value})} className="input-field">
+                <option value="none">Sin CTA (solo Solicitar)</option>
+                <option value="link">Link externo</option>
+                <option value="form">Formulario</option>
+                <option value="upload">Subir archivo</option>
+                <option value="whatsapp">WhatsApp</option>
+              </select>
+            </div>
             <FormInput label="CTA Label" value={form.cta_label} onChange={(v) => setForm({ ...form, cta_label: v })} />
-            <FormInput label="CTA URL" value={form.cta_url} onChange={(v) => setForm({ ...form, cta_url: v })} />
+            {form.cta_type === 'link' && (
+              <FormInput label="URL del CTA" value={form.cta_url} onChange={(v) => setForm({ ...form, cta_url: v })} />
+            )}
+            {form.cta_type === 'whatsapp' && (
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Mensaje de WhatsApp</label>
+                <input value={form.cta_whatsapp_message} onChange={e => setForm({...form, cta_whatsapp_message: e.target.value})} className="input-field" placeholder="Hola! Quiero solicitar mi reward..." />
+              </div>
+            )}
+            {form.cta_type === 'form' && (
+              <div className="sm:col-span-4">
+                <FormFieldsBuilder fields={form.form_fields} onChange={fields => setForm({...form, form_fields: fields})} />
+              </div>
+            )}
             <div className="sm:col-span-2 flex items-end">
               <ActionButton onClick={() => {}} variant="primary">{editingId ? 'Actualizar' : 'Guardar'}</ActionButton>
             </div>
@@ -481,7 +562,7 @@ function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[];
                   {g.items.map(r => (
                     <tr key={r.id} className={!r.is_active ? 'opacity-40' : ''}>
                       <td className="px-4 py-3 text-lg">{r.reward_emoji}</td>
-                      <td className="px-4 py-3 font-medium text-go-dark">{r.reward_name}</td>
+                      <td className="px-4 py-3 font-medium text-go-dark">{r.reward_name} <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">{r.cta_type ?? 'none'}</span></td>
                       <td className="px-4 py-3 text-go-dark/60 text-xs">{r.reward_description ?? '—'}</td>
                       <td className="px-4 py-3 text-go-dark/60 text-xs">{r.cta_label ? `${r.cta_label}` : '—'}</td>
                       <td className="px-4 py-3">
@@ -613,7 +694,23 @@ function RewardRequestsTab({ requests, startTransition }: { requests: RewardRequ
                   </td>
                   <td className="px-4 py-3 text-go-dark/60 text-xs">{r.nivel} — {NIVEL_NAMES[r.nivel] ?? ''}</td>
                   <td className="px-4 py-3 font-medium text-go-dark">{r.reward_name}</td>
-                  <td className="px-4 py-3 text-go-dark/50 text-xs max-w-[200px] truncate">{r.notes ?? '—'}</td>
+                  <td className="px-4 py-3 text-go-dark/50 text-xs max-w-[200px]">
+                    {r.notes ? (
+                      (() => {
+                        try {
+                          const parsed = JSON.parse(r.notes)
+                          return (
+                            <span className="flex items-center gap-1">
+                              <span className="truncate">Formulario</span>
+                              <button type="button" onClick={() => alert(Object.entries(parsed).map(([k, v]) => `${k}: ${v}`).join('\n'))} className="text-go-orange font-semibold hover:underline shrink-0">Ver</button>
+                            </span>
+                          )
+                        } catch {
+                          return <span className="truncate block">{r.notes}</span>
+                        }
+                      })()
+                    ) : '—'}
+                  </td>
                   <td className="px-4 py-3">
                     <select
                       value={r.status}
