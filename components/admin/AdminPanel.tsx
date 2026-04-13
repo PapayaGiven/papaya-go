@@ -378,9 +378,58 @@ function POIRequestsTab({ requests, startTransition }: { requests: POIRequest[];
 
 // ── Form Fields Builder ─────────────────────────────
 
+interface FormFieldItem {
+  label: string
+  type: string
+  required: boolean
+  options?: string[]
+}
+
 interface FormFieldBuilderProps {
-  fields: Array<{label: string; type: string; required: boolean; options?: string[]}>
-  onChange: (fields: Array<{label: string; type: string; required: boolean; options?: string[]}>) => void
+  fields: FormFieldItem[]
+  onChange: (fields: FormFieldItem[]) => void
+}
+
+function FormFieldRow({ field, onUpdate, onRemove }: { field: FormFieldItem; onUpdate: (key: string, value: unknown) => void; onRemove: () => void }) {
+  const [label, setLabel] = useState(field.label)
+  const [optionsText, setOptionsText] = useState((field.options ?? []).join(', '))
+
+  return (
+    <div className="border border-go-border rounded-xl p-3 space-y-2">
+      <div className="flex gap-2 items-center">
+        <input
+          placeholder="Nombre del campo"
+          value={label}
+          onChange={e => { setLabel(e.target.value); onUpdate('label', e.target.value) }}
+          className="input-field flex-1"
+        />
+        <select value={field.type} onChange={e => onUpdate('type', e.target.value)} className="input-field w-32">
+          <option value="text">Texto corto</option>
+          <option value="textarea">Texto largo</option>
+          <option value="email">Email</option>
+          <option value="tel">Teléfono</option>
+          <option value="dropdown">Dropdown</option>
+          <option value="checkbox">Checkbox</option>
+        </select>
+        <label className="flex items-center gap-1 text-xs font-dm whitespace-nowrap">
+          <input type="checkbox" checked={field.required} onChange={e => onUpdate('required', e.target.checked)} className="accent-go-orange" />
+          Req.
+        </label>
+        <button type="button" onClick={onRemove} className="text-xs text-red-400 hover:text-red-600">✕</button>
+      </div>
+      {field.type === 'dropdown' && (
+        <input
+          placeholder="Opciones separadas por coma: XS, S, M, L, XL"
+          value={optionsText}
+          onChange={e => {
+            setOptionsText(e.target.value)
+            onUpdate('options', e.target.value.split(',').map(o => o.trim()).filter(Boolean))
+          }}
+          className="input-field text-xs"
+        />
+      )}
+    </div>
+  )
 }
 
 function FormFieldsBuilder({ fields, onChange }: FormFieldBuilderProps) {
@@ -391,34 +440,20 @@ function FormFieldsBuilder({ fields, onChange }: FormFieldBuilderProps) {
     onChange(fields.filter((_, i) => i !== idx))
   }
   function updateField(idx: number, key: string, value: unknown) {
-    onChange(fields.map((f, i) => i === idx ? { ...f, [key]: value } : f))
+    const updated = fields.map((f, i) => i === idx ? { ...f, [key]: value } : f)
+    onChange(updated)
   }
 
   return (
     <div className="space-y-3">
       <label className="block text-xs font-medium text-gray-500 mb-1">Campos del formulario</label>
       {fields.map((f, idx) => (
-        <div key={idx} className="border border-go-border rounded-xl p-3 space-y-2">
-          <div className="flex gap-2 items-center">
-            <input placeholder="Nombre del campo" value={f.label} onChange={e => updateField(idx, 'label', e.target.value)} className="input-field flex-1" />
-            <select value={f.type} onChange={e => updateField(idx, 'type', e.target.value)} className="input-field w-32">
-              <option value="text">Texto corto</option>
-              <option value="textarea">Texto largo</option>
-              <option value="email">Email</option>
-              <option value="tel">Telefono</option>
-              <option value="dropdown">Dropdown</option>
-              <option value="checkbox">Checkbox</option>
-            </select>
-            <label className="flex items-center gap-1 text-xs font-dm whitespace-nowrap">
-              <input type="checkbox" checked={f.required} onChange={e => updateField(idx, 'required', e.target.checked)} className="accent-go-orange" />
-              Req.
-            </label>
-            <button type="button" onClick={() => removeField(idx)} className="text-xs text-red-400 hover:text-red-600">✕</button>
-          </div>
-          {f.type === 'dropdown' && (
-            <input placeholder="Opciones (separadas por coma): XS, S, M, L, XL" value={(f.options ?? []).join(', ')} onChange={e => updateField(idx, 'options', e.target.value.split(',').map(o => o.trim()).filter(Boolean))} className="input-field text-xs" />
-          )}
-        </div>
+        <FormFieldRow
+          key={idx}
+          field={f}
+          onUpdate={(key, value) => updateField(idx, key, value)}
+          onRemove={() => removeField(idx)}
+        />
       ))}
       <button type="button" onClick={addField} className="font-dm text-xs font-semibold text-go-orange hover:underline">+ Agregar campo</button>
     </div>
