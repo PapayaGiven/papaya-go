@@ -28,6 +28,7 @@ function truncateUrl(url: string, max = 40) {
 
 export default function BoostClient({ creatorId, creatorName, tiktokHandle, pastRequests }: BoostClientProps) {
   const [tiktokUrl, setTiktokUrl] = useState('')
+  const [videoType, setVideoType] = useState<'ACC' | 'TTD' | null>(null)
   const [notes, setNotes] = useState('')
   const [submitted, setSubmitted] = useState(false)
   const [error, setError] = useState('')
@@ -41,6 +42,10 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
       setError('Pega el link de tu TikTok')
       return
     }
+    if (!videoType) {
+      setError('Selecciona tipo de video: ACC o TTD')
+      return
+    }
     setLoading(true)
     try {
       const result = await submitBoost({
@@ -50,6 +55,7 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
         tiktok_url: tiktokUrl.trim(),
         boost_reason: null,
         notes: notes.trim() || null,
+        video_type: videoType,
       })
       if (result.error) {
         setError(result.error)
@@ -57,6 +63,7 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
         setSubmitted(true)
         setTiktokUrl('')
         setNotes('')
+        setVideoType(null)
       }
     } catch {
       setError('Algo salio mal. Intenta de nuevo.')
@@ -112,6 +119,29 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
                 placeholder="Algo que quieras que sepamos..."
                 className="w-full border border-gray-200 rounded-xl px-4 py-2.5 font-dm text-sm text-go-dark placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition-all resize-none"
               />
+            </div>
+
+            {/* Video type */}
+            <div>
+              <label className="block font-dm text-sm font-medium text-go-dark mb-2">
+                Tipo de video <span className="text-go-orange">*</span>
+              </label>
+              <div className="flex gap-3">
+                {(['ACC', 'TTD'] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setVideoType(t)}
+                    className={`flex-1 py-3 rounded-xl font-dm font-semibold text-sm transition-all border-2 ${
+                      videoType === t
+                        ? 'bg-go-orange text-white border-go-orange'
+                        : 'bg-white text-go-dark/60 border-gray-200 hover:border-go-orange/40'
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {error && (

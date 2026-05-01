@@ -38,11 +38,35 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // Logged in on login page → go to dashboard
-  if (user && path === '/') {
-    const url = request.nextUrl.clone()
-    url.pathname = '/dashboard'
-    return NextResponse.redirect(url)
+  // Logged in: route by is_internal flag
+  if (user) {
+    const { data: creator } = await supabase
+      .from('go_creators')
+      .select('is_internal, status')
+      .eq('email', user.email!)
+      .maybeSingle()
+
+    const isInternal = creator?.is_internal === true
+
+    if (path === '/') {
+      const url = request.nextUrl.clone()
+      url.pathname = isInternal ? '/internal-dashboard' : '/dashboard'
+      return NextResponse.redirect(url)
+    }
+
+    // Internal creators: don't render the regular dashboard
+    if (isInternal && path === '/dashboard') {
+      const url = request.nextUrl.clone()
+      url.pathname = '/internal-dashboard'
+      return NextResponse.redirect(url)
+    }
+
+    // Regular creators: don't render the internal dashboard
+    if (!isInternal && path.startsWith('/internal-dashboard')) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/dashboard'
+      return NextResponse.redirect(url)
+    }
   }
 
   return supabaseResponse

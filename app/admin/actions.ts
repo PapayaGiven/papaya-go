@@ -261,6 +261,9 @@ export async function updateCreatorStrategy(id: string, data: {
   gmv_goal?: number
   special_hashtags?: string | null
   creative_brief?: string | null
+  daily_quota?: number
+  weekly_quota?: number
+  monthly_quota?: number
 }): Promise<{ error?: string }> {
   // Normalize hashtags: strip commas, make space-separated
   if (data.special_hashtags) {
@@ -271,7 +274,131 @@ export async function updateCreatorStrategy(id: string, data: {
   if (error) return { error: error.message }
   revalidatePath('/admin')
   revalidatePath('/dashboard')
+  revalidatePath('/internal-dashboard')
   return {}
+}
+
+export async function toggleCreatorInternal(id: string, isInternal: boolean): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_creators').update({ is_internal: isInternal }).eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/dashboard')
+  revalidatePath('/internal-dashboard')
+  return {}
+}
+
+// ── TikTok Accounts ───────────────────────────────────
+
+export async function addTikTokAccount(data: {
+  tiktok_handle: string
+  tiktok_url: string | null
+  is_active: boolean
+  notes: string | null
+}): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_tiktok_accounts').insert(data)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/internal-dashboard')
+  return {}
+}
+
+export async function updateTikTokAccount(id: string, data: Partial<{
+  tiktok_handle: string
+  tiktok_url: string | null
+  is_active: boolean
+  notes: string | null
+}>): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_tiktok_accounts').update(data).eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/internal-dashboard')
+  return {}
+}
+
+export async function deleteTikTokAccount(id: string): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_tiktok_accounts').delete().eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/internal-dashboard')
+  return {}
+}
+
+// ── Internal Videos ───────────────────────────────────
+
+export async function approveInternalVideo(id: string): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('go_internal_videos')
+    .update({ status: 'approved', approved_at: new Date().toISOString(), rejected_at: null, rejection_reason: null })
+    .eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/internal-dashboard')
+  return {}
+}
+
+export async function bulkApproveInternalVideos(ids: string[]): Promise<{ error?: string; count?: number }> {
+  if (ids.length === 0) return { count: 0 }
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('go_internal_videos')
+    .update({ status: 'approved', approved_at: new Date().toISOString(), rejected_at: null, rejection_reason: null })
+    .in('id', ids)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/internal-dashboard')
+  return { count: ids.length }
+}
+
+export async function rejectInternalVideo(id: string, reason: string): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('go_internal_videos')
+    .update({ status: 'rejected', rejected_at: new Date().toISOString(), approved_at: null, rejection_reason: reason })
+    .eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/internal-dashboard')
+  return {}
+}
+
+function getRanges() {
+  const now = new Date()
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const dayOfWeek = now.getDay()
+  const mondayDiff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+  const startOfWeek = new Date(startOfDay)
+  startOfWeek.setDate(startOfDay.getDate() + mondayDiff)
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+  return {
+    startOfDay: startOfDay.toISOString(),
+    startOfWeek: startOfWeek.toISOString(),
+    startOfMonth: startOfMonth.toISOString(),
+  }
+}
+
+export async function getInternalVideoStats(creatorId: string): Promise<{ today: number; week: number; month: number; error?: string }> {
+  const supabase = createAdminClient()
+  const { startOfDay, startOfWeek, startOfMonth } = getRanges()
+
+  const { data, error } = await supabase
+    .from('go_internal_videos')
+    .select('approved_at')
+    .eq('creator_id', creatorId)
+    .eq('status', 'approved')
+    .gte('approved_at', startOfMonth)
+
+  if (error) return { today: 0, week: 0, month: 0, error: error.message }
+
+  const today = (data ?? []).filter(v => v.approved_at && v.approved_at >= startOfDay).length
+  const week = (data ?? []).filter(v => v.approved_at && v.approved_at >= startOfWeek).length
+  const month = (data ?? []).length
+
+  return { today, week, month }
 }
 
 export async function setAnnouncement(message: string, image_url?: string, display_type?: string) {

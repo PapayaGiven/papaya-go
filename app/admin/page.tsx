@@ -11,6 +11,8 @@ import type {
   NivelReward,
   BoostRequest,
   RewardRequest,
+  TikTokAccount,
+  InternalVideo,
 } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -38,6 +40,8 @@ export default async function AdminPage() {
     { data: rewardRequests },
     { data: weeklyPlan },
     { data: challenges },
+    { data: tiktokAccounts },
+    { data: internalVideos },
   ] = await Promise.all([
     supabase
       .from('go_creators')
@@ -72,6 +76,11 @@ export default async function AdminPage() {
     supabase.from('go_reward_requests').select('*').order('created_at', { ascending: false }),
     supabase.from('go_weekly_plan').select('*').order('sort_order'),
     supabase.from('go_challenges').select('*').order('created_at', { ascending: false }),
+    supabase.from('go_tiktok_accounts').select('*').order('created_at', { ascending: false }),
+    supabase
+      .from('go_internal_videos')
+      .select('*, creator:go_creators(full_name, email), tiktok_account:go_tiktok_accounts(tiktok_handle, tiktok_url)')
+      .order('submitted_at', { ascending: false }),
   ])
 
   return (
@@ -92,6 +101,9 @@ export default async function AdminPage() {
       weeklyPlan={(weeklyPlan ?? []) as any}
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       challenges={(challenges ?? []) as any}
+      tiktokAccounts={(tiktokAccounts as TikTokAccount[]) ?? []}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      internalVideos={(internalVideos ?? []) as InternalVideo[]}
     />
   )
 }

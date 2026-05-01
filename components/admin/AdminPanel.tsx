@@ -11,6 +11,8 @@ import type {
   BoostRequest,
   RewardRequest,
   Challenge,
+  TikTokAccount,
+  InternalVideo,
 } from '@/lib/types'
 import { NIVEL_NAMES, POI_TYPE_LABELS, CHALLENGE_TYPE_LABELS } from '@/lib/types'
 import {
@@ -53,6 +55,14 @@ import {
   saveContentPlan,
   getCreatorPlan,
   applyGlobalPlan,
+  toggleCreatorInternal,
+  addTikTokAccount,
+  updateTikTokAccount,
+  deleteTikTokAccount,
+  approveInternalVideo,
+  rejectInternalVideo,
+  bulkApproveInternalVideos,
+  getInternalVideoStats,
 } from '@/app/admin/actions'
 
 // ── Types ─────────────────────────────────────────────
@@ -81,7 +91,7 @@ interface POIRequest {
   creator?: { full_name: string | null; email: string } | null
 }
 
-type Tab = 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests' | 'rewards-admin' | 'boosts' | 'reward-requests' | 'weekly-plan' | 'challenges' | 'global-plan'
+type Tab = 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests' | 'rewards-admin' | 'boosts' | 'reward-requests' | 'weekly-plan' | 'challenges' | 'global-plan' | 'tiktok-accounts' | 'internal-videos'
 
 interface AdminPanelProps {
   creators: Creator[]
@@ -96,6 +106,8 @@ interface AdminPanelProps {
   rewardRequests: RewardRequest[]
   weeklyPlan: WeeklyPlanItem[]
   challenges: Challenge[]
+  tiktokAccounts: TikTokAccount[]
+  internalVideos: InternalVideo[]
 }
 
 interface WeeklyPlanItem {
@@ -659,12 +671,32 @@ function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[];
 
 function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startTransition: (fn: () => void) => void }) {
   const [feedback, setFeedback] = useState<string | null>(null)
+  const [typeFilter, setTypeFilter] = useState<'all' | 'ACC' | 'TTD'>('all')
   function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
+
+  const filtered = typeFilter === 'all' ? boosts : boosts.filter(b => b.video_type === typeFilter)
 
   return (
     <SectionCard>
       <div className="p-6">
-        <h2 className="font-syne font-bold text-lg text-go-dark mb-4">Solicitudes de Boost ({boosts.length})</h2>
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <h2 className="font-syne font-bold text-lg text-go-dark">Solicitudes de Boost ({filtered.length})</h2>
+          <div className="flex gap-1.5">
+            {([['all', 'Todos'], ['ACC', 'ACC'], ['TTD', 'TTD']] as const).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setTypeFilter(key)}
+                className={`text-xs font-semibold px-3 py-1.5 rounded-full font-dm transition ${
+                  typeFilter === key
+                    ? 'bg-go-orange text-white'
+                    : 'bg-go-dark/[0.04] text-go-dark/60 hover:bg-go-dark/[0.08]'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {feedback && <p className={`text-sm font-dm mb-3 px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{feedback}</p>}
 
@@ -672,16 +704,25 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
           <table className="w-full text-sm font-dm">
             <thead className="bg-go-dark/[0.03]">
               <tr>
-                {['Creator', 'TikTok', 'URL Video', 'Razon', 'Notas', 'Estado', 'Fecha'].map(h => (
+                {['Creator', 'TikTok', 'Tipo', 'URL Video', 'Razon', 'Notas', 'Estado', 'Fecha'].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs text-go-dark/50 font-semibold uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-go-dark/5">
-              {boosts.map(b => (
+              {filtered.map(b => (
                 <tr key={b.id} className={b.status === 'boosteado' ? 'bg-emerald-50' : ''}>
                   <td className="px-4 py-3 font-medium text-go-dark">{b.creator_name ?? '—'}</td>
                   <td className="px-4 py-3 text-go-dark/60 text-xs">{b.tiktok_handle ?? '—'}</td>
+                  <td className="px-4 py-3">
+                    {b.video_type ? (
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${b.video_type === 'ACC' ? 'bg-orange-100 text-orange-700' : 'bg-pink-100 text-pink-700'}`}>
+                        {b.video_type}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-go-dark/30">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-xs">
                     {(b.tiktok_url || b.video_url) ? (
                       <a href={b.tiktok_url || b.video_url || '#'} target="_blank" rel="noopener noreferrer" className="text-go-orange hover:underline truncate block max-w-[180px]">
@@ -711,7 +752,7 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
                   <td className="px-4 py-3 text-go-dark/40 text-xs">{new Date(b.created_at).toLocaleDateString('es')}</td>
                 </tr>
               ))}
-              {boosts.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-go-dark/40">No hay solicitudes de boost.</td></tr>}
+              {filtered.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-go-dark/40">No hay solicitudes de boost.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1027,9 +1068,13 @@ export default function AdminPanel({
   rewardRequests,
   weeklyPlan,
   challenges,
+  tiktokAccounts,
+  internalVideos,
 }: AdminPanelProps) {
   const [tab, setTab] = useState<Tab>('creators')
   const [isPending, startTransition] = useTransition()
+
+  const pendingInternalCount = internalVideos.filter(v => v.status === 'pending').length
 
   const tabs: { key: Tab; label: string; count: number }[] = [
     { key: 'creators', label: 'Creators', count: creators.length },
@@ -1045,6 +1090,8 @@ export default function AdminPanel({
     { key: 'weekly-plan', label: '📅 Plan Semanal', count: weeklyPlan.length },
     { key: 'challenges', label: '🏆 Retos', count: challenges.length },
     { key: 'global-plan', label: '📅 Plan Global', count: 0 },
+    { key: 'tiktok-accounts', label: '📱 Cuentas TikTok', count: tiktokAccounts.length },
+    { key: 'internal-videos', label: '🎬 Videos Internos', count: pendingInternalCount },
   ]
 
   return (
@@ -1120,6 +1167,8 @@ export default function AdminPanel({
         {tab === 'weekly-plan' && <WeeklyPlanTab items={weeklyPlan} startTransition={startTransition} />}
         {tab === 'challenges' && <ChallengesTab challenges={challenges} startTransition={startTransition} />}
         {tab === 'global-plan' && <GlobalPlanTab creators={creators} startTransition={startTransition} />}
+        {tab === 'tiktok-accounts' && <TikTokAccountsTab accounts={tiktokAccounts} startTransition={startTransition} />}
+        {tab === 'internal-videos' && <InternalVideosTab videos={internalVideos} creators={creators} startTransition={startTransition} />}
       </main>
     </div>
   )
@@ -1140,7 +1189,8 @@ function CreatorsTab({
   const [feedback, setFeedback] = useState<string | null>(null)
   const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
   const [strategyId, setStrategyId] = useState<string | null>(null)
-  const [strategyForm, setStrategyForm] = useState({ acc_goal: '', ttd_goal: '', gmv_goal: '', special_hashtags: '', creative_brief: '' })
+  const [strategyForm, setStrategyForm] = useState({ acc_goal: '', ttd_goal: '', gmv_goal: '', special_hashtags: '', creative_brief: '', daily_quota: '', weekly_quota: '', monthly_quota: '' })
+  const [internalStats, setInternalStats] = useState<{ today: number; week: number; month: number } | null>(null)
   const [planSlots, setPlanSlots] = useState<Array<{day_of_week: string; video_type: string; place_name: string; hashtags: string}>>([])
   const [applyToAll, setApplyToAll] = useState(false)
   const [planLoading, setPlanLoading] = useState(false)
@@ -1238,7 +1288,14 @@ function CreatorsTab({
             <tbody>
               {creators.map((c) => (
                 <tr key={c.id} className="border-b border-go-border/50 hover:bg-go-light/30">
-                  <td className="px-4 py-3 font-medium text-go-dark">{c.full_name ?? '—'}</td>
+                  <td className="px-4 py-3 font-medium text-go-dark">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span>{c.full_name ?? '—'}</span>
+                      {c.is_internal && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-go-orange/15 text-go-orange uppercase tracking-wide">Interna</span>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-4 py-3 text-go-dark/60">{c.email}</td>
                   <td className="px-4 py-3 text-go-orange">{c.tiktok_handle ?? '—'}</td>
 
@@ -1357,6 +1414,16 @@ function CreatorsTab({
                             Copiar código
                           </ActionButton>
                         )}
+                        <ActionButton
+                          variant="ghost"
+                          onClick={() => startTransition(async () => {
+                            const r = await toggleCreatorInternal(c.id, !c.is_internal)
+                            if (r.error) fb(`Error: ${r.error}`)
+                            else fb(c.is_internal ? '✓ Marcada como creadora regular' : '✓ Marcada como Creadora Interna')
+                          })}
+                        >
+                          {c.is_internal ? '✓ Interna' : '○ Hacer Interna'}
+                        </ActionButton>
                         <ActionButton variant="ghost" onClick={() => startEdit(c)}>
                           Editar
                         </ActionButton>
@@ -1368,7 +1435,16 @@ function CreatorsTab({
                             gmv_goal: String(c.gmv_goal ?? ''),
                             special_hashtags: c.special_hashtags ?? '',
                             creative_brief: c.creative_brief ?? '',
+                            daily_quota: String(c.daily_quota ?? ''),
+                            weekly_quota: String(c.weekly_quota ?? ''),
+                            monthly_quota: String(c.monthly_quota ?? ''),
                           })
+                          setInternalStats(null)
+                          if (c.is_internal) {
+                            getInternalVideoStats(c.id).then(s => {
+                              setInternalStats({ today: s.today, week: s.week, month: s.month })
+                            })
+                          }
                           setPlanLoading(true)
                           getCreatorPlan(c.id).then(p => {
                             setPlanSlots(p.map(s => ({ day_of_week: s.day_of_week, video_type: s.video_type, place_name: s.place_name ?? '', hashtags: s.hashtags ?? '' })))
@@ -1417,6 +1493,45 @@ function CreatorsTab({
           </div>
           <div className="mt-3"><label className="block text-xs font-medium text-gray-500 mb-1">Hashtags especiales (separados por coma)</label><input value={strategyForm.special_hashtags} onChange={e => setStrategyForm(f => ({...f, special_hashtags: e.target.value}))} className="w-full px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition" /></div>
           <div className="mt-3"><label className="block text-xs font-medium text-gray-500 mb-1">Brief creativo</label><textarea value={strategyForm.creative_brief} onChange={e => setStrategyForm(f => ({...f, creative_brief: e.target.value}))} className="w-full px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition" rows={3} /></div>
+
+          {/* Cuota de videos (creadoras internas) */}
+          {creators.find(c => c.id === strategyId)?.is_internal && (
+            <div className="mt-4 pt-4 border-t border-go-border">
+              <h4 className="font-syne font-bold text-sm text-go-dark mb-3">🎬 Cuota de videos (Creadora Interna)</h4>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Videos por día</label>
+                  <input type="number" min="0" value={strategyForm.daily_quota} onChange={e => setStrategyForm(f => ({...f, daily_quota: e.target.value}))} className="w-full px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Videos por semana</label>
+                  <input type="number" min="0" value={strategyForm.weekly_quota} onChange={e => setStrategyForm(f => ({...f, weekly_quota: e.target.value}))} className="w-full px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Videos por mes</label>
+                  <input type="number" min="0" value={strategyForm.monthly_quota} onChange={e => setStrategyForm(f => ({...f, monthly_quota: e.target.value}))} className="w-full px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition" />
+                </div>
+              </div>
+
+              {internalStats && (
+                <div className="grid grid-cols-3 gap-3 mt-4">
+                  {([
+                    { label: 'Hoy', count: internalStats.today, quota: parseInt(strategyForm.daily_quota) || 0 },
+                    { label: 'Esta semana', count: internalStats.week, quota: parseInt(strategyForm.weekly_quota) || 0 },
+                    { label: 'Este mes', count: internalStats.month, quota: parseInt(strategyForm.monthly_quota) || 0 },
+                  ]).map(s => (
+                    <div key={s.label} className="bg-white rounded-xl border border-go-border p-3">
+                      <p className="font-dm text-[10px] uppercase tracking-wide text-go-dark/40">{s.label}</p>
+                      <p className="font-syne font-bold text-2xl text-go-dark mt-0.5">
+                        {s.count}<span className="text-go-dark/30 text-sm font-normal"> / {s.quota}</span>
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Plan Semanal */}
           <div className="mt-4 pt-4 border-t border-go-border">
             <h4 className="font-syne font-bold text-sm text-go-dark mb-3">📅 Plan Semanal</h4>
@@ -1463,6 +1578,9 @@ function CreatorsTab({
                 gmv_goal: parseInt(strategyForm.gmv_goal) || undefined,
                 special_hashtags: strategyForm.special_hashtags || null,
                 creative_brief: strategyForm.creative_brief || null,
+                daily_quota: parseInt(strategyForm.daily_quota) || 0,
+                weekly_quota: parseInt(strategyForm.weekly_quota) || 0,
+                monthly_quota: parseInt(strategyForm.monthly_quota) || 0,
               })
               if (r.error) { fb(`Error: ${r.error}`); return }
               const p = await saveContentPlan(strategyId, planSlots, applyToAll)
@@ -2197,6 +2315,356 @@ function PortfoliosTab({
           </table>
         </div>
       </SectionCard>
+    </div>
+  )
+}
+
+// ── TikTok Accounts Tab ───────────────────────────────
+
+function TikTokAccountsTab({ accounts, startTransition }: { accounts: TikTokAccount[]; startTransition: (fn: () => void) => void }) {
+  const [showAdd, setShowAdd] = useState(false)
+  const [editId, setEditId] = useState<string | null>(null)
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
+  const empty = { tiktok_handle: '', tiktok_url: '', is_active: true, notes: '' }
+  const [addForm, setAddForm] = useState(empty)
+  const [editForm, setEditForm] = useState(empty)
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-syne text-lg font-bold text-go-dark">📱 Cuentas TikTok</h2>
+        <ActionButton onClick={() => setShowAdd(!showAdd)}>{showAdd ? 'Cancelar' : '+ Agregar cuenta'}</ActionButton>
+      </div>
+
+      {feedback && (
+        <div className={`font-dm text-sm px-4 py-3 rounded-xl ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
+          {feedback}
+        </div>
+      )}
+
+      {showAdd && (
+        <SectionCard>
+          <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <FormInput label="Handle (@usuario)" value={addForm.tiktok_handle} onChange={(v) => setAddForm({ ...addForm, tiktok_handle: v })} placeholder="@papayago" required />
+            <FormInput label="URL de TikTok" value={addForm.tiktok_url} onChange={(v) => setAddForm({ ...addForm, tiktok_url: v })} placeholder="https://www.tiktok.com/@..." />
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-medium text-gray-500 mb-1">Notas</label>
+              <textarea value={addForm.notes} onChange={(e) => setAddForm({ ...addForm, notes: e.target.value })} rows={2} className="w-full px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition" />
+            </div>
+            <label className="flex items-center gap-2 font-dm text-sm">
+              <input type="checkbox" checked={addForm.is_active} onChange={(e) => setAddForm({ ...addForm, is_active: e.target.checked })} className="accent-go-orange" />
+              Activa
+            </label>
+            <div className="sm:col-span-2">
+              <ActionButton onClick={() => startTransition(async () => {
+                if (!addForm.tiktok_handle.trim()) { fb('Error: ingresa el handle'); return }
+                const r = await addTikTokAccount({
+                  tiktok_handle: addForm.tiktok_handle.trim(),
+                  tiktok_url: addForm.tiktok_url.trim() || null,
+                  is_active: addForm.is_active,
+                  notes: addForm.notes.trim() || null,
+                })
+                if (r.error) fb(`Error: ${r.error}`)
+                else { fb('✓ Cuenta agregada'); setAddForm(empty); setShowAdd(false) }
+              })}>
+                Agregar
+              </ActionButton>
+            </div>
+          </div>
+        </SectionCard>
+      )}
+
+      <SectionCard>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm font-dm">
+            <thead className="bg-go-light/50">
+              <tr>
+                {['Handle', 'URL', 'Notas', 'Activa', 'Creada', 'Acciones'].map(h => (
+                  <th key={h} className="text-left px-4 py-3 font-medium text-go-dark/60">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-go-border">
+              {accounts.length === 0 && (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-go-dark/40">No hay cuentas todavía.</td></tr>
+              )}
+              {accounts.map(a => (
+                <tr key={a.id} className="hover:bg-go-light/30">
+                  {editId === a.id ? (
+                    <>
+                      <td className="px-4 py-3"><input value={editForm.tiktok_handle} onChange={(e) => setEditForm({ ...editForm, tiktok_handle: e.target.value })} className="w-full px-2 py-1 text-xs rounded border border-go-border" /></td>
+                      <td className="px-4 py-3"><input value={editForm.tiktok_url} onChange={(e) => setEditForm({ ...editForm, tiktok_url: e.target.value })} className="w-full px-2 py-1 text-xs rounded border border-go-border" /></td>
+                      <td className="px-4 py-3"><input value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} className="w-full px-2 py-1 text-xs rounded border border-go-border" /></td>
+                      <td className="px-4 py-3"><input type="checkbox" checked={editForm.is_active} onChange={(e) => setEditForm({ ...editForm, is_active: e.target.checked })} className="accent-go-orange" /></td>
+                      <td className="px-4 py-3 text-xs text-go-dark/40">{new Date(a.created_at).toLocaleDateString('es')}</td>
+                      <td className="px-4 py-3 space-x-1">
+                        <ActionButton onClick={() => startTransition(async () => {
+                          const r = await updateTikTokAccount(a.id, {
+                            tiktok_handle: editForm.tiktok_handle.trim(),
+                            tiktok_url: editForm.tiktok_url.trim() || null,
+                            is_active: editForm.is_active,
+                            notes: editForm.notes.trim() || null,
+                          })
+                          if (r.error) fb(`Error: ${r.error}`)
+                          else { fb('✓ Actualizada'); setEditId(null) }
+                        })}>Guardar</ActionButton>
+                        <ActionButton variant="ghost" onClick={() => setEditId(null)}>Cancelar</ActionButton>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="px-4 py-3 font-medium text-go-orange">{a.tiktok_handle}</td>
+                      <td className="px-4 py-3 text-xs">
+                        {a.tiktok_url ? (
+                          <a href={a.tiktok_url} target="_blank" rel="noopener noreferrer" className="text-go-orange hover:underline truncate block max-w-[200px]">{a.tiktok_url}</a>
+                        ) : <span className="text-go-dark/30">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-go-dark/60 max-w-[200px] truncate">{a.notes ?? '—'}</td>
+                      <td className="px-4 py-3">
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${a.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
+                          {a.is_active ? 'Activa' : 'Inactiva'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-go-dark/40">{new Date(a.created_at).toLocaleDateString('es')}</td>
+                      <td className="px-4 py-3 space-x-1">
+                        <ActionButton variant="ghost" onClick={() => {
+                          setEditId(a.id)
+                          setEditForm({
+                            tiktok_handle: a.tiktok_handle,
+                            tiktok_url: a.tiktok_url ?? '',
+                            is_active: a.is_active,
+                            notes: a.notes ?? '',
+                          })
+                        }}>Editar</ActionButton>
+                        <ActionButton variant="ghost" onClick={() => {
+                          if (confirm(`¿Eliminar @${a.tiktok_handle}?`)) {
+                            startTransition(async () => {
+                              const r = await deleteTikTokAccount(a.id)
+                              if (r.error) fb(`Error: ${r.error}`)
+                              else fb('✓ Eliminada')
+                            })
+                          }
+                        }}>Eliminar</ActionButton>
+                      </td>
+                    </>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
+    </div>
+  )
+}
+
+// ── Internal Videos Tab ───────────────────────────────
+
+function InternalVideosTab({ videos, creators, startTransition }: { videos: InternalVideo[]; creators: Creator[]; startTransition: (fn: () => void) => void }) {
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
+  const [creatorFilter, setCreatorFilter] = useState<string>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all')
+  const [typeFilter, setTypeFilter] = useState<'all' | 'ACC' | 'TTD'>('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [rejectingId, setRejectingId] = useState<string | null>(null)
+  const [rejectReason, setRejectReason] = useState('')
+
+  const filtered = videos.filter(v => {
+    if (creatorFilter !== 'all' && v.creator_id !== creatorFilter) return false
+    if (statusFilter !== 'all' && v.status !== statusFilter) return false
+    if (typeFilter !== 'all' && v.video_type !== typeFilter) return false
+    if (dateFrom && v.submitted_at < dateFrom) return false
+    if (dateTo && v.submitted_at > dateTo + 'T23:59:59') return false
+    return true
+  })
+
+  function toggleSelected(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // Stats
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
+  const weekStart = new Date(todayStart); const dow = todayStart.getDay(); weekStart.setDate(todayStart.getDate() + (dow === 0 ? -6 : 1 - dow))
+  const totalPending = videos.filter(v => v.status === 'pending').length
+  const totalApprovedToday = videos.filter(v => v.status === 'approved' && v.approved_at && new Date(v.approved_at) >= todayStart).length
+  const totalApprovedWeek = videos.filter(v => v.status === 'approved' && v.approved_at && new Date(v.approved_at) >= weekStart).length
+
+  return (
+    <div className="space-y-4">
+      <h2 className="font-syne text-lg font-bold text-go-dark">🎬 Videos Internos</h2>
+
+      {feedback && (
+        <div className={`font-dm text-sm px-4 py-3 rounded-xl ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
+          {feedback}
+        </div>
+      )}
+
+      {/* Stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <p className="font-dm text-xs uppercase tracking-wide text-amber-700/70">Total pendientes</p>
+          <p className="font-syne font-bold text-3xl text-amber-700 mt-1">{totalPending}</p>
+        </div>
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+          <p className="font-dm text-xs uppercase tracking-wide text-emerald-700/70">Aprobados hoy</p>
+          <p className="font-syne font-bold text-3xl text-emerald-700 mt-1">{totalApprovedToday}</p>
+        </div>
+        <div className="bg-go-orange/10 border border-go-orange/20 rounded-xl p-4">
+          <p className="font-dm text-xs uppercase tracking-wide text-go-orange">Aprobados esta semana</p>
+          <p className="font-syne font-bold text-3xl text-go-orange mt-1">{totalApprovedWeek}</p>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <SectionCard>
+        <div className="p-4 grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <select value={creatorFilter} onChange={(e) => setCreatorFilter(e.target.value)} className="px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark">
+            <option value="all">Todas las creadoras</option>
+            {creators.filter(c => c.is_internal).map(c => (
+              <option key={c.id} value={c.id}>{c.full_name ?? c.email}</option>
+            ))}
+          </select>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as 'all' | 'pending' | 'approved' | 'rejected')} className="px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark">
+            <option value="all">Todos los estados</option>
+            <option value="pending">⏳ Pendiente</option>
+            <option value="approved">✅ Aprobado</option>
+            <option value="rejected">❌ Rechazado</option>
+          </select>
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as 'all' | 'ACC' | 'TTD')} className="px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark">
+            <option value="all">ACC + TTD</option>
+            <option value="ACC">ACC</option>
+            <option value="TTD">TTD</option>
+          </select>
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark" />
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark" />
+        </div>
+      </SectionCard>
+
+      {/* Bulk action */}
+      {selectedIds.size > 0 && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 flex items-center justify-between">
+          <p className="font-dm text-sm text-emerald-700">{selectedIds.size} seleccionado(s)</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => startTransition(async () => {
+                const r = await bulkApproveInternalVideos(Array.from(selectedIds))
+                if (r.error) fb(`Error: ${r.error}`)
+                else { fb(`✓ ${r.count} aprobados`); setSelectedIds(new Set()) }
+              })}
+              className="font-dm text-sm font-semibold bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition"
+            >
+              ✅ Aprobar seleccionados
+            </button>
+            <button onClick={() => setSelectedIds(new Set())} className="font-dm text-sm text-emerald-700/60 px-3">Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      <SectionCard>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm font-dm">
+            <thead className="bg-go-light/50">
+              <tr>
+                <th className="px-3 py-3 w-10"></th>
+                {['Creator', 'Cuenta', 'URL Video', 'Tipo', 'Enviado', 'Estado', 'Acciones'].map(h => (
+                  <th key={h} className="text-left px-4 py-3 font-medium text-go-dark/60">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-go-border">
+              {filtered.length === 0 && (
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-go-dark/40">No hay videos para los filtros seleccionados.</td></tr>
+              )}
+              {filtered.map(v => (
+                <tr key={v.id} className={v.status === 'approved' ? 'bg-emerald-50/40' : v.status === 'rejected' ? 'bg-red-50/40' : ''}>
+                  <td className="px-3 py-3">
+                    {v.status === 'pending' && (
+                      <input type="checkbox" checked={selectedIds.has(v.id)} onChange={() => toggleSelected(v.id)} className="accent-go-orange" />
+                    )}
+                  </td>
+                  <td className="px-4 py-3 font-medium text-go-dark">{v.creator?.full_name ?? v.creator?.email ?? '—'}</td>
+                  <td className="px-4 py-3 text-go-orange text-xs">{v.tiktok_account?.tiktok_handle ?? '—'}</td>
+                  <td className="px-4 py-3 text-xs">
+                    <a href={v.tiktok_url} target="_blank" rel="noopener noreferrer" className="text-go-orange hover:underline truncate block max-w-[200px]">{v.tiktok_url}</a>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${v.video_type === 'ACC' ? 'bg-orange-100 text-orange-700' : 'bg-pink-100 text-pink-700'}`}>{v.video_type}</span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-go-dark/50">{new Date(v.submitted_at).toLocaleDateString('es')}</td>
+                  <td className="px-4 py-3">
+                    {v.status === 'pending' && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">⏳ Pendiente</span>}
+                    {v.status === 'approved' && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">✅ Aprobado</span>}
+                    {v.status === 'rejected' && (
+                      <div>
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">❌ Rechazado</span>
+                        {v.rejection_reason && <p className="text-[10px] text-red-500 mt-1 max-w-[180px]">{v.rejection_reason}</p>}
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 space-x-1">
+                    {v.status === 'pending' ? (
+                      <>
+                        <button
+                          onClick={() => startTransition(async () => {
+                            const r = await approveInternalVideo(v.id)
+                            if (r.error) fb(`Error: ${r.error}`)
+                            else fb('✓ Aprobado')
+                          })}
+                          className="font-dm text-xs font-semibold bg-emerald-600 text-white px-3 py-1 rounded-lg hover:bg-emerald-700 transition"
+                        >
+                          ✅ Aprobar
+                        </button>
+                        <button
+                          onClick={() => { setRejectingId(v.id); setRejectReason('') }}
+                          className="font-dm text-xs font-semibold bg-red-100 text-red-700 px-3 py-1 rounded-lg hover:bg-red-200 transition"
+                        >
+                          ❌ Rechazar
+                        </button>
+                      </>
+                    ) : (
+                      <span className="text-xs text-go-dark/40">—</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
+
+      {/* Reject modal */}
+      {rejectingId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-go-dark/40 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full">
+            <h3 className="font-syne font-bold text-lg text-go-dark mb-3">Rechazar video</h3>
+            <p className="font-dm text-xs text-go-dark/60 mb-3">Escribe la razón del rechazo. La creadora la verá en su dashboard.</p>
+            <textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={3} placeholder="Ej. URL inválida, video no relacionado con la marca..." className="w-full px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition" />
+            <div className="flex gap-2 mt-4 justify-end">
+              <button onClick={() => setRejectingId(null)} className="font-dm text-sm text-go-dark/60 px-4 py-2">Cancelar</button>
+              <button
+                disabled={!rejectReason.trim()}
+                onClick={() => startTransition(async () => {
+                  const r = await rejectInternalVideo(rejectingId!, rejectReason.trim())
+                  if (r.error) fb(`Error: ${r.error}`)
+                  else { fb('✓ Rechazado'); setRejectingId(null); setRejectReason('') }
+                })}
+                className="font-dm text-sm font-semibold bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition disabled:opacity-50"
+              >
+                Rechazar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

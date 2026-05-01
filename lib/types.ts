@@ -19,6 +19,36 @@ export interface Creator {
   mediakit_url: string | null
   approved_at: string | null
   created_at: string
+  is_internal: boolean
+  daily_quota: number
+  weekly_quota: number
+  monthly_quota: number
+}
+
+export interface TikTokAccount {
+  id: string
+  tiktok_handle: string
+  tiktok_url: string | null
+  is_active: boolean
+  notes: string | null
+  created_at: string
+}
+
+export type InternalVideoStatus = 'pending' | 'approved' | 'rejected'
+
+export interface InternalVideo {
+  id: string
+  creator_id: string
+  tiktok_account_id: string | null
+  tiktok_url: string
+  video_type: 'ACC' | 'TTD'
+  status: InternalVideoStatus
+  submitted_at: string
+  approved_at: string | null
+  rejected_at: string | null
+  rejection_reason: string | null
+  creator?: { full_name: string | null; email: string } | null
+  tiktok_account?: { tiktok_handle: string; tiktok_url: string | null } | null
 }
 
 export interface POI {
@@ -150,6 +180,7 @@ export interface BoostRequest {
   boost_reason: string | null
   notes: string | null
   status: string
+  video_type: 'ACC' | 'TTD' | null
   created_at: string
 }
 

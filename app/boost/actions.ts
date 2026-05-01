@@ -9,6 +9,7 @@ export async function submitBoost(data: {
   tiktok_url: string
   boost_reason: string | null
   notes: string | null
+  video_type: 'ACC' | 'TTD'
 }): Promise<{ error?: string }> {
   const supabase = await createClient()
   const { error } = await supabase.from('go_boost_requests').insert(data)
