@@ -91,7 +91,7 @@ interface POIRequest {
   creator?: { full_name: string | null; email: string } | null
 }
 
-type Tab = 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests' | 'rewards-admin' | 'boosts' | 'reward-requests' | 'weekly-plan' | 'challenges' | 'global-plan' | 'tiktok-accounts' | 'internal-videos'
+type Tab = 'dashboard' | 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests' | 'rewards-admin' | 'boosts' | 'reward-requests' | 'weekly-plan' | 'challenges' | 'global-plan' | 'tiktok-accounts' | 'internal-videos'
 
 interface AdminPanelProps {
   creators: Creator[]
@@ -1071,12 +1071,13 @@ export default function AdminPanel({
   tiktokAccounts,
   internalVideos,
 }: AdminPanelProps) {
-  const [tab, setTab] = useState<Tab>('creators')
+  const [tab, setTab] = useState<Tab>('dashboard')
   const [isPending, startTransition] = useTransition()
 
   const pendingInternalCount = internalVideos.filter(v => v.status === 'pending').length
 
   const tabs: { key: Tab; label: string; count: number }[] = [
+    { key: 'dashboard', label: '📊 Dashboard', count: 0 },
     { key: 'creators', label: 'Creators', count: creators.length },
     { key: 'pois', label: 'POIs', count: pois.length },
     { key: 'templates', label: 'CapCut Templates', count: templates.length },
@@ -1142,6 +1143,9 @@ export default function AdminPanel({
           </div>
         )}
 
+        {tab === 'dashboard' && (
+          <AdminDashboardTab creators={creators} internalVideos={internalVideos} />
+        )}
         {tab === 'creators' && (
           <CreatorsTab creators={creators} startTransition={startTransition} />
         )}
@@ -2666,5 +2670,291 @@ function InternalVideosTab({ videos, creators, startTransition }: { videos: Inte
         </div>
       )}
     </div>
+  )
+}
+
+// ── Admin Dashboard Tab ───────────────────────────────
+
+function AdminDashboardTab({ creators, internalVideos }: { creators: Creator[]; internalVideos: InternalVideo[] }) {
+  // Active creators only
+  const active = creators.filter(c => c.status === 'active')
+  const regular = active.filter(c => !c.is_internal)
+  const internal = active.filter(c => c.is_internal)
+
+  // Regular team aggregates
+  const regAcc = regular.reduce((s, c) => s + (c.acc_this_month ?? 0), 0)
+  const regTtd = regular.reduce((s, c) => s + (c.ttd_this_month ?? 0), 0)
+  const regAccGoal = regular.reduce((s, c) => s + (c.acc_goal ?? 0), 0)
+  const regTtdGoal = regular.reduce((s, c) => s + (c.ttd_goal ?? 0), 0)
+
+  // Internal team aggregates — count approved videos this month by type
+  const now = new Date()
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+  const internalApprovedThisMonth = internalVideos.filter(v =>
+    v.status === 'approved' && v.approved_at && v.approved_at >= startOfMonth,
+  )
+  const intAcc = internalApprovedThisMonth.filter(v => v.video_type === 'ACC').length
+  const intTtd = internalApprovedThisMonth.filter(v => v.video_type === 'TTD').length
+  const intPending = internalVideos.filter(v => v.status === 'pending').length
+  const intAccGoal = internal.reduce((s, c) => s + (c.acc_goal ?? 0), 0)
+  const intTtdGoal = internal.reduce((s, c) => s + (c.ttd_goal ?? 0), 0)
+
+  // Combined
+  const totalAcc = regAcc + intAcc
+  const totalTtd = regTtd + intTtd
+  const totalAccGoal = regAccGoal + intAccGoal
+  const totalTtdGoal = regTtdGoal + intTtdGoal
+
+  const safe = (n: number, d: number) => d > 0 ? Math.min((n / d) * 100, 100) : 0
+  const pctOfTotal = (part: number, total: number) => total > 0 ? Math.round((part / total) * 100) : 0
+
+  const regAccBar = safe(regAcc, regAccGoal)
+  const regTtdBar = safe(regTtd, regTtdGoal)
+  const intAccBar = safe(intAcc, intAccGoal)
+  const intTtdBar = safe(intTtd, intTtdGoal)
+  const totalAccBar = safe(totalAcc, totalAccGoal)
+  const totalTtdBar = safe(totalTtd, totalTtdGoal)
+
+  // Top contributors
+  const topRegularAcc = [...regular]
+    .sort((a, b) => (b.acc_this_month ?? 0) - (a.acc_this_month ?? 0))
+    .slice(0, 5)
+  const topRegularTtd = [...regular]
+    .sort((a, b) => (b.ttd_this_month ?? 0) - (a.ttd_this_month ?? 0))
+    .slice(0, 5)
+
+  // Top internal: group approved-this-month videos by creator_id
+  const intByCreator = new Map<string, { acc: number; ttd: number }>()
+  for (const v of internalApprovedThisMonth) {
+    if (!v.creator_id) continue
+    const cur = intByCreator.get(v.creator_id) ?? { acc: 0, ttd: 0 }
+    if (v.video_type === 'ACC') cur.acc++
+    else if (v.video_type === 'TTD') cur.ttd++
+    intByCreator.set(v.creator_id, cur)
+  }
+  const internalById = new Map(internal.map(c => [c.id, c]))
+  const topInternal = Array.from(intByCreator.entries())
+    .map(([id, counts]) => ({ creator: internalById.get(id), acc: counts.acc, ttd: counts.ttd, total: counts.acc + counts.ttd }))
+    .filter(x => x.creator)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 5)
+
+  return (
+    <div className="space-y-6">
+      <h2 className="font-syne text-lg font-bold text-go-dark">📊 Dashboard de contribuciones</h2>
+
+      {/* Section 2 — Breakdown cards */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <BreakdownCard
+          title="👥 Creadoras Regulares"
+          subtitle="Videos reportados por las creadoras de la comunidad"
+          accent="orange"
+          accNumber={regAcc}
+          ttdNumber={regTtd}
+          accBar={regAccBar}
+          ttdBar={regTtdBar}
+          accPctOfTotal={pctOfTotal(regAcc, totalAcc)}
+          ttdPctOfTotal={pctOfTotal(regTtd, totalTtd)}
+          footer={`${regular.length} creadoras activas contribuyendo`}
+        />
+        <BreakdownCard
+          title="🏢 Equipo Interno"
+          subtitle="Videos verificados del equipo interno de Papaya GO"
+          accent="green"
+          accNumber={intAcc}
+          ttdNumber={intTtd}
+          accBar={intAccBar}
+          ttdBar={intTtdBar}
+          accPctOfTotal={pctOfTotal(intAcc, totalAcc)}
+          ttdPctOfTotal={pctOfTotal(intTtd, totalTtd)}
+          footer={`${internal.length} creadoras internas activas`}
+          warning={intPending > 0 ? `${intPending} videos pendientes de verificar` : null}
+        />
+      </div>
+
+      {/* Combined total bar */}
+      <SectionCard>
+        <div className="p-6">
+          <h3 className="font-syne font-bold text-base text-go-dark mb-4">Total combinado este mes</h3>
+
+          <CombinedBar
+            label="ACC"
+            current={totalAcc}
+            goal={totalAccGoal}
+            barPct={totalAccBar}
+            complete={totalAccGoal > 0 && totalAcc >= totalAccGoal}
+          />
+
+          <div className="h-4" />
+
+          <CombinedBar
+            label="TTD"
+            current={totalTtd}
+            goal={totalTtdGoal}
+            barPct={totalTtdBar}
+            complete={totalTtdGoal > 0 && totalTtd >= totalTtdGoal}
+          />
+        </div>
+      </SectionCard>
+
+      {/* Section 3 — Top contributors */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <TopList
+          title="🌟 Top Creadoras Regulares (ACC)"
+          rows={topRegularAcc.map(c => ({
+            id: c.id,
+            name: c.full_name ?? c.email,
+            handle: c.tiktok_handle,
+            value: c.acc_this_month ?? 0,
+            valueLabel: 'ACC',
+          }))}
+          accent="orange"
+        />
+        <TopList
+          title="🌟 Top Creadoras Regulares (TTD)"
+          rows={topRegularTtd.map(c => ({
+            id: c.id,
+            name: c.full_name ?? c.email,
+            handle: c.tiktok_handle,
+            value: c.ttd_this_month ?? 0,
+            valueLabel: 'TTD',
+          }))}
+          accent="pink"
+        />
+        <TopInternalList rows={topInternal} />
+      </div>
+    </div>
+  )
+}
+
+function BreakdownCard({
+  title, subtitle, accent, accNumber, ttdNumber, accBar, ttdBar, accPctOfTotal, ttdPctOfTotal, footer, warning,
+}: {
+  title: string
+  subtitle: string
+  accent: 'orange' | 'green'
+  accNumber: number
+  ttdNumber: number
+  accBar: number
+  ttdBar: number
+  accPctOfTotal: number
+  ttdPctOfTotal: number
+  footer: string
+  warning?: string | null
+}) {
+  const ringClass = accent === 'green' ? 'border-emerald-200' : 'border-go-orange/20'
+  return (
+    <div className={`bg-white border-2 ${ringClass} rounded-2xl p-6`}>
+      <h3 className="font-syne font-bold text-lg text-go-dark">{title}</h3>
+      <p className="font-dm text-xs text-go-dark/50 mt-1 mb-5">{subtitle}</p>
+
+      <div className="grid grid-cols-2 gap-4 mb-5">
+        <div>
+          <p className="font-dm text-xs uppercase tracking-wide text-go-dark/40">ACC</p>
+          <p className="font-syne font-bold text-3xl text-[#ff7700] mt-0.5 leading-none">{accNumber}</p>
+          <div className="mt-2 h-2 rounded-full bg-go-dark/[0.06] overflow-hidden">
+            <div className="h-full bg-[#ff7700] transition-all" style={{ width: `${accBar}%` }} />
+          </div>
+          <span className="inline-block mt-2 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#ff7700]/10 text-[#ff7700]">
+            Aportan {accPctOfTotal}% del total ACC
+          </span>
+        </div>
+        <div>
+          <p className="font-dm text-xs uppercase tracking-wide text-go-dark/40">TTD</p>
+          <p className="font-syne font-bold text-3xl text-pink-600 mt-0.5 leading-none">{ttdNumber}</p>
+          <div className="mt-2 h-2 rounded-full bg-go-dark/[0.06] overflow-hidden">
+            <div className="h-full bg-pink-500 transition-all" style={{ width: `${ttdBar}%` }} />
+          </div>
+          <span className="inline-block mt-2 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-pink-100 text-pink-700">
+            Aportan {ttdPctOfTotal}% del total TTD
+          </span>
+        </div>
+      </div>
+
+      <p className="font-dm text-xs text-go-dark/60 border-t border-go-dark/[0.06] pt-3">
+        {footer}
+      </p>
+      {warning && (
+        <p className="font-dm text-xs text-[#ff7700] font-semibold mt-2">⚠ {warning}</p>
+      )}
+    </div>
+  )
+}
+
+function CombinedBar({ label, current, goal, barPct, complete }: { label: string; current: number; goal: number; barPct: number; complete: boolean }) {
+  const color = complete ? '#2a9d4a' : '#ff7700'
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-1.5">
+        <span className="font-dm text-sm font-semibold text-go-dark">{label}</span>
+        <span className="font-dm text-sm text-go-dark/60">
+          <span className="font-syne font-bold text-go-dark text-base">{current}</span> de {goal} {label}
+        </span>
+      </div>
+      <div className="h-3 rounded-full bg-go-dark/[0.06] overflow-hidden">
+        <div className="h-full transition-all" style={{ width: `${barPct}%`, background: color }} />
+      </div>
+    </div>
+  )
+}
+
+function TopList({ title, rows, accent }: { title: string; rows: { id: string; name: string; handle: string | null; value: number; valueLabel: string }[]; accent: 'orange' | 'pink' }) {
+  const colors = accent === 'pink'
+    ? { rank: 'text-pink-600', value: 'text-pink-700 bg-pink-100' }
+    : { rank: 'text-[#ff7700]', value: 'text-[#ff7700] bg-[#ff7700]/10' }
+  return (
+    <SectionCard>
+      <div className="p-5">
+        <h3 className="font-syne font-bold text-sm text-go-dark mb-4">{title}</h3>
+        {rows.length === 0 ? (
+          <p className="font-dm text-xs text-go-dark/40 text-center py-4">Aún no hay datos.</p>
+        ) : (
+          <ol className="space-y-2">
+            {rows.map((r, i) => (
+              <li key={r.id} className="flex items-center gap-3 py-1.5">
+                <span className={`font-syne font-bold text-base w-6 text-center ${colors.rank}`}>#{i + 1}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="font-dm text-sm font-medium text-go-dark truncate">{r.name}</p>
+                  {r.handle && <p className="font-dm text-xs text-go-dark/50 truncate">{r.handle}</p>}
+                </div>
+                <span className={`font-syne font-bold text-xs px-2 py-0.5 rounded-full ${colors.value} shrink-0`}>
+                  {r.value} {r.valueLabel}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </SectionCard>
+  )
+}
+
+function TopInternalList({ rows }: { rows: { creator?: Creator; acc: number; ttd: number; total: number }[] }) {
+  return (
+    <SectionCard>
+      <div className="p-5">
+        <h3 className="font-syne font-bold text-sm text-go-dark mb-4">🏢 Top Equipo Interno</h3>
+        {rows.length === 0 ? (
+          <p className="font-dm text-xs text-go-dark/40 text-center py-4">Aún no hay videos verificados.</p>
+        ) : (
+          <ol className="space-y-2">
+            {rows.map((r, i) => (
+              <li key={r.creator!.id} className="flex items-center gap-3 py-1.5">
+                <span className="font-syne font-bold text-base w-6 text-center text-emerald-600">#{i + 1}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="font-dm text-sm font-medium text-go-dark truncate">{r.creator!.full_name ?? r.creator!.email}</p>
+                  {r.creator!.tiktok_handle && <p className="font-dm text-xs text-go-dark/50 truncate">{r.creator!.tiktok_handle}</p>}
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700">{r.acc} ACC</span>
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-pink-100 text-pink-700">{r.ttd} TTD</span>
+                  <span className="text-xs font-syne font-bold text-go-dark ml-1">{r.total}</span>
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </SectionCard>
   )
 }
