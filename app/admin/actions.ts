@@ -168,6 +168,47 @@ export async function createAuthAndLogin(email: string, password: string): Promi
   return {}
 }
 
+export async function resetPasswordWithCode(email: string, code: string, newPassword: string): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const emailNorm = email.toLowerCase().trim()
+
+  // Verify email + access code match a creator
+  const { data: creator } = await supabase
+    .from('go_creators')
+    .select('id, email, access_code, status')
+    .eq('email', emailNorm)
+    .single()
+
+  if (!creator || creator.access_code !== code.toUpperCase().trim()) {
+    return { error: 'Email o código incorrecto. Contacta a tu admin.' }
+  }
+  if (creator.status === 'suspended') {
+    return { error: 'Tu cuenta está suspendida. Contacta a tu agencia.' }
+  }
+
+  // Update or create the auth user
+  const { data: { users } } = await supabase.auth.admin.listUsers()
+  const authUser = users.find(u => u.email === emailNorm)
+
+  if (authUser) {
+    const { error } = await supabase.auth.admin.updateUserById(authUser.id, { password: newPassword })
+    if (error) return { error: error.message }
+  } else {
+    const { error } = await supabase.auth.admin.createUser({
+      email: emailNorm,
+      password: newPassword,
+      email_confirm: true,
+    })
+    if (error) return { error: error.message }
+    await supabase.from('go_creators').update({
+      status: 'active',
+      approved_at: new Date().toISOString(),
+    }).eq('email', emailNorm)
+  }
+
+  return {}
+}
+
 // ── POIs ──────────────────────────────────────────────
 
 export async function addPOI(data: {

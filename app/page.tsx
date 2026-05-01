@@ -3,9 +3,9 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { checkEmail, verifyAccessCode, createAuthAndLogin } from '@/app/admin/actions'
+import { checkEmail, verifyAccessCode, createAuthAndLogin, resetPasswordWithCode } from '@/app/admin/actions'
 
-type Step = 'email' | 'password' | 'access-code' | 'create-password'
+type Step = 'email' | 'password' | 'access-code' | 'create-password' | 'forgot-verify' | 'forgot-create'
 
 export default function LoginPage() {
   const [step, setStep] = useState<Step>('email')
@@ -72,12 +72,53 @@ export default function LoginPage() {
     router.refresh()
   }
 
+  async function handleForgotVerifySubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    setError(null)
+    const result = await verifyAccessCode(email, accessCode)
+    if (result.error) { setError('Email o código incorrecto. Contacta a tu admin.'); setLoading(false); return }
+    setStep('forgot-create')
+    setPassword('')
+    setConfirmPassword('')
+    setLoading(false)
+  }
+
+  async function handleForgotCreateSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    setError(null)
+    if (password !== confirmPassword) { setError('Las contraseñas no coinciden.'); setLoading(false); return }
+    if (password.length < 8) { setError('La contraseña debe tener al menos 8 caracteres.'); setLoading(false); return }
+    const result = await resetPasswordWithCode(email, accessCode, password)
+    if (result.error) { setError(result.error); setLoading(false); return }
+    await new Promise(resolve => setTimeout(resolve, 400))
+    const supabase = createClient()
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
+    if (signInError) { setError(signInError.message); setLoading(false); return }
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) { setError('Error al iniciar sesión. Intenta de nuevo.'); setLoading(false); return }
+    router.push('/dashboard')
+    router.refresh()
+  }
+
+  function startForgotFlow() {
+    setError(null)
+    setPassword('')
+    setConfirmPassword('')
+    setAccessCode('')
+    setEmail('')
+    setStep('forgot-verify')
+  }
+
   function getSubtitle() {
     switch (step) {
       case 'email': return 'Ingresa tu email para continuar'
       case 'password': return 'Ingresa tu contraseña'
       case 'access-code': return 'Ingresa tu código de acceso'
       case 'create-password': return 'Crea tu contraseña para comenzar'
+      case 'forgot-verify': return 'Verifica tu identidad para recuperar tu contraseña'
+      case 'forgot-create': return 'Crea una nueva contraseña'
     }
   }
 
@@ -147,6 +188,9 @@ export default function LoginPage() {
               <button type="submit" disabled={loading} className="w-full py-3.5 rounded-xl font-dm font-semibold text-sm text-white bg-go-orange hover:bg-go-orange/90 transition disabled:opacity-60 mt-2">
                 {loading ? 'Entrando...' : 'Iniciar sesión →'}
               </button>
+              <button type="button" onClick={startForgotFlow} className="w-full text-center font-dm text-xs text-gray-500 hover:text-go-orange transition mt-1">
+                ¿Olvidaste tu contraseña? <span className="underline">Recupérala aquí</span>
+              </button>
               <button type="button" onClick={goBack} className="w-full text-center font-dm text-xs text-gray-400 hover:text-go-orange transition mt-1">
                 ← Volver
               </button>
@@ -197,6 +241,55 @@ export default function LoginPage() {
                 {loading ? 'Creando cuenta...' : 'Crear cuenta →'}
               </button>
               <button type="button" onClick={goBack} className="w-full text-center font-dm text-xs text-gray-400 hover:text-go-orange transition mt-1">
+                ← Volver
+              </button>
+            </form>
+          )}
+
+          {step === 'forgot-verify' && (
+            <form onSubmit={handleForgotVerifySubmit} className="space-y-4">
+              <div>
+                <label htmlFor="email" className="block text-sm font-dm text-gray-500 mb-1.5">Tu email</label>
+                <input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="tu@email.com" className="input-field" />
+              </div>
+              <div>
+                <label htmlFor="code" className="block text-sm font-dm text-gray-500 mb-1.5">Tu código de acceso</label>
+                <input
+                  id="code" type="text" value={accessCode}
+                  onChange={(e) => setAccessCode(e.target.value.toUpperCase())}
+                  required placeholder="Ej: PAP7X2" maxLength={6}
+                  className="input-field uppercase tracking-[0.3em] text-center font-semibold text-lg"
+                />
+              </div>
+              {error && <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3"><p className="text-sm font-dm text-red-600">{error}</p></div>}
+              <button type="submit" disabled={loading} className="w-full py-3.5 rounded-xl font-dm font-semibold text-sm text-white bg-go-orange hover:bg-go-orange/90 transition disabled:opacity-60 mt-2">
+                {loading ? 'Verificando...' : 'Verificar →'}
+              </button>
+              <button type="button" onClick={goBack} className="w-full text-center font-dm text-xs text-gray-400 hover:text-go-orange transition mt-1">
+                ← Volver al inicio de sesión
+              </button>
+            </form>
+          )}
+
+          {step === 'forgot-create' && (
+            <form onSubmit={handleForgotCreateSubmit} className="space-y-4">
+              <div className="bg-go-light rounded-xl px-4 py-3 mb-2">
+                <p className="font-dm text-xs text-gray-400">Recuperando contraseña para</p>
+                <p className="font-dm text-sm font-semibold text-go-dark">{email}</p>
+              </div>
+              <div>
+                <label htmlFor="password" className="block text-sm font-dm text-gray-500 mb-1.5">Nueva contraseña</label>
+                <input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} placeholder="Mínimo 8 caracteres" className="input-field" />
+              </div>
+              <div>
+                <label htmlFor="confirm" className="block text-sm font-dm text-gray-500 mb-1.5">Confirmar nueva contraseña</label>
+                <input id="confirm" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required placeholder="Repetir contraseña" className="input-field" />
+              </div>
+              {error && <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3"><p className="text-sm font-dm text-red-600">{error}</p></div>}
+              <button type="submit" disabled={loading} className="w-full py-3.5 rounded-xl font-dm font-semibold text-sm text-white bg-go-orange hover:bg-go-orange/90 transition disabled:opacity-60 mt-2">
+                {loading ? 'Guardando...' : 'Guardar nueva contraseña →'}
+              </button>
+              <button type="button" onClick={() => { setError(null); setPassword(''); setConfirmPassword(''); setStep('forgot-verify') }} className="w-full text-center font-dm text-xs text-gray-400 hover:text-go-orange transition mt-1">
                 ← Volver
               </button>
             </form>
