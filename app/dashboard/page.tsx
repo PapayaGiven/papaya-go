@@ -5,6 +5,7 @@ import Sidebar from '@/components/Sidebar'
 import AnnouncementPopup from '@/components/AnnouncementPopup'
 import DashboardClient from './DashboardClient'
 import DashboardHashtags from './DashboardHashtags'
+import ProgressRings from './ProgressRings'
 import { Creator, NivelRequirement, Announcement, Challenge, NIVEL_NAMES, NIVEL_COLORS } from '@/lib/types'
 
 export default async function DashboardPage() {
@@ -27,10 +28,9 @@ export default async function DashboardPage() {
   const dayNames = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']
   const todayName = dayNames[nowDate.getDay()]
 
-  const [announcementRes, currentNivelRes, nextNivelRes, challengeRes, leaderboardRes, todayPlanRes] = await Promise.all([
+  const [announcementRes, currentNivelRes, challengeRes, leaderboardRes, todayPlanRes] = await Promise.all([
     admin.from('go_announcements').select('*').eq('is_active', true).order('created_at', { ascending: false }),
     admin.from('go_nivel_requirements').select('*').eq('nivel', creator.nivel).maybeSingle(),
-    admin.from('go_nivel_requirements').select('*').eq('nivel', creator.nivel + 1).maybeSingle(),
     admin.from('go_challenges').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1).maybeSingle(),
     admin.from('go_creators').select('id, full_name, nivel, videos_this_month, gmv_this_month, acc_this_month, ttd_this_month').eq('status', 'active').order('videos_this_month', { ascending: false }).limit(10),
     admin.from('go_content_plan').select('*').eq('creator_id', creator.id).eq('week_start', weekStart).eq('day_of_week', todayName).limit(1).maybeSingle(),
@@ -41,7 +41,6 @@ export default async function DashboardPage() {
   const banners = allAnnouncements.filter(a => a.display_type !== 'popup')
   const popup = allAnnouncements.find(a => a.display_type === 'popup') ?? null
   const currentNivelReq = currentNivelRes.data as NivelRequirement | null
-  const nextNivel = nextNivelRes.data as NivelRequirement | null
   const challenge = challengeRes.data as Challenge | null
   const allCreators = (leaderboardRes.data ?? []) as Pick<Creator, 'id' | 'full_name' | 'nivel' | 'videos_this_month' | 'gmv_this_month' | 'acc_this_month' | 'ttd_this_month'>[]
 
@@ -60,20 +59,20 @@ export default async function DashboardPage() {
 
   const firstName = creator.full_name?.split(' ')[0] ?? 'Creadora'
   const nivelColor = NIVEL_COLORS[creator.nivel] ?? NIVEL_COLORS[1]
-  // Current nivel requirements (for progress bar)
+  // Current nivel requirements (drives the monthly goal rings)
   const videosRequired = currentNivelReq?.total_videos_required ?? 12
   const gmvRequired = currentNivelReq?.gmv_required ?? 0
-  const videosProgress = videosRequired > 0 ? Math.min((creator.videos_this_month / videosRequired) * 100, 100) : 100
-  // Next nivel requirements (for "te faltan" text)
-  const nextVideosRequired = nextNivel?.total_videos_required ?? videosRequired
-  const nextGmvRequired = nextNivel?.gmv_required ?? gmvRequired
-  const videosRemaining = Math.max(nextVideosRequired - creator.videos_this_month, 0)
-  const gmvRemaining = Math.max(nextGmvRequired - creator.gmv_this_month, 0)
 
   let challengeDaysLeft = 0
   if (challenge) {
     challengeDaysLeft = Math.max(Math.ceil((new Date(challenge.end_date).getTime() - Date.now()) / 86400000), 0)
   }
+
+  // Month name in Spanish + days remaining in month
+  const SPANISH_MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+  const monthName = SPANISH_MONTHS[nowDate.getMonth()]
+  const lastDay = new Date(nowDate.getFullYear(), nowDate.getMonth() + 1, 0).getDate()
+  const daysRemainingInMonth = Math.max(lastDay - nowDate.getDate(), 0)
 
   return (
     <div className="min-h-screen bg-[#fff8f2]">
@@ -154,25 +153,17 @@ export default async function DashboardPage() {
             )
           })()}
 
-          {/* CARD 2: Progress */}
-          <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5">
-            <h2 className="font-syne font-bold text-base text-[#1a0800] mb-3">📅 Tu progreso este mes</h2>
-            <div className="flex flex-wrap gap-2 mb-4">
-              <span className="font-dm text-xs font-semibold px-3 py-1.5 rounded-full bg-[#ff7700]/10 text-[#ff7700]">${creator.gmv_this_month.toLocaleString()} GMV</span>
-              <span className="font-dm text-xs font-semibold px-3 py-1.5 rounded-full bg-gray-100 text-gray-600">{creator.videos_this_month} videos</span>
-              <span className="font-dm text-xs font-semibold px-3 py-1.5 rounded-full bg-gray-100 text-gray-600">{creator.acc_this_month} ACC</span>
-              <span className="font-dm text-xs font-semibold px-3 py-1.5 rounded-full bg-gray-100 text-gray-600">{creator.ttd_this_month} TTD</span>
-            </div>
-            <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden mb-2">
-              <div className="h-full bg-gradient-to-r from-[#ff7700] to-[#ffa552] rounded-full transition-all" style={{ width: `${videosProgress}%` }} />
-            </div>
-            <p className="font-dm text-xs text-gray-400">
-              {creator.videos_this_month}/{videosRequired} videos para tu Nivel {creator.nivel}
-              {nextNivel && (
-                <span> · Te faltan <span className="font-semibold text-[#1a0800]">{videosRemaining} videos</span> y <span className="font-semibold text-[#1a0800]">${gmvRemaining.toLocaleString()} GMV</span> para Nivel {creator.nivel + 1}</span>
-              )}
-            </p>
-          </div>
+          {/* CARD 2: Monthly goal rings */}
+          <ProgressRings
+            monthName={monthName}
+            videosThisMonth={creator.videos_this_month}
+            videosRequired={videosRequired}
+            gmvThisMonth={creator.gmv_this_month}
+            gmvRequired={gmvRequired}
+            accThisMonth={creator.acc_this_month}
+            ttdThisMonth={creator.ttd_this_month}
+            daysRemaining={daysRemainingInMonth}
+          />
 
           {/* CARD 3: Challenge */}
           {challenge && (
