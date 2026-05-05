@@ -898,3 +898,55 @@ export async function applyGlobalPlan(
   revalidatePath('/dashboard')
   return { count: creatorIds.length }
 }
+
+// ── Monthly goals (admin dashboard) ──────────────────
+
+export async function upsertMonthlyGoal(data: {
+  month: number
+  year: number
+  acc_goal: number
+  ttd_goal: number
+}): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('go_monthly_goals')
+    .upsert(
+      {
+        month: data.month,
+        year: data.year,
+        acc_goal: data.acc_goal,
+        ttd_goal: data.ttd_goal,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'month,year' },
+    )
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  return {}
+}
+
+// ── Boost request approve/reject (admin dashboard video tracker) ──
+
+export async function approveBoostRequest(id: string): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('go_boost_requests')
+    .update({ status: 'boosteado', rejection_reason: null })
+    .eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  return {}
+}
+
+export async function rejectBoostRequest(id: string, reason: string): Promise<{ error?: string }> {
+  const trimmed = reason.trim()
+  if (!trimmed) return { error: 'Razón de rechazo requerida' }
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('go_boost_requests')
+    .update({ status: 'rejected', rejection_reason: trimmed })
+    .eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  return {}
+}

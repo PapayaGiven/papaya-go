@@ -181,6 +181,7 @@ export interface BoostRequest {
   notes: string | null
   status: string
   video_type: 'ACC' | 'TTD' | null
+  rejection_reason: string | null
   created_at: string
 }
 
@@ -209,4 +210,14 @@ export const NIVEL_BORDER_COLORS: Record<number, string> = {
   2: '#ffa552',
   3: '#ff7700',
   4: '#d4a017',
+}
+
+export interface MonthlyGoal {
+  id: string
+  month: number
+  year: number
+  acc_goal: number
+  ttd_goal: number
+  created_at: string
+  updated_at: string | null
 }

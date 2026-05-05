@@ -253,3 +253,21 @@ CREATE TABLE IF NOT EXISTS go_content_plan (
 ALTER TABLE go_content_plan ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "go_content_plan_read_own" ON go_content_plan FOR SELECT USING (creator_id IN (SELECT id FROM go_creators WHERE email = auth.email()));
 CREATE POLICY "go_content_plan_service" ON go_content_plan FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- Reject reason for boost requests (used by admin dashboard video tracker)
+ALTER TABLE go_boost_requests ADD COLUMN IF NOT EXISTS rejection_reason text;
+
+-- 14. go_monthly_goals — central monthly ACC/TTD goals for the whole team
+CREATE TABLE IF NOT EXISTS go_monthly_goals (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  month int NOT NULL,
+  year int NOT NULL,
+  acc_goal int DEFAULT 300,
+  ttd_goal int DEFAULT 300,
+  created_at timestamp DEFAULT now(),
+  updated_at timestamp DEFAULT now(),
+  UNIQUE(month, year)
+);
+ALTER TABLE go_monthly_goals ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "go_monthly_goals_service" ON go_monthly_goals FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "go_monthly_goals_read" ON go_monthly_goals FOR SELECT TO authenticated USING (true);

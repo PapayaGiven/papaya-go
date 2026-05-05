@@ -13,6 +13,7 @@ import type {
   RewardRequest,
   TikTokAccount,
   InternalVideo,
+  MonthlyGoal,
 } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -26,6 +27,10 @@ export default async function AdminPage() {
   }
 
   const supabase = createAdminClient()
+
+  const now = new Date()
+  const currentMonth = now.getMonth() + 1
+  const currentYear = now.getFullYear()
 
   const [
     { data: creators },
@@ -42,6 +47,7 @@ export default async function AdminPage() {
     { data: challenges },
     { data: tiktokAccounts },
     { data: internalVideos },
+    { data: monthlyGoal },
   ] = await Promise.all([
     supabase
       .from('go_creators')
@@ -81,6 +87,12 @@ export default async function AdminPage() {
       .from('go_internal_videos')
       .select('*, creator:go_creators(full_name, email), tiktok_account:go_tiktok_accounts(tiktok_handle, tiktok_url)')
       .order('submitted_at', { ascending: false }),
+    supabase
+      .from('go_monthly_goals')
+      .select('*')
+      .eq('month', currentMonth)
+      .eq('year', currentYear)
+      .maybeSingle(),
   ])
 
   return (
@@ -104,6 +116,9 @@ export default async function AdminPage() {
       tiktokAccounts={(tiktokAccounts as TikTokAccount[]) ?? []}
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       internalVideos={(internalVideos ?? []) as InternalVideo[]}
+      monthlyGoal={(monthlyGoal as MonthlyGoal | null) ?? null}
+      currentMonth={currentMonth}
+      currentYear={currentYear}
     />
   )
 }

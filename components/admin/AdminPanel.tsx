@@ -13,6 +13,7 @@ import type {
   Challenge,
   TikTokAccount,
   InternalVideo,
+  MonthlyGoal,
 } from '@/lib/types'
 import { NIVEL_NAMES, POI_TYPE_LABELS, CHALLENGE_TYPE_LABELS } from '@/lib/types'
 import {
@@ -63,6 +64,9 @@ import {
   rejectInternalVideo,
   bulkApproveInternalVideos,
   getInternalVideoStats,
+  upsertMonthlyGoal,
+  approveBoostRequest,
+  rejectBoostRequest,
 } from '@/app/admin/actions'
 
 // ── Types ─────────────────────────────────────────────
@@ -108,6 +112,9 @@ interface AdminPanelProps {
   challenges: Challenge[]
   tiktokAccounts: TikTokAccount[]
   internalVideos: InternalVideo[]
+  monthlyGoal: MonthlyGoal | null
+  currentMonth: number
+  currentYear: number
 }
 
 interface WeeklyPlanItem {
@@ -1070,6 +1077,9 @@ export default function AdminPanel({
   challenges,
   tiktokAccounts,
   internalVideos,
+  monthlyGoal,
+  currentMonth,
+  currentYear,
 }: AdminPanelProps) {
   const [tab, setTab] = useState<Tab>('dashboard')
   const [isPending, startTransition] = useTransition()
@@ -1144,7 +1154,15 @@ export default function AdminPanel({
         )}
 
         {tab === 'dashboard' && (
-          <AdminDashboardTab creators={creators} internalVideos={internalVideos} />
+          <AdminDashboardTab
+            creators={creators}
+            internalVideos={internalVideos}
+            boostRequests={boostRequests}
+            monthlyGoal={monthlyGoal}
+            currentMonth={currentMonth}
+            currentYear={currentYear}
+            startTransition={startTransition}
+          />
         )}
         {tab === 'creators' && (
           <CreatorsTab creators={creators} startTransition={startTransition} />
@@ -2675,51 +2693,389 @@ function InternalVideosTab({ videos, creators, startTransition }: { videos: Inte
 
 // ── Admin Dashboard Tab ───────────────────────────────
 
-function AdminDashboardTab({ creators, internalVideos }: { creators: Creator[]; internalVideos: InternalVideo[] }) {
+const MONTH_NAMES_ES = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+]
+
+const RING_CIRC = 2 * Math.PI * 60 // r=60
+
+function DashboardRing({
+  current, goal, label, color, pendingCount,
+}: { current: number; goal: number; label: string; color: string; pendingCount: number }) {
+  const safeGoal = Math.max(goal, 1)
+  const pct = Math.min(current / safeGoal, 1)
+  const offset = RING_CIRC - pct * RING_CIRC
+  const complete = goal > 0 && current >= goal
+  const ringColor = complete ? '#2a9d4a' : color
+  return (
+    <div className="flex flex-col items-center text-center">
+      <div className="relative" style={{ width: 150, height: 150 }}>
+        <svg width="150" height="150" viewBox="0 0 150 150" className="block">
+          <circle cx="75" cy="75" r="60" fill="none" stroke="rgba(26,8,0,0.08)" strokeWidth="12" />
+          <circle
+            cx="75" cy="75" r="60" fill="none"
+            stroke={ringColor} strokeWidth="12" strokeLinecap="round"
+            strokeDasharray={RING_CIRC}
+            strokeDashoffset={offset}
+            transform="rotate(-90 75 75)"
+            style={{ transition: 'stroke-dashoffset 1s cubic-bezier(0.22, 1, 0.36, 1), stroke 0.3s' }}
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="font-syne font-bold text-3xl text-go-dark leading-none">{current}</span>
+          <span className="font-dm text-xs text-go-dark/40 mt-1">de {goal}</span>
+        </div>
+      </div>
+      <p className="mt-3 font-syne font-bold text-base text-go-dark">{label}</p>
+      <div className="flex gap-2 mt-2">
+        <span className="font-dm text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
+          {current} aprobados
+        </span>
+        {pendingCount > 0 && (
+          <span className="font-dm text-[10px] font-semibold px-2 py-0.5 rounded-full bg-orange-50 text-orange-700">
+            {pendingCount} pendientes
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function QuickStat({ label, value, accent = 'dark' }: { label: string; value: number; accent?: 'dark' | 'orange' | 'green' | 'pink' }) {
+  const colors = {
+    dark: 'text-go-dark',
+    orange: 'text-[#ff7700]',
+    green: 'text-emerald-600',
+    pink: 'text-pink-600',
+  }
+  return (
+    <div className="bg-white border border-go-dark/[0.06] rounded-2xl p-5">
+      <p className={`font-syne font-bold text-3xl leading-none ${colors[accent]}`}>{value}</p>
+      <p className="font-dm text-xs text-go-dark/50 mt-2">{label}</p>
+    </div>
+  )
+}
+
+function MonthlyGoalEditor({
+  month, year, accGoal, ttdGoal, lastUpdated, startTransition,
+}: {
+  month: number
+  year: number
+  accGoal: number
+  ttdGoal: number
+  lastUpdated: string | null
+  startTransition: (cb: () => void) => void
+}) {
+  const [accInput, setAccInput] = useState(String(accGoal))
+  const [ttdInput, setTtdInput] = useState(String(ttdGoal))
+  const [feedback, setFeedback] = useState<string | null>(null)
+
+  function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 4000) }
+
+  return (
+    <SectionCard>
+      <div className="p-6">
+        <h3 className="font-syne font-bold text-base text-go-dark mb-1">
+          Meta de {MONTH_NAMES_ES[month - 1]} {year}
+        </h3>
+        <p className="font-dm text-xs text-go-dark/50 mb-4">
+          Estos números son la meta de equipo para todo el mes (regulares + interno).
+        </p>
+        <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <label className="block font-dm text-xs font-semibold text-go-dark/60 mb-1">ACC videos</label>
+            <input
+              type="number" min="0"
+              value={accInput}
+              onChange={(e) => setAccInput(e.target.value)}
+              className="w-32 px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition"
+            />
+          </div>
+          <div>
+            <label className="block font-dm text-xs font-semibold text-go-dark/60 mb-1">TTD videos</label>
+            <input
+              type="number" min="0"
+              value={ttdInput}
+              onChange={(e) => setTtdInput(e.target.value)}
+              className="w-32 px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition"
+            />
+          </div>
+          <button
+            onClick={() => startTransition(async () => {
+              const acc = parseInt(accInput, 10)
+              const ttd = parseInt(ttdInput, 10)
+              if (Number.isNaN(acc) || Number.isNaN(ttd)) { fb('Error: Números inválidos'); return }
+              const r = await upsertMonthlyGoal({ month, year, acc_goal: acc, ttd_goal: ttd })
+              if (r.error) fb(`Error: ${r.error}`)
+              else fb('✓ Meta actualizada')
+            })}
+            className="bg-go-orange text-white text-sm font-syne font-bold px-5 py-2 rounded-lg hover:bg-go-orange/90 transition"
+          >
+            Guardar meta
+          </button>
+        </div>
+        {feedback && (
+          <p className={`text-xs font-dm mt-3 ${feedback.startsWith('Error') ? 'text-red-600' : 'text-emerald-700'}`}>
+            {feedback}
+          </p>
+        )}
+        {lastUpdated && (
+          <p className="font-dm text-[11px] text-go-dark/40 mt-3">
+            Última actualización: {new Date(lastUpdated).toLocaleString('es')}
+          </p>
+        )}
+      </div>
+    </SectionCard>
+  )
+}
+
+function VideoTrackerSection({
+  regular, boostRequests, startTransition,
+}: {
+  regular: Creator[]
+  boostRequests: BoostRequest[]
+  startTransition: (cb: () => void) => void
+}) {
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [filter, setFilter] = useState<'all' | 'ACC' | 'TTD' | 'pending'>('all')
+  const [rejectingId, setRejectingId] = useState<string | null>(null)
+  const [rejectReason, setRejectReason] = useState('')
+  const [feedback, setFeedback] = useState<string | null>(null)
+  function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 4000) }
+
+  const requestsByCreator = new Map<string, BoostRequest[]>()
+  for (const r of boostRequests) {
+    if (!r.creator_id) continue
+    const arr = requestsByCreator.get(r.creator_id) ?? []
+    arr.push(r)
+    requestsByCreator.set(r.creator_id, arr)
+  }
+
+  const rows = regular.map(c => {
+    const all = requestsByCreator.get(c.id) ?? []
+    const acc = all.filter(b => b.video_type === 'ACC' && b.status === 'boosteado').length
+    const ttd = all.filter(b => b.video_type === 'TTD' && b.status === 'boosteado').length
+    const pending = all.filter(b => b.status === 'pending').length
+    const lastUpload = all.reduce<string | null>((latest, b) => {
+      if (!latest || b.created_at > latest) return b.created_at
+      return latest
+    }, null)
+    return { creator: c, requests: all, acc, ttd, total: acc + ttd, pending, lastUpload }
+  }).sort((a, b) => b.total - a.total)
+
+  function filterRequests(reqs: BoostRequest[]) {
+    if (filter === 'all') return reqs
+    if (filter === 'pending') return reqs.filter(r => r.status === 'pending')
+    return reqs.filter(r => r.video_type === filter)
+  }
+
+  return (
+    <SectionCard>
+      <div className="p-6">
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+          <h3 className="font-syne font-bold text-base text-go-dark">🎬 Videos por Creadora</h3>
+          <div className="flex gap-1.5">
+            {([['all', 'Todos'], ['ACC', 'ACC'], ['TTD', 'TTD'], ['pending', 'Pendientes']] as const).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setFilter(key)}
+                className={`text-xs font-semibold px-3 py-1.5 rounded-full font-dm transition ${
+                  filter === key ? 'bg-go-orange text-white' : 'bg-go-dark/[0.04] text-go-dark/60 hover:bg-go-dark/[0.08]'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {feedback && (
+          <p className={`text-sm font-dm mb-3 px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>
+            {feedback}
+          </p>
+        )}
+
+        <div className="overflow-x-auto rounded-2xl border border-go-dark/5">
+          <table className="w-full text-sm font-dm">
+            <thead className="bg-go-dark/[0.03]">
+              <tr>
+                {['Creadora', '@handle', 'Nivel', 'ACC', 'TTD', 'Total', 'Pendientes', 'Última subida', ''].map(h => (
+                  <th key={h} className="px-4 py-3 text-left text-xs text-go-dark/50 font-semibold uppercase tracking-wide">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-go-dark/5">
+              {rows.length === 0 && (
+                <tr><td colSpan={9} className="px-4 py-8 text-center text-go-dark/40">No hay creadoras regulares activas.</td></tr>
+              )}
+              {rows.map(row => {
+                const isOpen = expanded === row.creator.id
+                const visibleRequests = filterRequests(row.requests)
+                return (
+                  <>
+                    <tr
+                      key={row.creator.id}
+                      onClick={() => { setExpanded(isOpen ? null : row.creator.id); setRejectingId(null); setRejectReason('') }}
+                      className="cursor-pointer hover:bg-go-light/40 transition"
+                    >
+                      <td className="px-4 py-3 font-medium text-go-dark">{row.creator.full_name ?? row.creator.email}</td>
+                      <td className="px-4 py-3 text-go-dark/60 text-xs">{row.creator.tiktok_handle ?? '—'}</td>
+                      <td className="px-4 py-3"><span className="text-xs font-bold px-2 py-0.5 rounded-full bg-go-dark/[0.06] text-go-dark/70">N{row.creator.nivel}</span></td>
+                      <td className="px-4 py-3"><span className="text-xs font-bold text-orange-700">{row.acc}</span></td>
+                      <td className="px-4 py-3"><span className="text-xs font-bold text-pink-700">{row.ttd}</span></td>
+                      <td className="px-4 py-3 font-syne font-bold text-go-dark">{row.total}</td>
+                      <td className="px-4 py-3">{row.pending > 0 ? <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">{row.pending}</span> : <span className="text-xs text-go-dark/30">—</span>}</td>
+                      <td className="px-4 py-3 text-xs text-go-dark/40">{row.lastUpload ? new Date(row.lastUpload).toLocaleDateString('es') : '—'}</td>
+                      <td className="px-4 py-3 text-go-dark/40">{isOpen ? '▾' : '▸'}</td>
+                    </tr>
+                    {isOpen && (
+                      <tr key={`${row.creator.id}-detail`} className="bg-go-light/30">
+                        <td colSpan={9} className="px-4 py-4">
+                          {visibleRequests.length === 0 ? (
+                            <p className="font-dm text-xs text-go-dark/40 text-center py-4">Sin videos para este filtro.</p>
+                          ) : (
+                            <div className="space-y-2">
+                              {visibleRequests.map(req => (
+                                <div key={req.id} className="bg-white rounded-xl border border-go-dark/5 p-3 flex items-center gap-3 flex-wrap">
+                                  <span className="text-xs text-go-dark/50 w-24 shrink-0">{new Date(req.created_at).toLocaleDateString('es')}</span>
+                                  {req.video_type && (
+                                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${req.video_type === 'ACC' ? 'bg-orange-100 text-orange-700' : 'bg-pink-100 text-pink-700'}`}>{req.video_type}</span>
+                                  )}
+                                  <a
+                                    href={req.tiktok_url || req.video_url || '#'}
+                                    target="_blank" rel="noopener noreferrer"
+                                    className="text-xs text-go-orange hover:underline truncate flex-1 min-w-0"
+                                  >
+                                    {req.tiktok_url || req.video_url || '(sin URL)'}
+                                  </a>
+                                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                                    req.status === 'boosteado' ? 'bg-emerald-100 text-emerald-700'
+                                    : req.status === 'rejected' ? 'bg-red-100 text-red-700'
+                                    : 'bg-orange-100 text-orange-700'
+                                  }`}>
+                                    {req.status === 'boosteado' ? 'Aprobado' : req.status === 'rejected' ? 'Rechazado' : req.status}
+                                  </span>
+                                  {req.status === 'pending' && rejectingId !== req.id && (
+                                    <div className="flex gap-1 shrink-0">
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          startTransition(async () => {
+                                            const r = await approveBoostRequest(req.id)
+                                            if (r.error) fb(`Error: ${r.error}`)
+                                            else fb('✓ Aprobado')
+                                          })
+                                        }}
+                                        className="text-xs font-semibold bg-emerald-500 text-white px-2.5 py-1 rounded-lg hover:bg-emerald-600 transition"
+                                      >Aprobar</button>
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); setRejectingId(req.id); setRejectReason('') }}
+                                        className="text-xs font-semibold bg-red-100 text-red-700 px-2.5 py-1 rounded-lg hover:bg-red-200 transition"
+                                      >Rechazar</button>
+                                    </div>
+                                  )}
+                                  {rejectingId === req.id && (
+                                    <div className="flex gap-1 shrink-0 items-center">
+                                      <input
+                                        autoFocus
+                                        value={rejectReason}
+                                        onClick={(e) => e.stopPropagation()}
+                                        onChange={(e) => setRejectReason(e.target.value)}
+                                        placeholder="Razón..."
+                                        className="text-xs px-2 py-1 rounded-lg border border-red-200 bg-white"
+                                      />
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          startTransition(async () => {
+                                            const r = await rejectBoostRequest(req.id, rejectReason)
+                                            if (r.error) fb(`Error: ${r.error}`)
+                                            else { fb('✓ Rechazado'); setRejectingId(null); setRejectReason('') }
+                                          })
+                                        }}
+                                        className="text-xs font-semibold bg-red-500 text-white px-2.5 py-1 rounded-lg hover:bg-red-600 transition"
+                                      >Confirmar</button>
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); setRejectingId(null); setRejectReason('') }}
+                                        className="text-xs font-semibold bg-go-dark/[0.06] text-go-dark/60 px-2.5 py-1 rounded-lg hover:bg-go-dark/[0.1] transition"
+                                      >Cancelar</button>
+                                    </div>
+                                  )}
+                                  {req.status === 'rejected' && req.rejection_reason && (
+                                    <p className="text-xs text-red-600/80 w-full mt-1">Razón: {req.rejection_reason}</p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </SectionCard>
+  )
+}
+
+function AdminDashboardTab({
+  creators, internalVideos, boostRequests, monthlyGoal, currentMonth, currentYear, startTransition,
+}: {
+  creators: Creator[]
+  internalVideos: InternalVideo[]
+  boostRequests: BoostRequest[]
+  monthlyGoal: MonthlyGoal | null
+  currentMonth: number
+  currentYear: number
+  startTransition: (cb: () => void) => void
+}) {
+  const accGoal = monthlyGoal?.acc_goal ?? 300
+  const ttdGoal = monthlyGoal?.ttd_goal ?? 300
+
   // Active creators only
   const active = creators.filter(c => c.status === 'active')
   const regular = active.filter(c => !c.is_internal)
   const internal = active.filter(c => c.is_internal)
 
-  // Regular team aggregates
+  // Regular team aggregates (self-reported per-creator counters)
   const regAcc = regular.reduce((s, c) => s + (c.acc_this_month ?? 0), 0)
   const regTtd = regular.reduce((s, c) => s + (c.ttd_this_month ?? 0), 0)
-  const regAccGoal = regular.reduce((s, c) => s + (c.acc_goal ?? 0), 0)
-  const regTtdGoal = regular.reduce((s, c) => s + (c.ttd_goal ?? 0), 0)
 
   // Internal team aggregates — count approved videos this month by type
-  const now = new Date()
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+  const startOfMonth = new Date(currentYear, currentMonth - 1, 1).toISOString()
   const internalApprovedThisMonth = internalVideos.filter(v =>
     v.status === 'approved' && v.approved_at && v.approved_at >= startOfMonth,
   )
   const intAcc = internalApprovedThisMonth.filter(v => v.video_type === 'ACC').length
   const intTtd = internalApprovedThisMonth.filter(v => v.video_type === 'TTD').length
   const intPending = internalVideos.filter(v => v.status === 'pending').length
-  const intAccGoal = internal.reduce((s, c) => s + (c.acc_goal ?? 0), 0)
-  const intTtdGoal = internal.reduce((s, c) => s + (c.ttd_goal ?? 0), 0)
 
   // Combined
   const totalAcc = regAcc + intAcc
   const totalTtd = regTtd + intTtd
-  const totalAccGoal = regAccGoal + intAccGoal
-  const totalTtdGoal = regTtdGoal + intTtdGoal
 
   const safe = (n: number, d: number) => d > 0 ? Math.min((n / d) * 100, 100) : 0
   const pctOfTotal = (part: number, total: number) => total > 0 ? Math.round((part / total) * 100) : 0
 
-  const regAccBar = safe(regAcc, regAccGoal)
-  const regTtdBar = safe(regTtd, regTtdGoal)
-  const intAccBar = safe(intAcc, intAccGoal)
-  const intTtdBar = safe(intTtd, intTtdGoal)
-  const totalAccBar = safe(totalAcc, totalAccGoal)
-  const totalTtdBar = safe(totalTtd, totalTtdGoal)
+  const regAccBar = safe(regAcc, accGoal)
+  const regTtdBar = safe(regTtd, ttdGoal)
+  const intAccBar = safe(intAcc, accGoal)
+  const intTtdBar = safe(intTtd, ttdGoal)
+  const totalAccBar = safe(totalAcc, accGoal)
+  const totalTtdBar = safe(totalTtd, ttdGoal)
 
   // Top contributors
   const topRegularAcc = [...regular]
+    .filter(c => (c.acc_this_month ?? 0) > 0)
     .sort((a, b) => (b.acc_this_month ?? 0) - (a.acc_this_month ?? 0))
     .slice(0, 5)
   const topRegularTtd = [...regular]
+    .filter(c => (c.ttd_this_month ?? 0) > 0)
     .sort((a, b) => (b.ttd_this_month ?? 0) - (a.ttd_this_month ?? 0))
     .slice(0, 5)
 
@@ -2739,15 +3095,48 @@ function AdminDashboardTab({ creators, internalVideos }: { creators: Creator[]; 
     .sort((a, b) => b.total - a.total)
     .slice(0, 5)
 
+  // Pending boost requests grouped by type for the ring pills
+  const pendingByType = boostRequests.filter(b => b.status === 'pending')
+  const pendingAcc = pendingByType.filter(b => b.video_type === 'ACC').length
+  const pendingTtd = pendingByType.filter(b => b.video_type === 'TTD').length
+
   return (
     <div className="space-y-6">
-      <h2 className="font-syne text-lg font-bold text-go-dark">📊 Dashboard de contribuciones</h2>
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="font-syne text-2xl font-bold text-go-dark">
+            Dashboard — {MONTH_NAMES_ES[currentMonth - 1]} {currentYear}
+          </h2>
+          <p className="font-dm text-sm text-go-dark/50 mt-1">
+            Meta del mes: <span className="font-semibold text-go-dark">{accGoal} ACC</span> · <span className="font-semibold text-go-dark">{ttdGoal} TTD</span>
+          </p>
+        </div>
+      </div>
+
+      {/* Section 1 — Two big rings */}
+      <SectionCard>
+        <div className="p-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+            <DashboardRing current={totalAcc} goal={accGoal} label="ACC Videos" color="#ff7700" pendingCount={pendingAcc} />
+            <DashboardRing current={totalTtd} goal={ttdGoal} label="TTD Videos" color="#ec4899" pendingCount={pendingTtd} />
+          </div>
+        </div>
+      </SectionCard>
+
+      {/* Quick stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <QuickStat label="Total videos este mes" value={totalAcc + totalTtd} accent="dark" />
+        <QuickStat label="Creadoras regulares activas" value={regular.length} accent="orange" />
+        <QuickStat label="Creadoras internas activas" value={internal.length} accent="green" />
+        <QuickStat label="Videos pendientes de verificar" value={intPending + pendingByType.length} accent="pink" />
+      </div>
 
       {/* Section 2 — Breakdown cards */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <BreakdownCard
           title="👥 Creadoras Regulares"
-          subtitle="Videos reportados por las creadoras de la comunidad"
+          subtitle="Videos reportados por la comunidad"
           accent="orange"
           accNumber={regAcc}
           ttdNumber={regTtd}
@@ -2759,7 +3148,7 @@ function AdminDashboardTab({ creators, internalVideos }: { creators: Creator[]; 
         />
         <BreakdownCard
           title="🏢 Equipo Interno"
-          subtitle="Videos verificados del equipo interno de Papaya GO"
+          subtitle="Videos verificados del equipo interno"
           accent="green"
           accNumber={intAcc}
           ttdNumber={intTtd}
@@ -2780,9 +3169,9 @@ function AdminDashboardTab({ creators, internalVideos }: { creators: Creator[]; 
           <CombinedBar
             label="ACC"
             current={totalAcc}
-            goal={totalAccGoal}
+            goal={accGoal}
             barPct={totalAccBar}
-            complete={totalAccGoal > 0 && totalAcc >= totalAccGoal}
+            complete={accGoal > 0 && totalAcc >= accGoal}
           />
 
           <div className="h-4" />
@@ -2790,9 +3179,9 @@ function AdminDashboardTab({ creators, internalVideos }: { creators: Creator[]; 
           <CombinedBar
             label="TTD"
             current={totalTtd}
-            goal={totalTtdGoal}
+            goal={ttdGoal}
             barPct={totalTtdBar}
-            complete={totalTtdGoal > 0 && totalTtd >= totalTtdGoal}
+            complete={ttdGoal > 0 && totalTtd >= ttdGoal}
           />
         </div>
       </SectionCard>
@@ -2800,7 +3189,7 @@ function AdminDashboardTab({ creators, internalVideos }: { creators: Creator[]; 
       {/* Section 3 — Top contributors */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <TopList
-          title="🌟 Top Creadoras Regulares (ACC)"
+          title="🌟 Top ACC (Regulares)"
           rows={topRegularAcc.map(c => ({
             id: c.id,
             name: c.full_name ?? c.email,
@@ -2811,7 +3200,7 @@ function AdminDashboardTab({ creators, internalVideos }: { creators: Creator[]; 
           accent="orange"
         />
         <TopList
-          title="🌟 Top Creadoras Regulares (TTD)"
+          title="🌟 Top TTD (Regulares)"
           rows={topRegularTtd.map(c => ({
             id: c.id,
             name: c.full_name ?? c.email,
@@ -2823,6 +3212,23 @@ function AdminDashboardTab({ creators, internalVideos }: { creators: Creator[]; 
         />
         <TopInternalList rows={topInternal} />
       </div>
+
+      {/* Section 4 — Per-creator video tracker */}
+      <VideoTrackerSection
+        regular={regular}
+        boostRequests={boostRequests}
+        startTransition={startTransition}
+      />
+
+      {/* Section 5 — Monthly goal editor */}
+      <MonthlyGoalEditor
+        month={currentMonth}
+        year={currentYear}
+        accGoal={accGoal}
+        ttdGoal={ttdGoal}
+        lastUpdated={monthlyGoal?.updated_at ?? monthlyGoal?.created_at ?? null}
+        startTransition={startTransition}
+      />
     </div>
   )
 }
