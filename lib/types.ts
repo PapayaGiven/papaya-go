@@ -274,3 +274,14 @@ export const NIVEL_EMOJIS: Record<number, string> = {
   3: '🧡',
   4: '👑',
 }
+
+export interface TopPoi {
+  id: string
+  name: string
+  county: string | null
+  poi_id: string | null
+  poi_type: 'ACC' | 'TTD'
+  rank: number | null
+  is_active: boolean
+  synced_at: string
+}

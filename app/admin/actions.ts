@@ -1339,3 +1339,131 @@ export async function updateCreatorNivel(id: string, nivel: number): Promise<{ e
   revalidatePath('/dashboard')
   return {}
 }
+
+// ── Top POIs (Google Sheets sync) ───────────────────────
+
+// Minimal CSV parser that handles quoted fields, escaped quotes ("") and
+// commas inside quotes. Spreadsheets export plain CSV but we still see
+// occasional quoted entries (e.g. names with commas).
+function parseCsvRow(line: string): string[] {
+  const out: string[] = []
+  let cur = ''
+  let inQuotes = false
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') { cur += '"'; i++ } // escaped quote
+        else { inQuotes = false }
+      } else {
+        cur += ch
+      }
+    } else {
+      if (ch === ',') { out.push(cur); cur = '' }
+      else if (ch === '"') { inQuotes = true }
+      else { cur += ch }
+    }
+  }
+  out.push(cur)
+  return out.map(s => s.trim())
+}
+
+function parseCsv(text: string): string[][] {
+  // Strip a UTF-8 BOM if present, then split on newlines (handles \r\n + \n).
+  const cleaned = text.replace(/^﻿/, '').replace(/\r\n/g, '\n')
+  return cleaned.split('\n').filter(l => l.trim().length > 0).map(parseCsvRow)
+}
+
+export async function syncTopPois(poiType: 'ACC' | 'TTD'): Promise<{ error?: string; count?: number }> {
+  const rawUrl = poiType === 'ACC' ? process.env.TOP_ACC_SHEET_URL : process.env.TOP_TTD_SHEET_URL
+  if (!rawUrl) return { error: `${poiType === 'ACC' ? 'TOP_ACC_SHEET_URL' : 'TOP_TTD_SHEET_URL'} no está configurado en Vercel` }
+
+  // Sanitize: strip any leading "=" sign (sometimes copy-pasted from spreadsheet
+  // formulas) and trim whitespace.
+  const url = rawUrl.replace(/^=+/, '').trim()
+
+  let csv: string
+  try {
+    const res = await fetch(url, { cache: 'no-store' })
+    if (!res.ok) return { error: `No se pudo leer el Google Sheet (${res.status})` }
+    csv = await res.text()
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : 'Error al leer el Google Sheet' }
+  }
+
+  const rows = parseCsv(csv)
+  if (rows.length < 2) return { error: 'El Google Sheet está vacío o no tiene encabezado' }
+
+  // Header detection — find columns by name (case-insensitive). Falls back to
+  // positional [Nombre, County, POI ID] if the header doesn't match expectations.
+  const header = rows[0].map(h => h.toLowerCase())
+  const nameIdx = (() => {
+    const i = header.findIndex(h => h.includes('nombre') || h === 'name')
+    return i >= 0 ? i : 0
+  })()
+  const countyIdx = (() => {
+    const i = header.findIndex(h => h.includes('county') || h.includes('condado'))
+    return i >= 0 ? i : 1
+  })()
+  const poiIdIdx = (() => {
+    const i = header.findIndex(h => h.includes('poi id') || h === 'id' || h === 'poi_id')
+    return i >= 0 ? i : 2
+  })()
+
+  const supabase = createAdminClient()
+  const dataRows = rows.slice(1)
+  const upserts = dataRows
+    .map((cells, i) => {
+      const name = (cells[nameIdx] ?? '').trim()
+      const county = (cells[countyIdx] ?? '').trim() || null
+      const poi_id = (cells[poiIdIdx] ?? '').trim() || null
+      if (!name) return null
+      return {
+        name,
+        county,
+        poi_id,
+        poi_type: poiType,
+        rank: i + 1,
+        is_active: true,
+        synced_at: new Date().toISOString(),
+      }
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null)
+
+  if (upserts.length === 0) return { error: 'No se encontraron filas válidas en el Sheet' }
+
+  // Upsert by (poi_id, poi_type). Rows without poi_id are appended as new.
+  const withId = upserts.filter(r => r.poi_id)
+  const withoutId = upserts.filter(r => !r.poi_id)
+
+  if (withId.length > 0) {
+    const { error } = await supabase.from('go_top_pois').upsert(withId, { onConflict: 'poi_id,poi_type' })
+    if (error) return { error: error.message }
+  }
+  if (withoutId.length > 0) {
+    const { error } = await supabase.from('go_top_pois').insert(withoutId)
+    if (error) return { error: error.message }
+  }
+
+  revalidatePath('/admin')
+  revalidatePath('/inspiracion')
+  return { count: upserts.length }
+}
+
+export async function updateTopPoi(id: string, data: Partial<{ name: string; county: string | null; poi_id: string | null; rank: number | null; is_active: boolean }>): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_top_pois').update(data).eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/inspiracion')
+  return {}
+}
+
+export async function deleteTopPoi(id: string): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase.from('go_top_pois').delete().eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/inspiracion')
+  return {}
+}

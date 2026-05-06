@@ -17,6 +17,7 @@ import type {
   MonthlySnapshot,
   CreatorSnapshot,
   LevelUpEvent,
+  TopPoi,
 } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -54,6 +55,7 @@ export default async function AdminPage() {
     { data: monthlySnapshots },
     { data: creatorSnapshots },
     { data: levelUpEvents },
+    { data: topPois },
   ] = await Promise.all([
     supabase
       .from('go_creators')
@@ -112,6 +114,10 @@ export default async function AdminPage() {
       .from('go_level_up_events')
       .select('*')
       .order('leveled_up_at', { ascending: false }),
+    supabase
+      .from('go_top_pois')
+      .select('*')
+      .order('rank', { ascending: true }),
   ])
 
   return (
@@ -139,6 +145,7 @@ export default async function AdminPage() {
       monthlySnapshots={(monthlySnapshots as MonthlySnapshot[]) ?? []}
       creatorSnapshots={(creatorSnapshots as CreatorSnapshot[]) ?? []}
       levelUpEvents={(levelUpEvents as LevelUpEvent[]) ?? []}
+      topPois={(topPois as TopPoi[]) ?? []}
       currentMonth={currentMonth}
       currentYear={currentYear}
     />

@@ -296,6 +296,24 @@ CREATE POLICY "go_level_up_read_own" ON go_level_up_events FOR SELECT USING (cre
 DROP POLICY IF EXISTS "go_level_up_service" ON go_level_up_events;
 CREATE POLICY "go_level_up_service" ON go_level_up_events FOR ALL TO service_role USING (true) WITH CHECK (true);
 
+-- 18. go_top_pois — Top hotels (ACC) + attractions (TTD) synced from Google Sheets
+CREATE TABLE IF NOT EXISTS go_top_pois (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  county text,
+  poi_id text,
+  poi_type text NOT NULL,
+  rank int,
+  is_active boolean DEFAULT true,
+  synced_at timestamp DEFAULT now(),
+  UNIQUE(poi_id, poi_type)
+);
+ALTER TABLE go_top_pois ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "go_top_pois_read" ON go_top_pois;
+CREATE POLICY "go_top_pois_read" ON go_top_pois FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "go_top_pois_service" ON go_top_pois;
+CREATE POLICY "go_top_pois_service" ON go_top_pois FOR ALL TO service_role USING (true) WITH CHECK (true);
+
 -- 14. go_monthly_goals — central monthly ACC/TTD goals for the whole team
 CREATE TABLE IF NOT EXISTS go_monthly_goals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

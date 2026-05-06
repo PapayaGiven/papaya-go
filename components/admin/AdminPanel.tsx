@@ -17,6 +17,7 @@ import type {
   MonthlySnapshot,
   CreatorSnapshot,
   LevelUpEvent,
+  TopPoi,
 } from '@/lib/types'
 import { NIVEL_NAMES, POI_TYPE_LABELS, CHALLENGE_TYPE_LABELS } from '@/lib/types'
 import {
@@ -76,6 +77,9 @@ import {
   setBoostValidity,
   setBoostStatus,
   updateBoostRequest,
+  syncTopPois,
+  updateTopPoi,
+  deleteTopPoi,
 } from '@/app/admin/actions'
 
 // ── Types ─────────────────────────────────────────────
@@ -104,7 +108,7 @@ interface POIRequest {
   creator?: { full_name: string | null; email: string } | null
 }
 
-type Tab = 'dashboard' | 'crecimiento' | 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests' | 'rewards-admin' | 'boosts' | 'reward-requests' | 'weekly-plan' | 'challenges' | 'global-plan' | 'tiktok-accounts' | 'internal-videos'
+type Tab = 'dashboard' | 'crecimiento' | 'creators' | 'pois' | 'top-pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests' | 'rewards-admin' | 'boosts' | 'reward-requests' | 'weekly-plan' | 'challenges' | 'global-plan' | 'tiktok-accounts' | 'internal-videos'
 
 interface AdminPanelProps {
   creators: Creator[]
@@ -125,6 +129,7 @@ interface AdminPanelProps {
   monthlySnapshots: MonthlySnapshot[]
   creatorSnapshots: CreatorSnapshot[]
   levelUpEvents: LevelUpEvent[]
+  topPois: TopPoi[]
   currentMonth: number
   currentYear: number
 }
@@ -1183,6 +1188,7 @@ export default function AdminPanel({
   monthlySnapshots,
   creatorSnapshots,
   levelUpEvents,
+  topPois,
   currentMonth,
   currentYear,
 }: AdminPanelProps) {
@@ -1196,6 +1202,7 @@ export default function AdminPanel({
     { key: 'crecimiento', label: '📈 Crecimiento', count: monthlySnapshots.length },
     { key: 'creators', label: 'Creators', count: creators.length },
     { key: 'pois', label: 'POIs', count: pois.length },
+    { key: 'top-pois', label: '📍 Top POIs', count: topPois.length },
     { key: 'templates', label: 'CapCut Templates', count: templates.length },
     { key: 'announcements', label: 'Announcements', count: announcements.length },
     { key: 'portfolios', label: 'Portfolios', count: portfolios.length },
@@ -1288,6 +1295,7 @@ export default function AdminPanel({
           <CreatorsTab creators={creators} boostRequests={boostRequests} creatorSnapshots={creatorSnapshots} levelUpEvents={levelUpEvents} currentMonth={currentMonth} currentYear={currentYear} startTransition={startTransition} />
         )}
         {tab === 'pois' && <POIsTab pois={pois} startTransition={startTransition} />}
+        {tab === 'top-pois' && <TopPoisTab topPois={topPois} startTransition={startTransition} />}
         {tab === 'templates' && (
           <TemplatesTab templates={templates} startTransition={startTransition} />
         )}
@@ -1874,6 +1882,141 @@ function CreatorsTab({
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Top POIs Tab (Google Sheets sync) ─────────────────
+
+function TopPoisTab({
+  topPois,
+  startTransition,
+}: {
+  topPois: TopPoi[]
+  startTransition: (cb: () => void) => void
+}) {
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const [syncingType, setSyncingType] = useState<'ACC' | 'TTD' | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editRank, setEditRank] = useState('')
+  function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
+
+  function handleSync(type: 'ACC' | 'TTD') {
+    setSyncingType(type)
+    startTransition(async () => {
+      const r = await syncTopPois(type)
+      setSyncingType(null)
+      if (r.error) fb(`Error: ${r.error}`)
+      else fb(`✅ ${r.count} lugares ${type} sincronizados`)
+    })
+  }
+
+  function Section({ type, label }: { type: 'ACC' | 'TTD'; label: string }) {
+    const rows = topPois.filter(p => p.poi_type === type).sort((a, b) => (a.rank ?? 9999) - (b.rank ?? 9999))
+    return (
+      <SectionCard>
+        <div className="p-6">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+            <h3 className="font-syne font-bold text-base text-go-dark">{label} ({rows.length})</h3>
+            <button
+              onClick={() => handleSync(type)}
+              disabled={syncingType === type}
+              className="text-xs font-syne font-bold bg-go-orange text-white px-3 py-1.5 rounded-lg hover:bg-go-orange/90 disabled:opacity-50"
+            >
+              {syncingType === type ? 'Sincronizando…' : `🔄 Sync Top ${type} desde Google Sheets`}
+            </button>
+          </div>
+          {rows.length === 0 ? (
+            <p className="text-xs text-go-dark/40 py-6 text-center">Sin lugares todavía. Sincroniza desde el Sheet.</p>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-go-dark/5">
+              <table className="w-full text-sm font-dm">
+                <thead className="bg-go-dark/[0.03]">
+                  <tr>{['Rank', 'Nombre', 'County', 'POI ID', 'Activo', ''].map(h => (
+                    <th key={h} className="px-3 py-2 text-left text-[10px] text-go-dark/50 font-semibold uppercase">{h}</th>
+                  ))}</tr>
+                </thead>
+                <tbody className="divide-y divide-go-dark/5">
+                  {rows.map(p => (
+                    <tr key={p.id}>
+                      <td className="px-3 py-2 w-16">
+                        {editingId === p.id ? (
+                          <input
+                            type="number"
+                            value={editRank}
+                            onChange={(e) => setEditRank(e.target.value)}
+                            onBlur={() => {
+                              const next = parseInt(editRank, 10)
+                              if (!Number.isNaN(next)) {
+                                startTransition(async () => {
+                                  const r = await updateTopPoi(p.id, { rank: next })
+                                  if (r.error) fb(`Error: ${r.error}`)
+                                  else fb('✓ Rank actualizado')
+                                })
+                              }
+                              setEditingId(null)
+                            }}
+                            autoFocus
+                            className="w-14 px-2 py-1 text-xs border border-go-border rounded"
+                          />
+                        ) : (
+                          <button
+                            onClick={() => { setEditingId(p.id); setEditRank(String(p.rank ?? '')) }}
+                            className="text-go-orange font-syne font-bold"
+                          >#{p.rank ?? '—'}</button>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 font-medium text-go-dark">{p.name}</td>
+                      <td className="px-3 py-2 text-go-dark/60">{p.county ?? '—'}</td>
+                      <td className="px-3 py-2 text-go-dark/40 text-xs font-mono">{p.poi_id ?? '—'}</td>
+                      <td className="px-3 py-2">
+                        <button
+                          onClick={() => startTransition(async () => {
+                            const r = await updateTopPoi(p.id, { is_active: !p.is_active })
+                            if (r.error) fb(`Error: ${r.error}`); else fb('✓ Estado actualizado')
+                          })}
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${p.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}
+                        >{p.is_active ? 'Activo' : 'Inactivo'}</button>
+                      </td>
+                      <td className="px-3 py-2">
+                        <button
+                          onClick={() => {
+                            if (!confirm(`¿Eliminar "${p.name}"?`)) return
+                            startTransition(async () => {
+                              const r = await deleteTopPoi(p.id)
+                              if (r.error) fb(`Error: ${r.error}`); else fb('✓ Eliminado')
+                            })
+                          }}
+                          className="text-xs text-red-400 hover:text-red-600"
+                        >×</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </SectionCard>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="font-syne text-2xl font-bold text-go-dark">📍 Top POIs</h2>
+        <p className="font-dm text-sm text-go-dark/50 mt-1">
+          Sincroniza los rankings de hoteles (ACC) y atracciones (TTD) desde Google Sheets.
+          Los inactivos no aparecen en /inspiracion.
+        </p>
+      </div>
+      {feedback && (
+        <p className={`text-sm font-dm px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>
+          {feedback}
+        </p>
+      )}
+      <Section type="ACC" label="🏨 Top Hoteles (ACC)" />
+      <Section type="TTD" label="🎡 Top Atracciones (TTD)" />
     </div>
   )
 }

@@ -1,9 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import Link from 'next/link'
-import { POI_TYPE_LABELS } from '@/lib/types'
-import type { POI } from '@/lib/types'
+import type { TopPoi } from '@/lib/types'
 
 interface ViralVideo {
   id: string
@@ -16,14 +15,37 @@ interface ViralVideo {
 
 interface Props {
   videos: ViralVideo[]
-  viralPois: POI[]
+  topPois: TopPoi[]
 }
 
-export default function InspiracionClient({ videos, viralPois }: Props) {
+export default function InspiracionClient({ videos, topPois }: Props) {
   const [mainTab, setMainTab] = useState<'videos' | 'places'>('videos')
   const [videoType, setVideoType] = useState<'ACC' | 'TTD'>('ACC')
+  const [topPoiTab, setTopPoiTab] = useState<'ACC' | 'TTD'>('ACC')
+  const [countyFilter, setCountyFilter] = useState<string>('')
 
   const filteredVideos = videos.filter(v => v.video_type === videoType)
+
+  const topPoisOfType = useMemo(() =>
+    topPois
+      .filter(p => p.poi_type === topPoiTab)
+      .sort((a, b) => (a.rank ?? 9999) - (b.rank ?? 9999))
+  , [topPois, topPoiTab])
+
+  const counties = useMemo(() => {
+    const set = new Set<string>()
+    for (const p of topPoisOfType) {
+      if (p.county && p.county.trim()) set.add(p.county.trim())
+    }
+    return Array.from(set).sort()
+  }, [topPoisOfType])
+
+  const visibleTopPois = countyFilter
+    ? topPoisOfType.filter(p => (p.county ?? '').trim() === countyFilter)
+    : topPoisOfType
+
+  // Reset county filter when sub-tab changes (since counties are per-type)
+  void counties
 
   return (
     <div>
@@ -93,25 +115,59 @@ export default function InspiracionClient({ videos, viralPois }: Props) {
       {/* TAB 2: Places */}
       {mainTab === 'places' && (
         <div>
-          {viralPois.length === 0 ? (
+          {/* Sub-tabs ACC / TTD */}
+          <div className="flex gap-2 mb-4">
+            <button
+              onClick={() => { setTopPoiTab('ACC'); setCountyFilter('') }}
+              className={`font-dm text-xs font-semibold px-4 py-2 rounded-full border transition ${topPoiTab === 'ACC' ? 'bg-[#ff7700] text-white border-[#ff7700]' : 'bg-white text-gray-600 border-[rgba(255,119,0,0.3)] hover:border-[#ff7700]'}`}
+            >🏨 Top Hoteles (ACC)</button>
+            <button
+              onClick={() => { setTopPoiTab('TTD'); setCountyFilter('') }}
+              className={`font-dm text-xs font-semibold px-4 py-2 rounded-full border transition ${topPoiTab === 'TTD' ? 'bg-[#ff7700] text-white border-[#ff7700]' : 'bg-white text-gray-600 border-[rgba(255,119,0,0.3)] hover:border-[#ff7700]'}`}
+            >🎡 Top Atracciones (TTD)</button>
+          </div>
+
+          {/* County filter */}
+          {counties.length > 0 && (
+            <div className="mb-4 flex items-center gap-2 flex-wrap">
+              <label className="font-dm text-xs text-gray-500">Filtrar por condado:</label>
+              <select
+                value={countyFilter}
+                onChange={(e) => setCountyFilter(e.target.value)}
+                className="text-xs px-3 py-1.5 rounded-lg border border-go-border bg-white font-dm text-go-dark"
+              >
+                <option value="">Todos los condados</option>
+                {counties.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          )}
+
+          {visibleTopPois.length === 0 ? (
             <div className="bg-white rounded-2xl border border-[rgba(255,119,0,0.1)] p-12 text-center">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="https://mmhsulgcowhqimypglul.supabase.co/storage/v1/object/public/PGLOGOS/PapayaGo-Sun-Orange-39.png" alt="" className="w-16 h-16 mx-auto mb-4 opacity-30" />
-              <p className="font-dm text-sm text-gray-400">Pronto añadiremos los lugares que más convierten 🔥</p>
+              <p className="font-dm text-sm text-gray-400">
+                {topPoisOfType.length === 0
+                  ? 'Pronto sincronizaremos los lugares que más convierten 🔥'
+                  : 'Ningún lugar coincide con este filtro.'}
+              </p>
             </div>
           ) : (
             <div className="space-y-3">
-              {viralPois.map((poi, idx) => {
-                const typeInfo = POI_TYPE_LABELS[poi.type] ?? { label: poi.type, color: 'bg-gray-100 text-gray-700' }
+              {visibleTopPois.map((poi) => {
+                const idx = (poi.rank ?? 1) - 1
                 return (
                   <div key={poi.id} className="bg-white rounded-2xl border border-[rgba(255,119,0,0.1)] p-4 flex items-center gap-4">
-                    <span className={`font-syne font-extrabold text-2xl shrink-0 w-10 text-center ${idx === 0 ? 'text-[#ff7700]' : idx === 1 ? 'text-[#ffa552]' : idx === 2 ? 'text-[#ff9ece]' : 'text-gray-300'}`}>#{idx + 1}</span>
+                    <span className={`font-syne font-extrabold text-2xl shrink-0 w-10 text-center ${idx === 0 ? 'text-[#ff7700]' : idx === 1 ? 'text-[#ffa552]' : idx === 2 ? 'text-[#ff9ece]' : 'text-gray-300'}`}>#{poi.rank ?? '—'}</span>
                     <div className="flex-1 min-w-0">
                       <h3 className="font-syne font-bold text-sm text-[#1a0800] truncate">{poi.name}</h3>
                       <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <span className={`font-dm text-[10px] font-semibold px-2 py-0.5 rounded-full ${typeInfo.color}`}>{typeInfo.label}</span>
-                        {poi.commission && <span className="font-dm text-xs font-bold text-[#ff7700]">{poi.commission}</span>}
-                        {poi.times_sold > 0 && <span className="font-dm text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#ff7700]/10 text-[#ff7700]">{poi.times_sold} bookings</span>}
+                        {poi.county && (
+                          <span className="font-dm text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{poi.county}</span>
+                        )}
+                        {poi.poi_id && (
+                          <span className="font-dm text-[10px] text-gray-400 font-mono">{poi.poi_id}</span>
+                        )}
                       </div>
                     </div>
                     <Link href={`/ai-coach?place=${encodeURIComponent(poi.name)}`} className="shrink-0 font-dm text-xs font-semibold text-[#ff7700] hover:underline">✨ Crear contenido</Link>

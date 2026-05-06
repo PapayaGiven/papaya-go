@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import Sidebar from '@/components/Sidebar'
 import InspiracionClient from './InspiracionClient'
-import type { Creator, POI } from '@/lib/types'
+import type { Creator, TopPoi } from '@/lib/types'
 
 interface ViralVideo {
   id: string
@@ -32,14 +32,14 @@ export default async function InspiracionPage() {
   if (!creator) redirect('/')
 
   const admin = createAdminClient()
-  const [videosRes, poisRes] = await Promise.all([
+  const [videosRes, topPoisRes] = await Promise.all([
     admin.from('go_viral_videos').select('*').eq('is_active', true).order('created_at'),
-    admin.from('go_pois').select('*').eq('is_active', true).or('poi_category.eq.viral,is_viral_poi.eq.true').order('times_sold', { ascending: false }),
+    admin.from('go_top_pois').select('*').eq('is_active', true).order('rank', { ascending: true }),
   ])
 
   const videos = (videosRes.data ?? []) as ViralVideo[]
   const withThumbs = await Promise.all(videos.slice(0, 20).map(async v => ({ ...v, thumbnail_url: await fetchThumbnail(v.tiktok_url) ?? undefined })))
-  const viralPois = (poisRes.data ?? []) as POI[]
+  const topPois = (topPoisRes.data ?? []) as TopPoi[]
 
   return (
     <div className="min-h-screen bg-[#fff8f2]">
@@ -50,7 +50,7 @@ export default async function InspiracionPage() {
             <h1 className="font-syne font-bold text-2xl text-[#1a0800]">🔥 Inspiración</h1>
             <p className="font-dm text-sm text-gray-400 mt-1">Videos virales y lugares que más convierten</p>
           </div>
-          <InspiracionClient videos={withThumbs} viralPois={viralPois} />
+          <InspiracionClient videos={withThumbs} topPois={topPois} />
         </div>
       </main>
     </div>
