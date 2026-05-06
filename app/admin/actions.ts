@@ -1055,6 +1055,89 @@ export async function upsertMonthlyGoal(data: {
   return {}
 }
 
+// ── Level-up engine ──────────────────────────────────────
+//
+// Run after any change that bumps a creator's monthly counters. Loops until
+// the creator no longer qualifies for the next level (handles batch
+// approvals where someone leaps multiple levels at once).
+//
+// On each level-up:
+//   - carry_acc/ttd/total = current counter - CURRENT level's requirement
+//     (so the excess past the current threshold rolls into the new level)
+//   - gmv_this_month is preserved per spec — GMV doesn't reset on level up
+//   - One row inserted into go_level_up_events for the audit trail / popup
+
+interface NivelReqRow {
+  nivel: number
+  total_videos_required: number
+  gmv_required: number
+  acc_required: number
+  ttd_required: number
+}
+
+async function checkAndApplyLevelUps(creatorId: string): Promise<{ events: number }> {
+  const supabase = createAdminClient()
+  let events = 0
+
+  // Fetch all requirements once; we'll iterate locally.
+  const { data: reqsData } = await supabase
+    .from('go_nivel_requirements')
+    .select('nivel, total_videos_required, gmv_required, acc_required, ttd_required')
+  const reqs = (reqsData ?? []) as NivelReqRow[]
+  const reqByNivel = new Map(reqs.map(r => [r.nivel, r]))
+
+  // Loop guard: cap iterations to a sane max so we never spin forever even
+  // if requirements data is malformed.
+  for (let i = 0; i < 8; i++) {
+    const { data: c } = await supabase
+      .from('go_creators')
+      .select('nivel, acc_this_month, ttd_this_month, videos_this_month, gmv_this_month')
+      .eq('id', creatorId)
+      .maybeSingle()
+    if (!c) break
+
+    const next = reqByNivel.get(c.nivel + 1)
+    if (!next) break // already at max nivel
+
+    const acc = c.acc_this_month ?? 0
+    const ttd = c.ttd_this_month ?? 0
+    const total = c.videos_this_month ?? 0
+    const gmv = Number(c.gmv_this_month ?? 0)
+
+    const qualifies =
+      total >= (next.total_videos_required ?? 0)
+      && gmv >= Number(next.gmv_required ?? 0)
+      && acc >= (next.acc_required ?? 0)
+      && ttd >= (next.ttd_required ?? 0)
+    if (!qualifies) break
+
+    const cur = reqByNivel.get(c.nivel)
+    const carryAcc = Math.max(0, acc - (cur?.acc_required ?? 0))
+    const carryTtd = Math.max(0, ttd - (cur?.ttd_required ?? 0))
+    const carryTotal = Math.max(0, total - (cur?.total_videos_required ?? 0))
+
+    await supabase.from('go_creators').update({
+      nivel: c.nivel + 1,
+      acc_this_month: carryAcc,
+      ttd_this_month: carryTtd,
+      videos_this_month: carryTotal,
+      // gmv_this_month intentionally unchanged
+    }).eq('id', creatorId)
+
+    await supabase.from('go_level_up_events').insert({
+      creator_id: creatorId,
+      from_nivel: c.nivel,
+      to_nivel: c.nivel + 1,
+      carry_acc: carryAcc,
+      carry_ttd: carryTtd,
+      carry_total: carryTotal,
+    })
+    events++
+  }
+
+  return { events }
+}
+
 // ── Boost validation + boost decision (split as of 2026-05) ──
 //
 // Two orthogonal concepts:
@@ -1131,6 +1214,11 @@ export async function setBoostValidity(id: string, isValid: boolean): Promise<{ 
       row.video_type as 'ACC' | 'TTD' | null,
       isValid ? 1 : -1,
     )
+    // After validating a video that counts, check whether the creator just
+    // crossed into the next nivel (and possibly the one after, etc.).
+    if (isValid) {
+      await checkAndApplyLevelUps(row.creator_id)
+    }
   }
   revalidatePath('/admin')
   revalidatePath('/dashboard')
@@ -1154,6 +1242,69 @@ export async function setBoostStatus(id: string, status: BoostStatus, reason?: s
   if (error) return { error: error.message }
   revalidatePath('/admin')
   revalidatePath('/dashboard')
+  return {}
+}
+
+// ── Edit video (URL + type) ──────────────────────────────
+//
+// Lets admin correct a creator's submission. If video_type changes AND the
+// row is currently is_valid=true AND in the current month, swap the type's
+// counter on go_creators (decrement old, increment new). videos_this_month
+// stays the same since the total is unchanged. After the swap, re-run the
+// level-up check in case the corrected type pushes the creator over.
+
+export async function updateBoostRequest(
+  id: string,
+  data: { tiktok_url?: string; video_type?: 'ACC' | 'TTD' },
+): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { data: row, error: readErr } = await supabase
+    .from('go_boost_requests')
+    .select('creator_id, video_type, is_valid, created_at, tiktok_url')
+    .eq('id', id)
+    .maybeSingle()
+  if (readErr) return { error: readErr.message }
+  if (!row) return { error: 'Video no encontrado' }
+
+  const updatePayload: Record<string, unknown> = {}
+  if (data.tiktok_url != null) {
+    const cleaned = data.tiktok_url.trim().toLowerCase().replace(/\/+$/, '')
+    if (!cleaned) return { error: 'URL no puede estar vacía' }
+    updatePayload.tiktok_url = cleaned
+  }
+  if (data.video_type && data.video_type !== row.video_type) {
+    updatePayload.video_type = data.video_type
+  }
+  if (Object.keys(updatePayload).length === 0) return {}
+
+  const { error } = await supabase.from('go_boost_requests').update(updatePayload).eq('id', id)
+  if (error) {
+    if (error.code === '23505') return { error: 'Esa URL ya pertenece a otro video de esta creadora' }
+    return { error: error.message }
+  }
+
+  // Type swap with counter rebalance. videos_this_month unchanged.
+  const typeChanged = updatePayload.video_type != null && row.creator_id && row.is_valid === true && isThisMonthIso(row.created_at)
+  if (typeChanged && row.creator_id) {
+    const oldType = row.video_type as 'ACC' | 'TTD' | null
+    const newType = data.video_type as 'ACC' | 'TTD'
+    const { data: c } = await supabase
+      .from('go_creators')
+      .select('acc_this_month, ttd_this_month')
+      .eq('id', row.creator_id)
+      .maybeSingle()
+    if (c) {
+      await supabase.from('go_creators').update({
+        acc_this_month: Math.max(0, (c.acc_this_month ?? 0) + (newType === 'ACC' ? 1 : 0) - (oldType === 'ACC' ? 1 : 0)),
+        ttd_this_month: Math.max(0, (c.ttd_this_month ?? 0) + (newType === 'TTD' ? 1 : 0) - (oldType === 'TTD' ? 1 : 0)),
+      }).eq('id', row.creator_id)
+    }
+    await checkAndApplyLevelUps(row.creator_id)
+  }
+
+  revalidatePath('/admin')
+  revalidatePath('/dashboard')
+  revalidatePath('/boost')
   return {}
 }
 

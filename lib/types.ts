@@ -256,3 +256,21 @@ export interface CreatorSnapshot {
   nivel: number
   snapshot_taken_at: string
 }
+
+export interface LevelUpEvent {
+  id: string
+  creator_id: string
+  from_nivel: number
+  to_nivel: number
+  carry_acc: number
+  carry_ttd: number
+  carry_total: number
+  leveled_up_at: string
+}
+
+export const NIVEL_EMOJIS: Record<number, string> = {
+  1: '🌸',
+  2: '🌺',
+  3: '🧡',
+  4: '👑',
+}

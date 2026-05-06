@@ -279,6 +279,23 @@ UPDATE go_boost_requests SET is_valid = true     WHERE status = 'boosteado' AND 
 UPDATE go_boost_requests SET boost_status = 'boosteado'  WHERE status = 'boosteado' AND boost_status IS DISTINCT FROM 'boosteado';
 UPDATE go_boost_requests SET boost_status = 'rechazado'  WHERE status = 'rejected'  AND boost_status IS DISTINCT FROM 'rechazado';
 
+-- 17. go_level_up_events — audit trail of automatic level-ups
+CREATE TABLE IF NOT EXISTS go_level_up_events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  creator_id uuid REFERENCES go_creators(id) ON DELETE CASCADE,
+  from_nivel int NOT NULL,
+  to_nivel int NOT NULL,
+  carry_acc int DEFAULT 0,
+  carry_ttd int DEFAULT 0,
+  carry_total int DEFAULT 0,
+  leveled_up_at timestamp DEFAULT now()
+);
+ALTER TABLE go_level_up_events ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "go_level_up_read_own" ON go_level_up_events;
+CREATE POLICY "go_level_up_read_own" ON go_level_up_events FOR SELECT USING (creator_id IN (SELECT id FROM go_creators WHERE email = auth.email()));
+DROP POLICY IF EXISTS "go_level_up_service" ON go_level_up_events;
+CREATE POLICY "go_level_up_service" ON go_level_up_events FOR ALL TO service_role USING (true) WITH CHECK (true);
+
 -- 14. go_monthly_goals — central monthly ACC/TTD goals for the whole team
 CREATE TABLE IF NOT EXISTS go_monthly_goals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

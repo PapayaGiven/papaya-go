@@ -7,6 +7,8 @@ import DashboardClient from './DashboardClient'
 import DashboardHashtags from './DashboardHashtags'
 import ProgressRings from './ProgressRings'
 import MisVideosCard from './MisVideosCard'
+import LevelUpPopup from './LevelUpPopup'
+import type { LevelUpEvent } from '@/lib/types'
 import { Creator, NivelRequirement, Announcement, Challenge, NIVEL_NAMES, NIVEL_COLORS } from '@/lib/types'
 
 export default async function DashboardPage() {
@@ -35,7 +37,7 @@ export default async function DashboardPage() {
   const prevMonth = prevDate.getMonth() + 1
   const prevYear = prevDate.getFullYear()
 
-  const [announcementRes, currentNivelRes, challengeRes, leaderboardRes, todayPlanRes, myBoostsRes, lastSnapshotRes] = await Promise.all([
+  const [announcementRes, currentNivelRes, challengeRes, leaderboardRes, todayPlanRes, myBoostsRes, lastSnapshotRes, levelUpsRes, nivelRewardsRes] = await Promise.all([
     admin.from('go_announcements').select('*').eq('is_active', true).order('created_at', { ascending: false }),
     admin.from('go_nivel_requirements').select('*').eq('nivel', creator.nivel).maybeSingle(),
     admin.from('go_challenges').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1).maybeSingle(),
@@ -43,7 +45,21 @@ export default async function DashboardPage() {
     admin.from('go_content_plan').select('*').eq('creator_id', creator.id).eq('week_start', weekStart).eq('day_of_week', todayName).limit(1).maybeSingle(),
     admin.from('go_boost_requests').select('id, tiktok_url, video_type, status, is_valid, boost_status, rejection_reason, created_at').eq('creator_id', creator.id).gte('created_at', startOfMonth).order('created_at', { ascending: false }),
     admin.from('go_creator_snapshots').select('acc_videos, ttd_videos, gmv').eq('creator_id', creator.id).eq('month', prevMonth).eq('year', prevYear).maybeSingle(),
+    admin
+      .from('go_level_up_events')
+      .select('*')
+      .eq('creator_id', creator.id)
+      .gte('leveled_up_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .order('leveled_up_at', { ascending: false }),
+    admin.from('go_nivel_rewards').select('nivel, reward_name').eq('is_active', true),
   ])
+
+  const recentLevelUps = (levelUpsRes.data ?? []) as LevelUpEvent[]
+  const rewardsByNivel: Record<number, string[]> = {}
+  for (const r of (nivelRewardsRes.data ?? []) as { nivel: number; reward_name: string }[]) {
+    if (!rewardsByNivel[r.nivel]) rewardsByNivel[r.nivel] = []
+    rewardsByNivel[r.nivel].push(r.reward_name)
+  }
 
   type MyBoost = { id: string; tiktok_url: string; video_type: 'ACC' | 'TTD' | null; status: string; is_valid: boolean; boost_status: 'pending' | 'boosteado' | 'rechazado'; rejection_reason: string | null; created_at: string }
   const myBoostsThisMonth = (myBoostsRes.data ?? []) as MyBoost[]
@@ -97,6 +113,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-[#fff8f2]">
+      <LevelUpPopup events={recentLevelUps} rewardsByNivel={rewardsByNivel} />
       <Sidebar creatorName={creator.full_name} tiktokHandle={creator.tiktok_handle} nivel={creator.nivel} />
 
       {/* Banners — multiple can be active, stacked */}

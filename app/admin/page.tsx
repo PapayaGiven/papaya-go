@@ -16,6 +16,7 @@ import type {
   MonthlyGoal,
   MonthlySnapshot,
   CreatorSnapshot,
+  LevelUpEvent,
 } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -52,6 +53,7 @@ export default async function AdminPage() {
     { data: monthlyGoal },
     { data: monthlySnapshots },
     { data: creatorSnapshots },
+    { data: levelUpEvents },
   ] = await Promise.all([
     supabase
       .from('go_creators')
@@ -106,6 +108,10 @@ export default async function AdminPage() {
     supabase
       .from('go_creator_snapshots')
       .select('*'),
+    supabase
+      .from('go_level_up_events')
+      .select('*')
+      .order('leveled_up_at', { ascending: false }),
   ])
 
   return (
@@ -132,6 +138,7 @@ export default async function AdminPage() {
       monthlyGoal={(monthlyGoal as MonthlyGoal | null) ?? null}
       monthlySnapshots={(monthlySnapshots as MonthlySnapshot[]) ?? []}
       creatorSnapshots={(creatorSnapshots as CreatorSnapshot[]) ?? []}
+      levelUpEvents={(levelUpEvents as LevelUpEvent[]) ?? []}
       currentMonth={currentMonth}
       currentYear={currentYear}
     />

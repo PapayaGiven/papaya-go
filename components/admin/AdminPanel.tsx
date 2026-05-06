@@ -16,6 +16,7 @@ import type {
   MonthlyGoal,
   MonthlySnapshot,
   CreatorSnapshot,
+  LevelUpEvent,
 } from '@/lib/types'
 import { NIVEL_NAMES, POI_TYPE_LABELS, CHALLENGE_TYPE_LABELS } from '@/lib/types'
 import {
@@ -74,6 +75,7 @@ import {
   updateCreatorNivel,
   setBoostValidity,
   setBoostStatus,
+  updateBoostRequest,
 } from '@/app/admin/actions'
 
 // ── Types ─────────────────────────────────────────────
@@ -122,6 +124,7 @@ interface AdminPanelProps {
   monthlyGoal: MonthlyGoal | null
   monthlySnapshots: MonthlySnapshot[]
   creatorSnapshots: CreatorSnapshot[]
+  levelUpEvents: LevelUpEvent[]
   currentMonth: number
   currentYear: number
 }
@@ -688,6 +691,7 @@ function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[];
 function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startTransition: (fn: () => void) => void }) {
   const [feedback, setFeedback] = useState<string | null>(null)
   const [typeFilter, setTypeFilter] = useState<'all' | 'ACC' | 'TTD'>('all')
+  const [editing, setEditing] = useState<{ id: string; url: string; type: 'ACC' | 'TTD' } | null>(null)
   function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
 
   const filtered = typeFilter === 'all' ? boosts : boosts.filter(b => b.video_type === typeFilter)
@@ -724,7 +728,7 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
           <table className="w-full text-sm font-dm">
             <thead className="bg-go-dark/[0.03]">
               <tr>
-                {['Creator', 'TikTok', 'Tipo', 'URL Video', 'Validez', 'Boost', 'Fecha'].map(h => (
+                {['Creator', 'TikTok', 'Tipo', 'URL Video', 'Validez', 'Boost', 'Fecha', ''].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs text-go-dark/50 font-semibold uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -807,13 +811,61 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
                     </div>
                   </td>
                   <td className="px-4 py-3 text-go-dark/40 text-xs">{new Date(b.created_at).toLocaleDateString('es')}</td>
+                  <td className="px-4 py-3">
+                    <button
+                      onClick={() => setEditing({ id: b.id, url: b.tiktok_url ?? '', type: (b.video_type ?? 'ACC') as 'ACC' | 'TTD' })}
+                      className="text-[10px] font-semibold text-go-dark/70 bg-go-dark/[0.05] hover:bg-go-dark/[0.1] px-2 py-1 rounded-md"
+                    >✏️ Editar</button>
+                  </td>
                 </tr>
               ))}
-              {filtered.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-go-dark/40">No hay solicitudes de boost.</td></tr>}
+              {filtered.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-go-dark/40">No hay solicitudes de boost.</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* Edit modal */}
+      {editing && (
+        <div className="fixed inset-0 z-[180] bg-black/60 flex items-center justify-center px-4" onClick={() => setEditing(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-syne font-bold text-lg text-go-dark mb-4">Editar video</h3>
+            <label className="block font-dm text-xs font-semibold text-go-dark/60 uppercase tracking-wide mb-1">TikTok URL</label>
+            <input
+              type="url"
+              value={editing.url}
+              onChange={(e) => setEditing({ ...editing, url: e.target.value })}
+              className="w-full border border-go-border rounded-lg px-3 py-2 font-dm text-sm focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange"
+            />
+            <label className="block font-dm text-xs font-semibold text-go-dark/60 uppercase tracking-wide mt-4 mb-1">Tipo de video</label>
+            <div className="flex gap-2">
+              {(['ACC', 'TTD'] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setEditing({ ...editing, type: t })}
+                  className={`flex-1 py-2 rounded-lg font-dm font-semibold text-sm border-2 transition ${editing.type === t ? 'bg-go-orange text-white border-go-orange' : 'bg-white text-go-dark/60 border-go-border'}`}
+                >{t}</button>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-6">
+              <button
+                onClick={() => startTransition(async () => {
+                  if (!editing) return
+                  const r = await updateBoostRequest(editing.id, { tiktok_url: editing.url, video_type: editing.type })
+                  if (r.error) fb(`Error: ${r.error}`)
+                  else { fb('✅ Video actualizado correctamente'); setEditing(null) }
+                })}
+                className="flex-1 bg-go-orange text-white font-dm font-semibold text-sm py-2.5 rounded-lg hover:bg-go-orange/90"
+              >Guardar cambios</button>
+              <button
+                onClick={() => setEditing(null)}
+                className="flex-1 bg-go-dark/[0.06] text-go-dark/70 font-dm font-semibold text-sm py-2.5 rounded-lg hover:bg-go-dark/[0.1]"
+              >Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </SectionCard>
   )
 }
@@ -1130,6 +1182,7 @@ export default function AdminPanel({
   monthlyGoal,
   monthlySnapshots,
   creatorSnapshots,
+  levelUpEvents,
   currentMonth,
   currentYear,
 }: AdminPanelProps) {
@@ -1212,6 +1265,7 @@ export default function AdminPanel({
             internalVideos={internalVideos}
             boostRequests={boostRequests}
             creatorSnapshots={creatorSnapshots}
+            levelUpEvents={levelUpEvents}
             monthlyGoal={monthlyGoal}
             currentMonth={currentMonth}
             currentYear={currentYear}
@@ -1231,7 +1285,7 @@ export default function AdminPanel({
           />
         )}
         {tab === 'creators' && (
-          <CreatorsTab creators={creators} boostRequests={boostRequests} creatorSnapshots={creatorSnapshots} currentMonth={currentMonth} currentYear={currentYear} startTransition={startTransition} />
+          <CreatorsTab creators={creators} boostRequests={boostRequests} creatorSnapshots={creatorSnapshots} levelUpEvents={levelUpEvents} currentMonth={currentMonth} currentYear={currentYear} startTransition={startTransition} />
         )}
         {tab === 'pois' && <POIsTab pois={pois} startTransition={startTransition} />}
         {tab === 'templates' && (
@@ -1277,6 +1331,7 @@ function CreatorsTab({
   creators,
   boostRequests,
   creatorSnapshots,
+  levelUpEvents,
   currentMonth,
   currentYear,
   startTransition,
@@ -1284,6 +1339,7 @@ function CreatorsTab({
   creators: Creator[]
   boostRequests: BoostRequest[]
   creatorSnapshots: CreatorSnapshot[]
+  levelUpEvents: LevelUpEvent[]
   currentMonth: number
   currentYear: number
   startTransition: (cb: () => void) => void
@@ -1762,6 +1818,38 @@ function CreatorsTab({
               </div>
             )}
           </div>
+          {/* Level-up history for this creator */}
+          {(() => {
+            const myEvents = levelUpEvents.filter(e => e.creator_id === strategyId)
+            if (myEvents.length === 0) return null
+            return (
+              <div className="mt-4 pt-4 border-t border-go-border">
+                <h4 className="font-syne font-bold text-sm text-go-dark mb-3">📈 Historial de niveles</h4>
+                <div className="overflow-x-auto rounded-xl border border-go-border">
+                  <table className="w-full text-xs font-dm">
+                    <thead className="bg-go-dark/[0.03]">
+                      <tr>{['Fecha', 'De', 'A', 'ACC carry', 'TTD carry', 'Total carry'].map(h => (
+                        <th key={h} className="px-3 py-2 text-left text-[10px] text-go-dark/50 font-semibold uppercase">{h}</th>
+                      ))}</tr>
+                    </thead>
+                    <tbody className="divide-y divide-go-border/50">
+                      {myEvents.map(e => (
+                        <tr key={e.id}>
+                          <td className="px-3 py-2 text-go-dark/60">{new Date(e.leveled_up_at).toLocaleDateString('es')}</td>
+                          <td className="px-3 py-2">N{e.from_nivel} {NIVEL_NAMES[e.from_nivel]}</td>
+                          <td className="px-3 py-2 font-semibold text-go-orange">N{e.to_nivel} {NIVEL_NAMES[e.to_nivel]}</td>
+                          <td className="px-3 py-2">{e.carry_acc}</td>
+                          <td className="px-3 py-2">{e.carry_ttd}</td>
+                          <td className="px-3 py-2 font-bold text-go-dark">{e.carry_total}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          })()}
+
           <div className="flex gap-2 mt-3">
             <button onClick={() => startTransition(async () => {
               const r = await updateCreatorStrategy(strategyId, {
@@ -3011,6 +3099,7 @@ function VideoTrackerSection({
   const [filter, setFilter] = useState<'all' | 'ACC' | 'TTD' | 'pending'>('all')
   const [rejectingId, setRejectingId] = useState<string | null>(null)
   const [rejectReason, setRejectReason] = useState('')
+  const [editing, setEditing] = useState<{ id: string; url: string; type: 'ACC' | 'TTD' } | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
   function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 4000) }
 
@@ -3216,6 +3305,12 @@ function VideoTrackerSection({
                                   {req.boost_status === 'rechazado' && req.rejection_reason && (
                                     <p className="text-xs text-red-600/80 mt-1">Razón: {req.rejection_reason}</p>
                                   )}
+                                  <div className="flex justify-end">
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); setEditing({ id: req.id, url: req.tiktok_url ?? '', type: (req.video_type ?? 'ACC') as 'ACC' | 'TTD' }) }}
+                                      className="text-[10px] font-semibold text-go-dark/60 bg-go-dark/[0.05] hover:bg-go-dark/[0.1] px-2 py-0.5 rounded-md"
+                                    >✏️ Editar</button>
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -3230,6 +3325,48 @@ function VideoTrackerSection({
           </table>
         </div>
       </div>
+
+      {/* Edit modal — same pattern as BoostsTab */}
+      {editing && (
+        <div className="fixed inset-0 z-[180] bg-black/60 flex items-center justify-center px-4" onClick={() => setEditing(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-syne font-bold text-lg text-go-dark mb-4">Editar video</h3>
+            <label className="block font-dm text-xs font-semibold text-go-dark/60 uppercase tracking-wide mb-1">TikTok URL</label>
+            <input
+              type="url"
+              value={editing.url}
+              onChange={(e) => setEditing({ ...editing, url: e.target.value })}
+              className="w-full border border-go-border rounded-lg px-3 py-2 font-dm text-sm focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange"
+            />
+            <label className="block font-dm text-xs font-semibold text-go-dark/60 uppercase tracking-wide mt-4 mb-1">Tipo de video</label>
+            <div className="flex gap-2">
+              {(['ACC', 'TTD'] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setEditing({ ...editing, type: t })}
+                  className={`flex-1 py-2 rounded-lg font-dm font-semibold text-sm border-2 transition ${editing.type === t ? 'bg-go-orange text-white border-go-orange' : 'bg-white text-go-dark/60 border-go-border'}`}
+                >{t}</button>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-6">
+              <button
+                onClick={() => startTransition(async () => {
+                  if (!editing) return
+                  const r = await updateBoostRequest(editing.id, { tiktok_url: editing.url, video_type: editing.type })
+                  if (r.error) fb(`Error: ${r.error}`)
+                  else { fb('✅ Video actualizado correctamente'); setEditing(null) }
+                })}
+                className="flex-1 bg-go-orange text-white font-dm font-semibold text-sm py-2.5 rounded-lg hover:bg-go-orange/90"
+              >Guardar cambios</button>
+              <button
+                onClick={() => setEditing(null)}
+                className="flex-1 bg-go-dark/[0.06] text-go-dark/70 font-dm font-semibold text-sm py-2.5 rounded-lg hover:bg-go-dark/[0.1]"
+              >Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </SectionCard>
   )
 }
@@ -3558,12 +3695,13 @@ function CrecimientoTab({
 }
 
 function AdminDashboardTab({
-  creators, internalVideos, boostRequests, creatorSnapshots, monthlyGoal, currentMonth, currentYear, startTransition,
+  creators, internalVideos, boostRequests, creatorSnapshots, levelUpEvents, monthlyGoal, currentMonth, currentYear, startTransition,
 }: {
   creators: Creator[]
   internalVideos: InternalVideo[]
   boostRequests: BoostRequest[]
   creatorSnapshots: CreatorSnapshot[]
+  levelUpEvents: LevelUpEvent[]
   monthlyGoal: MonthlyGoal | null
   currentMonth: number
   currentYear: number
@@ -3685,8 +3823,23 @@ function AdminDashboardTab({
   }
   const hasAlerts = inactiveCount > 0 || riskCount > 0 || droppedCount > 0
 
+  // Level-ups this month
+  const levelUpsThisMonth = levelUpEvents.filter((e) => e.leveled_up_at >= startOfMonth).length
+
   return (
     <div className="space-y-6">
+      {/* Celebration line — level-ups this month */}
+      {levelUpsThisMonth > 0 && (
+        <div className="bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-4 flex items-center justify-between flex-wrap gap-2">
+          <p className="font-syne text-base font-bold text-emerald-800">
+            🎉 {levelUpsThisMonth} {levelUpsThisMonth === 1 ? 'creadora subió' : 'creadoras subieron'} de nivel este mes
+          </p>
+          <p className="font-dm text-xs text-emerald-700/70">
+            Revisa el historial en cada perfil 📈
+          </p>
+        </div>
+      )}
+
       {/* Activity alerts — only shown when there's something to flag */}
       {hasAlerts && (
         <div className="bg-amber-50 border-2 border-amber-200 rounded-2xl p-5">
