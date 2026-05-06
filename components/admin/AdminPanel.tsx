@@ -46,7 +46,8 @@ import {
   updateNivelReward,
   toggleNivelReward,
   deleteNivelReward,
-  updateBoostStatus,
+  // updateBoostStatus retired in favor of setBoostValidity + setBoostStatus
+
   updateRewardRequestStatus,
   addWeeklyPlan,
   // updateWeeklyPlan,
@@ -67,10 +68,12 @@ import {
   bulkApproveInternalVideos,
   getInternalVideoStats,
   upsertMonthlyGoal,
-  approveBoostRequest,
-  rejectBoostRequest,
+  // approveBoostRequest, rejectBoostRequest — replaced by setBoostValidity + setBoostStatus
+
   takeMonthlySnapshot,
   updateCreatorNivel,
+  setBoostValidity,
+  setBoostStatus,
 } from '@/app/admin/actions'
 
 // ── Types ─────────────────────────────────────────────
@@ -712,7 +715,7 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
         </div>
 
         <p className="font-dm text-xs text-go-dark/60 bg-go-dark/[0.03] border border-go-dark/[0.06] rounded-lg px-3 py-2 mb-4">
-          ℹ️ Aprobar = Papaya boosteará este video. <strong>El conteo ya fue registrado</strong> al momento en que la creadora envió el link.
+          ℹ️ <strong>Válido</strong> = el video cuenta para la meta mensual de la creadora. <strong>Boost</strong> = decisión separada, si Papaya amplifica el video.
         </p>
 
         {feedback && <p className={`text-sm font-dm mb-3 px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{feedback}</p>}
@@ -721,14 +724,14 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
           <table className="w-full text-sm font-dm">
             <thead className="bg-go-dark/[0.03]">
               <tr>
-                {['Creator', 'TikTok', 'Tipo', 'URL Video', 'Razon', 'Notas', 'Estado', 'Fecha'].map(h => (
+                {['Creator', 'TikTok', 'Tipo', 'URL Video', 'Validez', 'Boost', 'Fecha'].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs text-go-dark/50 font-semibold uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-go-dark/5">
               {filtered.map(b => (
-                <tr key={b.id} className={b.status === 'boosteado' ? 'bg-emerald-50' : ''}>
+                <tr key={b.id} className={b.is_valid === true ? 'bg-emerald-50/50' : ''}>
                   <td className="px-4 py-3 font-medium text-go-dark">{b.creator_name ?? '—'}</td>
                   <td className="px-4 py-3 text-go-dark/60 text-xs">{b.tiktok_handle ?? '—'}</td>
                   <td className="px-4 py-3">
@@ -747,29 +750,66 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
                       </a>
                     ) : '—'}
                   </td>
-                  <td className="px-4 py-3 text-go-dark/50 text-xs max-w-[200px] truncate">{b.boost_reason ?? '—'}</td>
-                  <td className="px-4 py-3 text-go-dark/50 text-xs max-w-[150px] truncate">{b.notes ?? '—'}</td>
                   <td className="px-4 py-3">
-                    <select
-                      value={b.status}
-                      onChange={(e) => {
-                        startTransition(async () => {
-                          const res = await updateBoostStatus(b.id, e.target.value)
-                          if (res.error) fb(`Error: ${res.error}`)
-                          else fb('Estado actualizado')
-                        })
-                      }}
-                      className="text-xs px-2 py-1 rounded-lg border border-go-border bg-go-light font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition"
-                    >
-                      {['pending', 'en proceso', 'boosteado'].map(s => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
-                    </select>
+                    <div className="flex flex-col gap-1">
+                      {b.is_valid === true
+                        ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 self-start">✅ Válido</span>
+                        : <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 self-start">⏳ Sin revisar</span>}
+                      <div className="flex gap-1">
+                        <button
+                          disabled={b.is_valid === true}
+                          onClick={() => startTransition(async () => {
+                            const r = await setBoostValidity(b.id, true)
+                            if (r.error) fb(`Error: ${r.error}`); else fb('✓ Marcado válido')
+                          })}
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40"
+                        >✅ Válido</button>
+                        <button
+                          disabled={b.is_valid !== true}
+                          onClick={() => startTransition(async () => {
+                            const r = await setBoostValidity(b.id, false)
+                            if (r.error) fb(`Error: ${r.error}`); else fb('✓ Marcado inválido')
+                          })}
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-gray-200 text-gray-600 hover:bg-gray-300 disabled:opacity-40"
+                        >❌</button>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-col gap-1">
+                      {b.boost_status === 'boosteado'
+                        ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 self-start">🚀 Boosteado</span>
+                        : b.boost_status === 'rechazado'
+                          ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 self-start">✗ Sin boost</span>
+                          : <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 self-start">⏳ Pendiente</span>}
+                      <div className="flex gap-1">
+                        <button
+                          disabled={b.boost_status === 'boosteado'}
+                          onClick={() => startTransition(async () => {
+                            const r = await setBoostStatus(b.id, 'boosteado')
+                            if (r.error) fb(`Error: ${r.error}`); else fb('✓ Boost aprobado')
+                          })}
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-40"
+                        >🚀 Boost</button>
+                        <button
+                          disabled={b.boost_status === 'rechazado'}
+                          onClick={() => {
+                            const reason = prompt('Razón para no boostear (visible para la creadora):') ?? ''
+                            if (!reason.trim()) return
+                            startTransition(async () => {
+                              const r = await setBoostStatus(b.id, 'rechazado', reason)
+                              if (r.error) fb(`Error: ${r.error}`); else fb('✓ Boost rechazado')
+                            })
+                          }}
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-gray-200 text-gray-600 hover:bg-gray-300 disabled:opacity-40"
+                        >✗</button>
+                      </div>
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-go-dark/40 text-xs">{new Date(b.created_at).toLocaleDateString('es')}</td>
                 </tr>
               ))}
-              {filtered.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-go-dark/40">No hay solicitudes de boost.</td></tr>}
+              {filtered.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-go-dark/40">No hay solicitudes de boost.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -2982,8 +3022,8 @@ function VideoTrackerSection({
     requestsByCreator.set(r.creator_id, arr)
   }
 
-  // ACC / TTD per-creator totals reflect APPROVED videos this month;
-  // pending count is shown alongside but doesn't add to the total.
+  // ACC / TTD per-creator totals reflect VALID videos this month;
+  // pending-review count is shown alongside but doesn't add to the total.
   const now = new Date()
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
   const isThisMonth = (iso: string) => iso >= monthStart
@@ -2991,10 +3031,10 @@ function VideoTrackerSection({
   const rows = regular.map(c => {
     const all = requestsByCreator.get(c.id) ?? []
     const thisMonth = all.filter(b => isThisMonth(b.created_at))
-    const approvedThisMonth = thisMonth.filter(b => b.status === 'boosteado')
-    const acc = approvedThisMonth.filter(b => b.video_type === 'ACC').length
-    const ttd = approvedThisMonth.filter(b => b.video_type === 'TTD').length
-    const pending = thisMonth.filter(b => b.status === 'pending').length
+    const validThisMonth = thisMonth.filter(b => b.is_valid === true)
+    const acc = validThisMonth.filter(b => b.video_type === 'ACC').length
+    const ttd = validThisMonth.filter(b => b.video_type === 'TTD').length
+    const pending = thisMonth.filter(b => b.is_valid !== true).length
     const lastUpload = all.reduce<string | null>((latest, b) => {
       if (!latest || b.created_at > latest) return b.created_at
       return latest
@@ -3004,7 +3044,7 @@ function VideoTrackerSection({
 
   function filterRequests(reqs: BoostRequest[]) {
     if (filter === 'all') return reqs
-    if (filter === 'pending') return reqs.filter(r => r.status === 'pending')
+    if (filter === 'pending') return reqs.filter(r => r.is_valid !== true)
     return reqs.filter(r => r.video_type === filter)
   }
 
@@ -3075,73 +3115,106 @@ function VideoTrackerSection({
                           ) : (
                             <div className="space-y-2">
                               {visibleRequests.map(req => (
-                                <div key={req.id} className="bg-white rounded-xl border border-go-dark/5 p-3 flex items-center gap-3 flex-wrap">
-                                  <span className="text-xs text-go-dark/50 w-24 shrink-0">{new Date(req.created_at).toLocaleDateString('es')}</span>
-                                  {req.video_type && (
-                                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${req.video_type === 'ACC' ? 'bg-orange-100 text-orange-700' : 'bg-pink-100 text-pink-700'}`}>{req.video_type}</span>
-                                  )}
-                                  <a
-                                    href={req.tiktok_url || req.video_url || '#'}
-                                    target="_blank" rel="noopener noreferrer"
-                                    className="text-xs text-go-orange hover:underline truncate flex-1 min-w-0"
-                                  >
-                                    {req.tiktok_url || req.video_url || '(sin URL)'}
-                                  </a>
-                                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                                    req.status === 'boosteado' ? 'bg-emerald-100 text-emerald-700'
-                                    : req.status === 'rejected' ? 'bg-red-100 text-red-700'
-                                    : 'bg-orange-100 text-orange-700'
-                                  }`}>
-                                    {req.status === 'boosteado' ? 'Aprobado' : req.status === 'rejected' ? 'Rechazado' : req.status}
-                                  </span>
-                                  {req.status === 'pending' && rejectingId !== req.id && (
-                                    <div className="flex gap-1 shrink-0">
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          startTransition(async () => {
-                                            const r = await approveBoostRequest(req.id)
-                                            if (r.error) fb(`Error: ${r.error}`)
-                                            else fb('✓ Aprobado')
-                                          })
-                                        }}
-                                        className="text-xs font-semibold bg-emerald-500 text-white px-2.5 py-1 rounded-lg hover:bg-emerald-600 transition"
-                                      >Aprobar</button>
-                                      <button
-                                        onClick={(e) => { e.stopPropagation(); setRejectingId(req.id); setRejectReason('') }}
-                                        className="text-xs font-semibold bg-red-100 text-red-700 px-2.5 py-1 rounded-lg hover:bg-red-200 transition"
-                                      >Rechazar</button>
-                                    </div>
-                                  )}
-                                  {rejectingId === req.id && (
-                                    <div className="flex gap-1 shrink-0 items-center">
-                                      <input
-                                        autoFocus
-                                        value={rejectReason}
-                                        onClick={(e) => e.stopPropagation()}
-                                        onChange={(e) => setRejectReason(e.target.value)}
-                                        placeholder="Razón..."
-                                        className="text-xs px-2 py-1 rounded-lg border border-red-200 bg-white"
-                                      />
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          startTransition(async () => {
-                                            const r = await rejectBoostRequest(req.id, rejectReason)
-                                            if (r.error) fb(`Error: ${r.error}`)
-                                            else { fb('✓ Rechazado'); setRejectingId(null); setRejectReason('') }
-                                          })
-                                        }}
-                                        className="text-xs font-semibold bg-red-500 text-white px-2.5 py-1 rounded-lg hover:bg-red-600 transition"
-                                      >Confirmar</button>
-                                      <button
-                                        onClick={(e) => { e.stopPropagation(); setRejectingId(null); setRejectReason('') }}
-                                        className="text-xs font-semibold bg-go-dark/[0.06] text-go-dark/60 px-2.5 py-1 rounded-lg hover:bg-go-dark/[0.1] transition"
-                                      >Cancelar</button>
-                                    </div>
-                                  )}
-                                  {req.status === 'rejected' && req.rejection_reason && (
-                                    <p className="text-xs text-red-600/80 w-full mt-1">Razón: {req.rejection_reason}</p>
+                                <div key={req.id} className="bg-white rounded-xl border border-go-dark/5 p-3 space-y-2">
+                                  <div className="flex items-center gap-3 flex-wrap">
+                                    <span className="text-xs text-go-dark/50 w-24 shrink-0">{new Date(req.created_at).toLocaleDateString('es')}</span>
+                                    {req.video_type && (
+                                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${req.video_type === 'ACC' ? 'bg-orange-100 text-orange-700' : 'bg-pink-100 text-pink-700'}`}>{req.video_type}</span>
+                                    )}
+                                    <a
+                                      href={req.tiktok_url || req.video_url || '#'}
+                                      target="_blank" rel="noopener noreferrer"
+                                      className="text-xs text-go-orange hover:underline truncate flex-1 min-w-0"
+                                    >
+                                      {req.tiktok_url || req.video_url || '(sin URL)'}
+                                    </a>
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    {/* Validity controls */}
+                                    {req.is_valid === true
+                                      ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">✅ Válido</span>
+                                      : <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">⏳ Sin revisar</span>}
+                                    <button
+                                      disabled={req.is_valid === true}
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        startTransition(async () => {
+                                          const r = await setBoostValidity(req.id, true)
+                                          if (r.error) fb(`Error: ${r.error}`); else fb('✓ Marcado válido')
+                                        })
+                                      }}
+                                      className="text-[10px] font-semibold bg-emerald-600 text-white px-2 py-0.5 rounded-md hover:bg-emerald-700 disabled:opacity-40"
+                                    >✅ Válido</button>
+                                    <button
+                                      disabled={req.is_valid !== true}
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        startTransition(async () => {
+                                          const r = await setBoostValidity(req.id, false)
+                                          if (r.error) fb(`Error: ${r.error}`); else fb('✓ Marcado inválido')
+                                        })
+                                      }}
+                                      className="text-[10px] font-semibold bg-gray-200 text-gray-700 px-2 py-0.5 rounded-md hover:bg-gray-300 disabled:opacity-40"
+                                    >❌ Inválido</button>
+
+                                    <span className="w-2" aria-hidden />
+
+                                    {/* Boost controls */}
+                                    {req.boost_status === 'boosteado'
+                                      ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">🚀 Boosteado</span>
+                                      : req.boost_status === 'rechazado'
+                                        ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">✗ Sin boost</span>
+                                        : <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">⏳ Pendiente boost</span>}
+                                    {rejectingId !== req.id && (
+                                      <>
+                                        <button
+                                          disabled={req.boost_status === 'boosteado'}
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            startTransition(async () => {
+                                              const r = await setBoostStatus(req.id, 'boosteado')
+                                              if (r.error) fb(`Error: ${r.error}`); else fb('✓ Boost aprobado')
+                                            })
+                                          }}
+                                          className="text-[10px] font-semibold bg-orange-500 text-white px-2 py-0.5 rounded-md hover:bg-orange-600 disabled:opacity-40"
+                                        >🚀 Boost</button>
+                                        <button
+                                          disabled={req.boost_status === 'rechazado'}
+                                          onClick={(e) => { e.stopPropagation(); setRejectingId(req.id); setRejectReason('') }}
+                                          className="text-[10px] font-semibold bg-gray-200 text-gray-700 px-2 py-0.5 rounded-md hover:bg-gray-300 disabled:opacity-40"
+                                        >✗ No boost</button>
+                                      </>
+                                    )}
+                                    {rejectingId === req.id && (
+                                      <div className="flex gap-1 items-center">
+                                        <input
+                                          autoFocus
+                                          value={rejectReason}
+                                          onClick={(e) => e.stopPropagation()}
+                                          onChange={(e) => setRejectReason(e.target.value)}
+                                          placeholder="Razón..."
+                                          className="text-[11px] px-2 py-0.5 rounded-md border border-red-200 bg-white"
+                                        />
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            startTransition(async () => {
+                                              const r = await setBoostStatus(req.id, 'rechazado', rejectReason)
+                                              if (r.error) fb(`Error: ${r.error}`)
+                                              else { fb('✓ Sin boost'); setRejectingId(null); setRejectReason('') }
+                                            })
+                                          }}
+                                          className="text-[10px] font-semibold bg-red-500 text-white px-2 py-0.5 rounded-md hover:bg-red-600"
+                                        >Confirmar</button>
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); setRejectingId(null); setRejectReason('') }}
+                                          className="text-[10px] font-semibold bg-go-dark/[0.06] text-go-dark/60 px-2 py-0.5 rounded-md"
+                                        >Cancelar</button>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {req.boost_status === 'rechazado' && req.rejection_reason && (
+                                    <p className="text-xs text-red-600/80 mt-1">Razón: {req.rejection_reason}</p>
                                   )}
                                 </div>
                               ))}
@@ -3184,20 +3257,21 @@ function CrecimientoTab({
   const accGoal = monthlyGoal?.acc_goal ?? 300
   const ttdGoal = monthlyGoal?.ttd_goal ?? 300
 
-  // Live current-month aggregates — only APPROVED boosts count toward
-  // the videos totals; pending and rejected stay separate.
+  // Live current-month aggregates — only VALID videos count toward
+  // the totals; pending-review and boost_status are tracked separately.
   const startOfMonth = new Date(Date.UTC(currentYear, currentMonth - 1, 1)).toISOString()
   const active = creators.filter(c => c.status === 'active')
   const regular = active.filter(c => !c.is_internal)
   const internal = active.filter(c => c.is_internal)
   const regularIds = new Set(regular.map(c => c.id))
   const regularBoostsThisMonth = boostRequests.filter(b => b.creator_id && regularIds.has(b.creator_id) && b.created_at >= startOfMonth)
-  const regularApproved = regularBoostsThisMonth.filter(b => b.status === 'boosteado')
-  const regAcc = regularApproved.filter(b => b.video_type === 'ACC').length
-  const regTtd = regularApproved.filter(b => b.video_type === 'TTD').length
+  const regularValid = regularBoostsThisMonth.filter(b => b.is_valid === true)
+  const regAcc = regularValid.filter(b => b.video_type === 'ACC').length
+  const regTtd = regularValid.filter(b => b.video_type === 'TTD').length
   const regSubmitted = regularBoostsThisMonth.length
-  const regApproved = regularApproved.length
-  const regPending = regularBoostsThisMonth.filter(b => b.status === 'pending').length
+  const regValid = regularValid.length
+  const regPendingReview = regularBoostsThisMonth.filter(b => b.is_valid !== true).length
+  const regBoosted = regularBoostsThisMonth.filter(b => b.boost_status === 'boosteado').length
   const internalApprovedThisMonth = internalVideos.filter(v => v.status === 'approved' && v.approved_at && v.approved_at >= startOfMonth)
   const intAcc = internalApprovedThisMonth.filter(v => v.video_type === 'ACC').length
   const intTtd = internalApprovedThisMonth.filter(v => v.video_type === 'TTD').length
@@ -3245,10 +3319,10 @@ function CrecimientoTab({
     }
   }
 
-  // Top contributors (approved-only this month)
+  // Top contributors (valid-only this month)
   const accByCreator = new Map<string, number>()
   const ttdByCreator = new Map<string, number>()
-  for (const b of regularApproved) {
+  for (const b of regularValid) {
     if (!b.creator_id) continue
     if (b.video_type === 'ACC') accByCreator.set(b.creator_id, (accByCreator.get(b.creator_id) ?? 0) + 1)
     if (b.video_type === 'TTD') ttdByCreator.set(b.creator_id, (ttdByCreator.get(b.creator_id) ?? 0) + 1)
@@ -3393,7 +3467,7 @@ function CrecimientoTab({
           ttdBar={ttdGoal > 0 ? Math.min(100, (regTtd / ttdGoal) * 100) : 0}
           accPctOfTotal={totalAcc > 0 ? Math.round((regAcc / totalAcc) * 100) : 0}
           ttdPctOfTotal={totalTtd > 0 ? Math.round((regTtd / totalTtd) * 100) : 0}
-          footer={`${regular.length} creadoras activas · ${regSubmitted} enviados · ${regApproved} boosteados · ${regPending} pendientes`}
+          footer={`${regular.length} creadoras activas · ${regSubmitted} enviados · ${regValid} válidos · ${regPendingReview} sin revisar · ${regBoosted} boosteados`}
         />
         <BreakdownCard
           title="🏢 Equipo Interno"
@@ -3504,19 +3578,20 @@ function AdminDashboardTab({
   const internal = active.filter(c => c.is_internal)
 
   // Source-of-truth video counts come from go_boost_requests this month,
-  // restricted to APPROVED rows (status='boosteado'). Pending and rejected
-  // submissions don't count toward team totals.
+  // restricted to VALID rows (is_valid=true). Pending-review submissions
+  // don't count toward team totals; boost_status is independent.
   const startOfMonth = new Date(currentYear, currentMonth - 1, 1).toISOString()
   const regularIds = new Set(regular.map(c => c.id))
   const regularBoostsThisMonth = boostRequests.filter(b =>
     b.creator_id && regularIds.has(b.creator_id) && b.created_at >= startOfMonth,
   )
-  const regularApproved = regularBoostsThisMonth.filter(b => b.status === 'boosteado')
-  const regAcc = regularApproved.filter(b => b.video_type === 'ACC').length
-  const regTtd = regularApproved.filter(b => b.video_type === 'TTD').length
+  const regularValid = regularBoostsThisMonth.filter(b => b.is_valid === true)
+  const regAcc = regularValid.filter(b => b.video_type === 'ACC').length
+  const regTtd = regularValid.filter(b => b.video_type === 'TTD').length
   const regSubmitted = regularBoostsThisMonth.length
-  const regApproved = regularApproved.length
-  const regPending = regularBoostsThisMonth.filter(b => b.status === 'pending').length
+  const regValid = regularValid.length
+  const regPendingReview = regularBoostsThisMonth.filter(b => b.is_valid !== true).length
+  const regBoosted = regularBoostsThisMonth.filter(b => b.boost_status === 'boosteado').length
 
   // Internal team aggregates — count approved videos this month by type
   const internalApprovedThisMonth = internalVideos.filter(v =>
@@ -3544,7 +3619,7 @@ function AdminDashboardTab({
   // matches the BreakdownCard numbers above.
   const accByCreator = new Map<string, number>()
   const ttdByCreator = new Map<string, number>()
-  for (const b of regularApproved) {
+  for (const b of regularValid) {
     if (!b.creator_id) continue
     if (b.video_type === 'ACC') accByCreator.set(b.creator_id, (accByCreator.get(b.creator_id) ?? 0) + 1)
     if (b.video_type === 'TTD') ttdByCreator.set(b.creator_id, (ttdByCreator.get(b.creator_id) ?? 0) + 1)
@@ -3679,7 +3754,7 @@ function AdminDashboardTab({
           ttdBar={regTtdBar}
           accPctOfTotal={pctOfTotal(regAcc, totalAcc)}
           ttdPctOfTotal={pctOfTotal(regTtd, totalTtd)}
-          footer={`${regular.length} creadoras activas · ${regSubmitted} videos enviados · ${regApproved} boosteados · ${regPending} pendientes de boost`}
+          footer={`${regular.length} creadoras activas · ${regSubmitted} enviados · ${regValid} válidos · ${regPendingReview} sin revisar · ${regBoosted} boosteados`}
         />
         <BreakdownCard
           title="🏢 Equipo Interno"

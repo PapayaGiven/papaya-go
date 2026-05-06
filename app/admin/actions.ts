@@ -3,6 +3,7 @@
 import { cookies } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
+import type { BoostStatus } from '@/lib/types'
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'papaya-admin-2024'
 
@@ -711,7 +712,7 @@ export async function deleteBoostRequest(id: string): Promise<{ error?: string }
   // Look up the row first so we know whether to decrement counters.
   const { data: row, error: fetchErr } = await supabase
     .from('go_boost_requests')
-    .select('creator_id, video_type, status, created_at')
+    .select('creator_id, video_type, is_valid, created_at')
     .eq('id', id)
     .maybeSingle()
   if (fetchErr) return { error: fetchErr.message }
@@ -719,10 +720,10 @@ export async function deleteBoostRequest(id: string): Promise<{ error?: string }
   const { error: delErr } = await supabase.from('go_boost_requests').delete().eq('id', id)
   if (delErr) return { error: delErr.message }
 
-  // Only decrement counters when the deleted row was approved AND belongs to
-  // the current month. Pending or rejected rows never contributed, and older
-  // rows have already been rolled into snapshots.
-  if (row?.creator_id && row.status === 'boosteado') {
+  // Only decrement counters when the deleted row was VALID AND belongs to
+  // the current month. is_valid=false rows never contributed, and older rows
+  // have already been rolled into snapshots.
+  if (row?.creator_id && row.is_valid === true) {
     const created = row.created_at ? new Date(row.created_at) : null
     const now = new Date()
     const sameMonth = !!created && created.getUTCFullYear() === now.getUTCFullYear() && created.getUTCMonth() === now.getUTCMonth()
@@ -1054,12 +1055,15 @@ export async function upsertMonthlyGoal(data: {
   return {}
 }
 
-// ── Boost request approve/reject (admin dashboard video tracker) ──
+// ── Boost validation + boost decision (split as of 2026-05) ──
 //
-// "Approved" boost requests are stored with status='boosteado' (kept for
-// backwards-compatibility with existing rows). Counters in go_creators
-// only advance when a row transitions INTO the boosteado state, and
-// retreat when it transitions OUT — and only if the row is in the
+// Two orthogonal concepts:
+//   is_valid     — admin confirms this is a real TikTok GO video. THIS is
+//                  what bumps acc_this_month / ttd_this_month / videos_this_month.
+//   boost_status — Papaya's amplification decision. Pending/boosteado/rechazado.
+//                  Does NOT touch counters.
+//
+// Counters only move when is_valid TRANSITIONS, and only for rows in the
 // current calendar month (older rows are rolled into snapshots).
 
 function isThisMonthIso(iso: string | null | undefined): boolean {
@@ -1090,56 +1094,82 @@ async function adjustCreatorCounters(
   }).eq('id', creatorId)
 }
 
-export async function approveBoostRequest(id: string): Promise<{ error?: string }> {
+// ── Validation: counts toward the monthly goal ───────────
+
+export async function setBoostValidity(id: string, isValid: boolean): Promise<{ error?: string }> {
   const supabase = createAdminClient()
   const { data: row, error: readErr } = await supabase
     .from('go_boost_requests')
-    .select('creator_id, video_type, status, created_at')
+    .select('creator_id, video_type, is_valid, status, created_at')
     .eq('id', id)
     .maybeSingle()
   if (readErr) return { error: readErr.message }
   if (!row) return { error: 'Video no encontrado' }
 
-  const wasApproved = row.status === 'boosteado'
+  const wasValid = row.is_valid === true
+  if (wasValid === isValid) {
+    // Idempotent: no transition, nothing to do.
+    return {}
+  }
+
+  // Keep legacy `status` column in sync only when transitioning INTO valid +
+  // not yet boosteado, so old reads still function. Don't override an explicit
+  // 'rejected' state if admin re-validates a previously rejected video.
+  const updatePayload: Record<string, unknown> = { is_valid: isValid }
+  if (isValid && row.status !== 'boosteado') updatePayload.status = 'boosteado'
+
   const { error } = await supabase
     .from('go_boost_requests')
-    .update({ status: 'boosteado', rejection_reason: null })
+    .update(updatePayload)
     .eq('id', id)
   if (error) return { error: error.message }
 
-  if (!wasApproved && row.creator_id && isThisMonthIso(row.created_at)) {
-    await adjustCreatorCounters(supabase, row.creator_id, row.video_type as 'ACC' | 'TTD' | null, 1)
+  if (row.creator_id && isThisMonthIso(row.created_at)) {
+    await adjustCreatorCounters(
+      supabase,
+      row.creator_id,
+      row.video_type as 'ACC' | 'TTD' | null,
+      isValid ? 1 : -1,
+    )
   }
   revalidatePath('/admin')
   revalidatePath('/dashboard')
   return {}
 }
 
-export async function rejectBoostRequest(id: string, reason: string): Promise<{ error?: string }> {
-  const trimmed = reason.trim()
-  if (!trimmed) return { error: 'Razón de rechazo requerida' }
-  const supabase = createAdminClient()
-  const { data: row, error: readErr } = await supabase
-    .from('go_boost_requests')
-    .select('creator_id, video_type, status, created_at')
-    .eq('id', id)
-    .maybeSingle()
-  if (readErr) return { error: readErr.message }
-  if (!row) return { error: 'Video no encontrado' }
+// ── Boost decision (separate from validity) ──────────────
 
-  const wasApproved = row.status === 'boosteado'
+export async function setBoostStatus(id: string, status: BoostStatus, reason?: string): Promise<{ error?: string }> {
+  if (status === 'rechazado' && (!reason || !reason.trim())) {
+    return { error: 'Razón de rechazo requerida' }
+  }
+  const supabase = createAdminClient()
+  const updatePayload: Record<string, unknown> = { boost_status: status }
+  if (status === 'rechazado') updatePayload.rejection_reason = (reason ?? '').trim()
+  if (status === 'boosteado') updatePayload.rejection_reason = null
   const { error } = await supabase
     .from('go_boost_requests')
-    .update({ status: 'rejected', rejection_reason: trimmed })
+    .update(updatePayload)
     .eq('id', id)
   if (error) return { error: error.message }
-
-  if (wasApproved && row.creator_id && isThisMonthIso(row.created_at)) {
-    await adjustCreatorCounters(supabase, row.creator_id, row.video_type as 'ACC' | 'TTD' | null, -1)
-  }
   revalidatePath('/admin')
   revalidatePath('/dashboard')
   return {}
+}
+
+// Legacy wrappers kept so existing callers don't break. New UI uses the
+// split actions directly. These now go through the validity gate so the
+// counters keep moving on the same actions admins are used to clicking.
+export async function approveBoostRequest(id: string): Promise<{ error?: string }> {
+  const validityResult = await setBoostValidity(id, true)
+  if (validityResult.error) return validityResult
+  return setBoostStatus(id, 'boosteado')
+}
+
+export async function rejectBoostRequest(id: string, reason: string): Promise<{ error?: string }> {
+  const validityResult = await setBoostValidity(id, false)
+  if (validityResult.error) return validityResult
+  return setBoostStatus(id, 'rechazado', reason)
 }
 
 // Reset a creator's monthly counters (used when admin changes their nivel).

@@ -41,20 +41,21 @@ export default async function DashboardPage() {
     admin.from('go_challenges').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1).maybeSingle(),
     admin.from('go_creators').select('id, full_name, nivel, videos_this_month, gmv_this_month, acc_this_month, ttd_this_month').eq('status', 'active').order('videos_this_month', { ascending: false }).limit(10),
     admin.from('go_content_plan').select('*').eq('creator_id', creator.id).eq('week_start', weekStart).eq('day_of_week', todayName).limit(1).maybeSingle(),
-    admin.from('go_boost_requests').select('id, tiktok_url, video_type, status, rejection_reason, created_at').eq('creator_id', creator.id).gte('created_at', startOfMonth).order('created_at', { ascending: false }),
+    admin.from('go_boost_requests').select('id, tiktok_url, video_type, status, is_valid, boost_status, rejection_reason, created_at').eq('creator_id', creator.id).gte('created_at', startOfMonth).order('created_at', { ascending: false }),
     admin.from('go_creator_snapshots').select('acc_videos, ttd_videos, gmv').eq('creator_id', creator.id).eq('month', prevMonth).eq('year', prevYear).maybeSingle(),
   ])
 
-  type MyBoost = { id: string; tiktok_url: string; video_type: 'ACC' | 'TTD' | null; status: string; rejection_reason: string | null; created_at: string }
+  type MyBoost = { id: string; tiktok_url: string; video_type: 'ACC' | 'TTD' | null; status: string; is_valid: boolean; boost_status: 'pending' | 'boosteado' | 'rechazado'; rejection_reason: string | null; created_at: string }
   const myBoostsThisMonth = (myBoostsRes.data ?? []) as MyBoost[]
   const submittedAcc = myBoostsThisMonth.filter(b => b.video_type === 'ACC').length
   const submittedTtd = myBoostsThisMonth.filter(b => b.video_type === 'TTD').length
-  // Approved-only counts drive the rings; the "submitted" totals show alongside.
-  const liveAccThisMonth = myBoostsThisMonth.filter(b => b.video_type === 'ACC' && b.status === 'boosteado').length
-  const liveTtdThisMonth = myBoostsThisMonth.filter(b => b.video_type === 'TTD' && b.status === 'boosteado').length
+  // is_valid=true counts toward the goal; the "submitted" totals show alongside.
+  const liveAccThisMonth = myBoostsThisMonth.filter(b => b.video_type === 'ACC' && b.is_valid === true).length
+  const liveTtdThisMonth = myBoostsThisMonth.filter(b => b.video_type === 'TTD' && b.is_valid === true).length
   const liveVideosThisMonth = liveAccThisMonth + liveTtdThisMonth
   const submittedVideosThisMonth = submittedAcc + submittedTtd
-  const pendingThisMonth = myBoostsThisMonth.filter(b => b.status === 'pending').length
+  // "Pending review" = not yet validated (regardless of boost decision).
+  const pendingThisMonth = myBoostsThisMonth.filter(b => b.is_valid !== true).length
 
   const todayPlan = todayPlanRes.data as { video_type: string; place_name: string | null; hashtags: string | null } | null
   const allAnnouncements = (announcementRes.data ?? []) as Announcement[]

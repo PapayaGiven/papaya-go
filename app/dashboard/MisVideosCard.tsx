@@ -7,6 +7,8 @@ interface Video {
   tiktok_url: string
   video_type: 'ACC' | 'TTD' | null
   status: string
+  is_valid: boolean
+  boost_status: 'pending' | 'boosteado' | 'rechazado'
   rejection_reason: string | null
   created_at: string
 }
@@ -17,10 +19,16 @@ function truncate(url: string, max = 36) {
   return url.length > max ? url.slice(0, max) + '...' : url
 }
 
-function statusBadge(status: string) {
-  if (status === 'boosteado') return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">✅ Aprobado</span>
-  if (status === 'rejected') return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">❌ Rechazado</span>
-  return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">⏳ Pendiente</span>
+function validBadge(isValid: boolean, boostStatus: string) {
+  if (isValid) return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">✅ Video válido</span>
+  if (boostStatus === 'rechazado') return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">❌ Inválido</span>
+  return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">⏳ En revisión</span>
+}
+
+function boostBadge(boostStatus: string) {
+  if (boostStatus === 'boosteado') return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">🚀 Siendo boosteado</span>
+  if (boostStatus === 'rechazado') return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">✗ Sin boost</span>
+  return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">⏳ Boost pendiente</span>
 }
 
 function typeBadge(type: 'ACC' | 'TTD' | null) {
@@ -35,8 +43,8 @@ export default function MisVideosCard({ videos, approved, pending }: { videos: V
   const filtered = videos.filter((v) => {
     if (filter === 'all') return true
     if (filter === 'ACC' || filter === 'TTD') return v.video_type === filter
-    if (filter === 'approved') return v.status === 'boosteado'
-    if (filter === 'pending') return v.status === 'pending'
+    if (filter === 'approved') return v.is_valid === true
+    if (filter === 'pending') return v.is_valid !== true
     return true
   })
 
@@ -86,12 +94,15 @@ export default function MisVideosCard({ videos, approved, pending }: { videos: V
                 <a href={v.tiktok_url} target="_blank" rel="noopener noreferrer" className="text-xs text-go-orange hover:underline truncate flex-1 min-w-0 font-dm">
                   {truncate(v.tiktok_url)}
                 </a>
-                {statusBadge(v.status)}
                 <span className="text-[10px] text-gray-400 font-dm shrink-0">
                   {new Date(v.created_at).toLocaleDateString('es-MX', { day: 'numeric', month: 'short' })}
                 </span>
               </div>
-              {v.status === 'rejected' && v.rejection_reason && (
+              <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                {validBadge(v.is_valid, v.boost_status)}
+                {boostBadge(v.boost_status)}
+              </div>
+              {v.boost_status === 'rechazado' && v.rejection_reason && (
                 <p className="font-dm text-[11px] text-red-600 mt-1">Razón: {v.rejection_reason}</p>
               )}
             </li>

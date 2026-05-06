@@ -263,6 +263,22 @@ DO $$ BEGIN
   ALTER TABLE go_boost_requests ADD CONSTRAINT go_boost_requests_creator_url_unique UNIQUE (creator_id, tiktok_url);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+-- Split "status" into two orthogonal concepts:
+--   is_valid     — admin confirms this is a real TikTok GO video
+--                  (this is what counts toward the monthly goal)
+--   boost_status — whether Papaya will amplify the video
+--                  (separate decision: 'pending' | 'boosteado' | 'rechazado')
+ALTER TABLE go_boost_requests ADD COLUMN IF NOT EXISTS is_valid boolean DEFAULT false;
+ALTER TABLE go_boost_requests ADD COLUMN IF NOT EXISTS boost_status text DEFAULT 'pending';
+
+-- Backfill from the legacy status column so existing data keeps its meaning.
+-- Rows previously approved (status='boosteado') are both valid AND boosted.
+-- Rows previously rejected stay un-boosted; they were never counted, so leave
+-- is_valid=false (the default).
+UPDATE go_boost_requests SET is_valid = true     WHERE status = 'boosteado' AND is_valid IS DISTINCT FROM true;
+UPDATE go_boost_requests SET boost_status = 'boosteado'  WHERE status = 'boosteado' AND boost_status IS DISTINCT FROM 'boosteado';
+UPDATE go_boost_requests SET boost_status = 'rechazado'  WHERE status = 'rejected'  AND boost_status IS DISTINCT FROM 'rechazado';
+
 -- 14. go_monthly_goals — central monthly ACC/TTD goals for the whole team
 CREATE TABLE IF NOT EXISTS go_monthly_goals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

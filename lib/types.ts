@@ -170,6 +170,8 @@ export interface RewardRequest {
   created_at: string
 }
 
+export type BoostStatus = 'pending' | 'boosteado' | 'rechazado'
+
 export interface BoostRequest {
   id: string
   creator_id: string
@@ -179,9 +181,14 @@ export interface BoostRequest {
   video_url: string | null
   boost_reason: string | null
   notes: string | null
+  // Legacy single-status field. New code uses is_valid + boost_status.
   status: string
   video_type: 'ACC' | 'TTD' | null
   rejection_reason: string | null
+  // Split status (added 2026-05): is_valid drives video counting,
+  // boost_status drives whether Papaya amplifies the video.
+  is_valid: boolean
+  boost_status: BoostStatus
   created_at: string
 }
 
