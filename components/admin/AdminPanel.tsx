@@ -686,7 +686,7 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
   return (
     <SectionCard>
       <div className="p-6">
-        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div className="flex items-center justify-between mb-2 flex-wrap gap-3">
           <h2 className="font-syne font-bold text-lg text-go-dark">Solicitudes de Boost ({filtered.length})</h2>
           <div className="flex gap-1.5">
             {([['all', 'Todos'], ['ACC', 'ACC'], ['TTD', 'TTD']] as const).map(([key, label]) => (
@@ -704,6 +704,10 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
             ))}
           </div>
         </div>
+
+        <p className="font-dm text-xs text-go-dark/60 bg-go-dark/[0.03] border border-go-dark/[0.06] rounded-lg px-3 py-2 mb-4">
+          ℹ️ Aprobar = Papaya boosteará este video. <strong>El conteo ya fue registrado</strong> al momento en que la creadora envió el link.
+        </p>
 
         {feedback && <p className={`text-sm font-dm mb-3 px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{feedback}</p>}
 
@@ -2852,10 +2856,17 @@ function VideoTrackerSection({
     requestsByCreator.set(r.creator_id, arr)
   }
 
+  // ACC / TTD totals reflect every video submitted this month — boost
+  // approval is independent of whether the video counts.
+  const now = new Date()
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+  const isThisMonth = (iso: string) => iso >= monthStart
+
   const rows = regular.map(c => {
     const all = requestsByCreator.get(c.id) ?? []
-    const acc = all.filter(b => b.video_type === 'ACC' && b.status === 'boosteado').length
-    const ttd = all.filter(b => b.video_type === 'TTD' && b.status === 'boosteado').length
+    const thisMonth = all.filter(b => isThisMonth(b.created_at))
+    const acc = thisMonth.filter(b => b.video_type === 'ACC').length
+    const ttd = thisMonth.filter(b => b.video_type === 'TTD').length
     const pending = all.filter(b => b.status === 'pending').length
     const lastUpload = all.reduce<string | null>((latest, b) => {
       if (!latest || b.created_at > latest) return b.created_at
@@ -3042,12 +3053,22 @@ function AdminDashboardTab({
   const regular = active.filter(c => !c.is_internal)
   const internal = active.filter(c => c.is_internal)
 
-  // Regular team aggregates (self-reported per-creator counters)
-  const regAcc = regular.reduce((s, c) => s + (c.acc_this_month ?? 0), 0)
-  const regTtd = regular.reduce((s, c) => s + (c.ttd_this_month ?? 0), 0)
+  // Source-of-truth video counts come from go_boost_requests this month.
+  // boost_requests is now the video tracker; status (pending / boosteado /
+  // rejected) only reflects whether Papaya has chosen to amplify the video,
+  // not whether it counts.
+  const startOfMonth = new Date(currentYear, currentMonth - 1, 1).toISOString()
+  const regularIds = new Set(regular.map(c => c.id))
+  const regularBoostsThisMonth = boostRequests.filter(b =>
+    b.creator_id && regularIds.has(b.creator_id) && b.created_at >= startOfMonth,
+  )
+  const regAcc = regularBoostsThisMonth.filter(b => b.video_type === 'ACC').length
+  const regTtd = regularBoostsThisMonth.filter(b => b.video_type === 'TTD').length
+  const regSubmitted = regularBoostsThisMonth.length
+  const regApproved = regularBoostsThisMonth.filter(b => b.status === 'boosteado').length
+  const regPending = regularBoostsThisMonth.filter(b => b.status === 'pending').length
 
   // Internal team aggregates — count approved videos this month by type
-  const startOfMonth = new Date(currentYear, currentMonth - 1, 1).toISOString()
   const internalApprovedThisMonth = internalVideos.filter(v =>
     v.status === 'approved' && v.approved_at && v.approved_at >= startOfMonth,
   )
@@ -3069,14 +3090,23 @@ function AdminDashboardTab({
   const totalAccBar = safe(totalAcc, accGoal)
   const totalTtdBar = safe(totalTtd, ttdGoal)
 
-  // Top contributors
+  // Top contributors — derive ACC/TTD per creator from this-month boosts
+  const accByCreator = new Map<string, number>()
+  const ttdByCreator = new Map<string, number>()
+  for (const b of regularBoostsThisMonth) {
+    if (!b.creator_id) continue
+    if (b.video_type === 'ACC') accByCreator.set(b.creator_id, (accByCreator.get(b.creator_id) ?? 0) + 1)
+    if (b.video_type === 'TTD') ttdByCreator.set(b.creator_id, (ttdByCreator.get(b.creator_id) ?? 0) + 1)
+  }
   const topRegularAcc = [...regular]
-    .filter(c => (c.acc_this_month ?? 0) > 0)
-    .sort((a, b) => (b.acc_this_month ?? 0) - (a.acc_this_month ?? 0))
+    .map(c => ({ ...c, _acc: accByCreator.get(c.id) ?? 0 }))
+    .filter(c => c._acc > 0)
+    .sort((a, b) => b._acc - a._acc)
     .slice(0, 5)
   const topRegularTtd = [...regular]
-    .filter(c => (c.ttd_this_month ?? 0) > 0)
-    .sort((a, b) => (b.ttd_this_month ?? 0) - (a.ttd_this_month ?? 0))
+    .map(c => ({ ...c, _ttd: ttdByCreator.get(c.id) ?? 0 }))
+    .filter(c => c._ttd > 0)
+    .sort((a, b) => b._ttd - a._ttd)
     .slice(0, 5)
 
   // Top internal: group approved-this-month videos by creator_id
@@ -3144,7 +3174,7 @@ function AdminDashboardTab({
           ttdBar={regTtdBar}
           accPctOfTotal={pctOfTotal(regAcc, totalAcc)}
           ttdPctOfTotal={pctOfTotal(regTtd, totalTtd)}
-          footer={`${regular.length} creadoras activas contribuyendo`}
+          footer={`${regular.length} creadoras activas · ${regSubmitted} videos enviados · ${regApproved} boosteados · ${regPending} pendientes de boost`}
         />
         <BreakdownCard
           title="🏢 Equipo Interno"
@@ -3194,7 +3224,7 @@ function AdminDashboardTab({
             id: c.id,
             name: c.full_name ?? c.email,
             handle: c.tiktok_handle,
-            value: c.acc_this_month ?? 0,
+            value: c._acc,
             valueLabel: 'ACC',
           }))}
           accent="orange"
@@ -3205,7 +3235,7 @@ function AdminDashboardTab({
             id: c.id,
             name: c.full_name ?? c.email,
             handle: c.tiktok_handle,
-            value: c.ttd_this_month ?? 0,
+            value: c._ttd,
             valueLabel: 'TTD',
           }))}
           accent="pink"

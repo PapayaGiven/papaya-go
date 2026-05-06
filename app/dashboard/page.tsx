@@ -28,13 +28,22 @@ export default async function DashboardPage() {
   const dayNames = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']
   const todayName = dayNames[nowDate.getDay()]
 
-  const [announcementRes, currentNivelRes, challengeRes, leaderboardRes, todayPlanRes] = await Promise.all([
+  // Source-of-truth video counts: count this-month boost requests.
+  const startOfMonth = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1).toISOString()
+
+  const [announcementRes, currentNivelRes, challengeRes, leaderboardRes, todayPlanRes, myBoostsRes] = await Promise.all([
     admin.from('go_announcements').select('*').eq('is_active', true).order('created_at', { ascending: false }),
     admin.from('go_nivel_requirements').select('*').eq('nivel', creator.nivel).maybeSingle(),
     admin.from('go_challenges').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1).maybeSingle(),
     admin.from('go_creators').select('id, full_name, nivel, videos_this_month, gmv_this_month, acc_this_month, ttd_this_month').eq('status', 'active').order('videos_this_month', { ascending: false }).limit(10),
     admin.from('go_content_plan').select('*').eq('creator_id', creator.id).eq('week_start', weekStart).eq('day_of_week', todayName).limit(1).maybeSingle(),
+    admin.from('go_boost_requests').select('video_type, created_at').eq('creator_id', creator.id).gte('created_at', startOfMonth),
   ])
+
+  const myBoostsThisMonth = (myBoostsRes.data ?? []) as { video_type: 'ACC' | 'TTD' | null; created_at: string }[]
+  const liveAccThisMonth = myBoostsThisMonth.filter(b => b.video_type === 'ACC').length
+  const liveTtdThisMonth = myBoostsThisMonth.filter(b => b.video_type === 'TTD').length
+  const liveVideosThisMonth = myBoostsThisMonth.length
 
   const todayPlan = todayPlanRes.data as { video_type: string; place_name: string | null; hashtags: string | null } | null
   const allAnnouncements = (announcementRes.data ?? []) as Announcement[]
@@ -111,7 +120,7 @@ export default async function DashboardPage() {
               </p>
               <div className="flex items-center gap-3 mt-4">
                 <span className={`font-dm text-xs font-bold px-3 py-1 rounded-full ${nivelColor.bg} ${nivelColor.text}`}>Nivel {creator.nivel} · {NIVEL_NAMES[creator.nivel]}</span>
-                <span className="font-dm text-xs text-[#1a0800]/50">{creator.videos_this_month} videos este mes</span>
+                <span className="font-dm text-xs text-[#1a0800]/50">{liveVideosThisMonth} videos este mes</span>
               </div>
             </div>
           </div>
@@ -156,12 +165,12 @@ export default async function DashboardPage() {
           {/* CARD 2: Monthly goal rings */}
           <ProgressRings
             monthName={monthName}
-            videosThisMonth={creator.videos_this_month}
+            videosThisMonth={liveVideosThisMonth}
             videosRequired={videosRequired}
             gmvThisMonth={creator.gmv_this_month}
             gmvRequired={gmvRequired}
-            accThisMonth={creator.acc_this_month}
-            ttdThisMonth={creator.ttd_this_month}
+            accThisMonth={liveAccThisMonth}
+            ttdThisMonth={liveTtdThisMonth}
             daysRemaining={daysRemainingInMonth}
           />
 

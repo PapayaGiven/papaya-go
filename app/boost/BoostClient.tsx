@@ -34,6 +34,12 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  const now = new Date()
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+  const thisMonth = pastRequests.filter((r) => r.created_at >= monthStart)
+  const accCount = thisMonth.filter((r) => r.video_type === 'ACC').length
+  const ttdCount = thisMonth.filter((r) => r.video_type === 'TTD').length
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
@@ -74,6 +80,14 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
 
   return (
     <div className="space-y-6">
+      {/* Running totals */}
+      <div className="bg-go-orange/10 border border-go-orange/30 rounded-2xl px-5 py-3 flex items-center justify-center gap-3 flex-wrap">
+        <span className="font-dm text-xs font-semibold text-go-dark/70 uppercase tracking-wide">Este mes:</span>
+        <span className="font-syne font-bold text-base text-blue-700 bg-blue-100 px-3 py-0.5 rounded-full">{accCount} ACC</span>
+        <span className="font-syne font-bold text-base text-purple-700 bg-purple-100 px-3 py-0.5 rounded-full">{ttdCount} TTD</span>
+        <span className="font-dm text-xs text-go-dark/50">· {accCount + ttdCount} videos en total</span>
+      </div>
+
       {/* Submit form */}
       <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5 shadow-sm">
         <h2 className="font-syne font-bold text-lg text-go-dark mb-1">Opcion A — Link de TikTok</h2>
@@ -82,7 +96,10 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
         {submitted ? (
           <div className="text-center py-8">
             <p className="font-dm text-go-orange font-semibold text-lg">
-              ¡Video enviado para boost! Te avisamos cuando este listo 🧡
+              ✅ Video agregado — ya suma a tu contador de este mes
+            </p>
+            <p className="font-dm text-xs text-gray-500 mt-2">
+              Si Papaya decide boostearlo te avisamos por aquí.
             </p>
             <button
               onClick={() => setSubmitted(false)}

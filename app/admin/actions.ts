@@ -706,6 +706,47 @@ export async function updateBoostStatus(id: string, status: string): Promise<{ e
   return {}
 }
 
+export async function deleteBoostRequest(id: string): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  // Look up the row first so we know whose counters to decrement.
+  const { data: row, error: fetchErr } = await supabase
+    .from('go_boost_requests')
+    .select('creator_id, video_type, created_at')
+    .eq('id', id)
+    .maybeSingle()
+  if (fetchErr) return { error: fetchErr.message }
+
+  const { error: delErr } = await supabase.from('go_boost_requests').delete().eq('id', id)
+  if (delErr) return { error: delErr.message }
+
+  // Only decrement counters if the deleted row belongs to the current month.
+  // Older rows are no longer reflected in *_this_month fields.
+  if (row?.creator_id) {
+    const created = row.created_at ? new Date(row.created_at) : null
+    const now = new Date()
+    const sameMonth = !!created && created.getUTCFullYear() === now.getUTCFullYear() && created.getUTCMonth() === now.getUTCMonth()
+    if (sameMonth) {
+      const { data: c } = await supabase
+        .from('go_creators')
+        .select('acc_this_month, ttd_this_month, videos_this_month')
+        .eq('id', row.creator_id)
+        .maybeSingle()
+      if (c) {
+        await supabase.from('go_creators').update({
+          acc_this_month: Math.max(0, (c.acc_this_month ?? 0) - (row.video_type === 'ACC' ? 1 : 0)),
+          ttd_this_month: Math.max(0, (c.ttd_this_month ?? 0) - (row.video_type === 'TTD' ? 1 : 0)),
+          videos_this_month: Math.max(0, (c.videos_this_month ?? 0) - 1),
+        }).eq('id', row.creator_id)
+      }
+    }
+  }
+
+  revalidatePath('/admin')
+  revalidatePath('/dashboard')
+  revalidatePath('/boost')
+  return {}
+}
+
 // ── Reward Requests ──────────────────────────────────
 
 export async function updateRewardRequestStatus(id: string, status: string): Promise<{ error?: string }> {
