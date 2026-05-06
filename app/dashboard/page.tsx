@@ -6,6 +6,7 @@ import AnnouncementPopup from '@/components/AnnouncementPopup'
 import DashboardClient from './DashboardClient'
 import DashboardHashtags from './DashboardHashtags'
 import ProgressRings from './ProgressRings'
+import MisVideosCard from './MisVideosCard'
 import { Creator, NivelRequirement, Announcement, Challenge, NIVEL_NAMES, NIVEL_COLORS } from '@/lib/types'
 
 export default async function DashboardPage() {
@@ -40,14 +41,20 @@ export default async function DashboardPage() {
     admin.from('go_challenges').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1).maybeSingle(),
     admin.from('go_creators').select('id, full_name, nivel, videos_this_month, gmv_this_month, acc_this_month, ttd_this_month').eq('status', 'active').order('videos_this_month', { ascending: false }).limit(10),
     admin.from('go_content_plan').select('*').eq('creator_id', creator.id).eq('week_start', weekStart).eq('day_of_week', todayName).limit(1).maybeSingle(),
-    admin.from('go_boost_requests').select('video_type, created_at').eq('creator_id', creator.id).gte('created_at', startOfMonth),
+    admin.from('go_boost_requests').select('id, tiktok_url, video_type, status, rejection_reason, created_at').eq('creator_id', creator.id).gte('created_at', startOfMonth).order('created_at', { ascending: false }),
     admin.from('go_creator_snapshots').select('acc_videos, ttd_videos, gmv').eq('creator_id', creator.id).eq('month', prevMonth).eq('year', prevYear).maybeSingle(),
   ])
 
-  const myBoostsThisMonth = (myBoostsRes.data ?? []) as { video_type: 'ACC' | 'TTD' | null; created_at: string }[]
-  const liveAccThisMonth = myBoostsThisMonth.filter(b => b.video_type === 'ACC').length
-  const liveTtdThisMonth = myBoostsThisMonth.filter(b => b.video_type === 'TTD').length
-  const liveVideosThisMonth = myBoostsThisMonth.length
+  type MyBoost = { id: string; tiktok_url: string; video_type: 'ACC' | 'TTD' | null; status: string; rejection_reason: string | null; created_at: string }
+  const myBoostsThisMonth = (myBoostsRes.data ?? []) as MyBoost[]
+  const submittedAcc = myBoostsThisMonth.filter(b => b.video_type === 'ACC').length
+  const submittedTtd = myBoostsThisMonth.filter(b => b.video_type === 'TTD').length
+  // Approved-only counts drive the rings; the "submitted" totals show alongside.
+  const liveAccThisMonth = myBoostsThisMonth.filter(b => b.video_type === 'ACC' && b.status === 'boosteado').length
+  const liveTtdThisMonth = myBoostsThisMonth.filter(b => b.video_type === 'TTD' && b.status === 'boosteado').length
+  const liveVideosThisMonth = liveAccThisMonth + liveTtdThisMonth
+  const submittedVideosThisMonth = submittedAcc + submittedTtd
+  const pendingThisMonth = myBoostsThisMonth.filter(b => b.status === 'pending').length
 
   const todayPlan = todayPlanRes.data as { video_type: string; place_name: string | null; hashtags: string | null } | null
   const allAnnouncements = (announcementRes.data ?? []) as Announcement[]
@@ -124,7 +131,7 @@ export default async function DashboardPage() {
               </p>
               <div className="flex items-center gap-3 mt-4">
                 <span className={`font-dm text-xs font-bold px-3 py-1 rounded-full ${nivelColor.bg} ${nivelColor.text}`}>Nivel {creator.nivel} · {NIVEL_NAMES[creator.nivel]}</span>
-                <span className="font-dm text-xs text-[#1a0800]/50">{liveVideosThisMonth} videos este mes</span>
+                <span className="font-dm text-xs text-[#1a0800]/50">{liveVideosThisMonth} aprobados / {submittedVideosThisMonth} enviados este mes</span>
               </div>
             </div>
           </div>
@@ -211,6 +218,9 @@ export default async function DashboardPage() {
 
           {/* CARD 4: Boost rápido */}
           <DashboardClient creatorId={creator.id} creatorName={creator.full_name} tiktokHandle={creator.tiktok_handle} />
+
+          {/* CARD 5a: Mis Videos */}
+          <MisVideosCard videos={myBoostsThisMonth} approved={liveVideosThisMonth} pending={pendingThisMonth} />
 
           {/* CARD 5: Tu crecimiento (vs mes pasado) */}
           {(() => {

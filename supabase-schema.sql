@@ -257,6 +257,12 @@ CREATE POLICY "go_content_plan_service" ON go_content_plan FOR ALL TO service_ro
 -- Reject reason for boost requests (used by admin dashboard video tracker)
 ALTER TABLE go_boost_requests ADD COLUMN IF NOT EXISTS rejection_reason text;
 
+-- One creator can't submit the same TikTok URL twice. Wrap in DO so re-running
+-- doesn't fail when the constraint already exists.
+DO $$ BEGIN
+  ALTER TABLE go_boost_requests ADD CONSTRAINT go_boost_requests_creator_url_unique UNIQUE (creator_id, tiktok_url);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
 -- 14. go_monthly_goals — central monthly ACC/TTD goals for the whole team
 CREATE TABLE IF NOT EXISTS go_monthly_goals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

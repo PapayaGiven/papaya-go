@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { submitBoost } from './actions'
+import { submitBoostBatch } from './actions'
 import type { BoostRequest } from '@/lib/types'
 
 interface BoostClientProps {
@@ -11,10 +11,24 @@ interface BoostClientProps {
   pastRequests: BoostRequest[]
 }
 
+interface Row {
+  id: number
+  url: string
+  type: 'ACC' | 'TTD' | null
+  error?: string
+}
+
+let nextId = 1
+function newRow(): Row {
+  return { id: nextId++, url: '', type: null }
+}
+
 function statusBadge(status: string) {
   switch (status) {
-    case 'boosted':
-      return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-dm font-medium bg-green-100 text-green-700">✅ Boosteado</span>
+    case 'boosteado':
+      return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-dm font-medium bg-green-100 text-green-700">✅ Aprobado</span>
+    case 'rejected':
+      return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-dm font-medium bg-red-100 text-red-700">❌ Rechazado</span>
     case 'in_progress':
       return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-dm font-medium bg-orange-100 text-orange-700">🚀 En proceso</span>
     default:
@@ -27,55 +41,69 @@ function truncateUrl(url: string, max = 40) {
 }
 
 export default function BoostClient({ creatorId, creatorName, tiktokHandle, pastRequests }: BoostClientProps) {
-  const [tiktokUrl, setTiktokUrl] = useState('')
-  const [videoType, setVideoType] = useState<'ACC' | 'TTD' | null>(null)
-  const [notes, setNotes] = useState('')
-  const [submitted, setSubmitted] = useState(false)
-  const [error, setError] = useState('')
+  const [rows, setRows] = useState<Row[]>([newRow()])
+  const [submittedCount, setSubmittedCount] = useState<number | null>(null)
+  const [topError, setTopError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const now = new Date()
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+  // Running totals from past submissions (this month)
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
   const thisMonth = pastRequests.filter((r) => r.created_at >= monthStart)
   const accCount = thisMonth.filter((r) => r.video_type === 'ACC').length
   const ttdCount = thisMonth.filter((r) => r.video_type === 'TTD').length
 
+  function updateRow(id: number, patch: Partial<Row>) {
+    setRows((prev) => prev.map((r) => r.id === id ? { ...r, ...patch, error: undefined } : r))
+    setTopError('')
+  }
+  function addRow() {
+    setRows((prev) => [...prev, newRow()])
+  }
+  function removeRow(id: number) {
+    setRows((prev) => prev.length === 1 ? prev : prev.filter((r) => r.id !== id))
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setError('')
+    setTopError('')
 
-    if (!tiktokUrl.trim()) {
-      setError('Pega el link de tu TikTok')
+    // Local-only validation pass — the server re-validates everything.
+    const cleaned = rows.map((r) => ({ ...r, error: undefined as string | undefined }))
+    cleaned.forEach((r) => {
+      if (!r.url.trim()) r.error = 'Pega el link de tu TikTok'
+      else if (!r.type) r.error = 'Selecciona ACC o TTD'
+    })
+    if (cleaned.some((r) => r.error)) {
+      setRows(cleaned)
+      setTopError('Revisa los errores marcados')
       return
     }
-    if (!videoType) {
-      setError('Selecciona tipo de video: ACC o TTD')
-      return
-    }
+
     setLoading(true)
-    try {
-      const result = await submitBoost({
-        creator_id: creatorId,
-        creator_name: creatorName,
-        tiktok_handle: tiktokHandle,
-        tiktok_url: tiktokUrl.trim(),
-        boost_reason: null,
-        notes: notes.trim() || null,
-        video_type: videoType,
-      })
-      if (result.error) {
-        setError(result.error)
-      } else {
-        setSubmitted(true)
-        setTiktokUrl('')
-        setNotes('')
-        setVideoType(null)
-      }
-    } catch {
-      setError('Algo salio mal. Intenta de nuevo.')
-    } finally {
-      setLoading(false)
+    const result = await submitBoostBatch({
+      creator_id: creatorId,
+      creator_name: creatorName,
+      tiktok_handle: tiktokHandle,
+      videos: cleaned.map((r) => ({ tiktok_url: r.url, video_type: r.type as 'ACC' | 'TTD' })),
+    })
+    setLoading(false)
+
+    if (result.error) {
+      setTopError(result.error)
+      return
     }
+    if (result.rowErrors && result.rowErrors.length > 0) {
+      const next = [...rows]
+      for (const re of result.rowErrors) {
+        if (next[re.index]) next[re.index] = { ...next[re.index], error: re.message }
+      }
+      setRows(next)
+      setTopError('Revisa los errores marcados')
+      return
+    }
+
+    setSubmittedCount(result.inserted ?? 0)
+    setRows([newRow()])
   }
 
   return (
@@ -90,79 +118,83 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
 
       {/* Submit form */}
       <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5 shadow-sm">
-        <h2 className="font-syne font-bold text-lg text-go-dark mb-1">Opcion A — Link de TikTok</h2>
-        <p className="font-dm text-xs text-gray-400 mb-4">Pega el link de tu video publicado en TikTok</p>
+        <h2 className="font-syne font-bold text-lg text-go-dark mb-1">🎬 Sube tus videos</h2>
+        <p className="font-dm text-xs text-gray-400 mb-4">Agrega uno o más links de TikTok. Cada video cuenta cuando tu equipo lo aprueba.</p>
 
-        {submitted ? (
+        {submittedCount != null ? (
           <div className="text-center py-8">
             <p className="font-dm text-go-orange font-semibold text-lg">
-              ✅ Video agregado — ya suma a tu contador de este mes
+              ✅ {submittedCount} {submittedCount === 1 ? 'video agregado' : 'videos agregados'} correctamente
             </p>
             <p className="font-dm text-xs text-gray-500 mt-2">
-              Si Papaya decide boostearlo te avisamos por aquí.
+              Tu equipo revisará y aprobará. Te avisamos por aquí.
             </p>
             <button
-              onClick={() => setSubmitted(false)}
+              onClick={() => setSubmittedCount(null)}
               className="mt-4 font-dm text-sm text-gray-400 underline hover:text-go-orange transition-colors"
             >
-              Enviar otro video
+              Enviar más videos
             </button>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* TikTok URL */}
-            <div>
-              <label className="block font-dm text-sm font-medium text-go-dark mb-1">
-                Pega el link de tu TikTok
-              </label>
-              <input
-                type="url"
-                value={tiktokUrl}
-                onChange={(e) => setTiktokUrl(e.target.value)}
-                placeholder="https://www.tiktok.com/@..."
-                className="w-full border border-gray-200 rounded-xl px-4 py-2.5 font-dm text-sm text-go-dark placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition-all"
-              />
-            </div>
-
-            {/* Notes */}
-            <div>
-              <label className="block font-dm text-sm font-medium text-go-dark mb-1">
-                Notas adicionales (opcional)
-              </label>
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={3}
-                placeholder="Algo que quieras que sepamos..."
-                className="w-full border border-gray-200 rounded-xl px-4 py-2.5 font-dm text-sm text-go-dark placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition-all resize-none"
-              />
-            </div>
-
-            {/* Video type */}
-            <div>
-              <label className="block font-dm text-sm font-medium text-go-dark mb-2">
-                Tipo de video <span className="text-go-orange">*</span>
-              </label>
-              <div className="flex gap-3">
-                {(['ACC', 'TTD'] as const).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setVideoType(t)}
-                    className={`flex-1 py-3 rounded-xl font-dm font-semibold text-sm transition-all border-2 ${
-                      videoType === t
-                        ? 'bg-go-orange text-white border-go-orange'
-                        : 'bg-white text-go-dark/60 border-gray-200 hover:border-go-orange/40'
-                    }`}
-                  >
-                    {t}
-                  </button>
-                ))}
+          <form onSubmit={handleSubmit} className="space-y-3">
+            {rows.map((r, idx) => (
+              <div key={r.id} className="bg-go-light/50 border border-go-border rounded-xl p-3 space-y-2">
+                <div className="flex items-start gap-2">
+                  <div className="flex-1 min-w-0">
+                    <label className="block font-dm text-[11px] font-semibold text-go-dark/50 uppercase tracking-wide mb-1">
+                      Video {idx + 1} — TikTok URL
+                    </label>
+                    <input
+                      type="url"
+                      value={r.url}
+                      onChange={(e) => updateRow(r.id, { url: e.target.value })}
+                      placeholder="https://www.tiktok.com/@..."
+                      className={`w-full border rounded-lg px-3 py-2 font-dm text-sm text-go-dark placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition-all ${r.error ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
+                    />
+                  </div>
+                  {rows.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeRow(r.id)}
+                      className="mt-6 text-red-400 hover:text-red-600 text-lg leading-none px-2"
+                      aria-label="Eliminar"
+                    >×</button>
+                  )}
+                </div>
+                <div>
+                  <label className="block font-dm text-[11px] font-semibold text-go-dark/50 uppercase tracking-wide mb-1">Tipo</label>
+                  <div className="flex gap-2">
+                    {(['ACC', 'TTD'] as const).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => updateRow(r.id, { type: t })}
+                        className={`flex-1 py-2 rounded-lg font-dm font-semibold text-xs transition-all border-2 ${
+                          r.type === t
+                            ? 'bg-go-orange text-white border-go-orange'
+                            : 'bg-white text-go-dark/60 border-gray-200 hover:border-go-orange/40'
+                        }`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {r.error && <p className="font-dm text-xs text-red-600">{r.error}</p>}
               </div>
-            </div>
+            ))}
 
-            {error && (
-              <p className="font-dm text-sm text-red-500">{error}</p>
+            <button
+              type="button"
+              onClick={addRow}
+              className="w-full border-2 border-dashed border-go-orange/40 text-go-orange font-dm text-xs font-semibold py-2 rounded-lg hover:bg-go-orange/5 transition"
+            >
+              + Agregar otro video
+            </button>
+
+            {topError && (
+              <p className="font-dm text-sm text-red-500">{topError}</p>
             )}
 
             <button
@@ -170,7 +202,7 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
               disabled={loading}
               className="w-full bg-go-orange hover:bg-go-orange/90 text-white font-dm font-semibold text-sm py-3 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? 'Enviando...' : 'Enviar para boost 🚀'}
+              {loading ? 'Enviando...' : `Enviar ${rows.length} ${rows.length === 1 ? 'video' : 'videos'} 🚀`}
             </button>
           </form>
         )}
@@ -182,7 +214,7 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
 
         {pastRequests.length === 0 ? (
           <p className="font-dm text-sm text-gray-400 text-center py-6">
-            Aun no has enviado ningun video para boost
+            Aún no has enviado ningún video
           </p>
         ) : (
           <div className="space-y-3">
@@ -193,11 +225,7 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
               >
                 <div className="flex-1 min-w-0">
                   <p className="font-dm text-xs text-gray-400">
-                    {new Date(req.created_at).toLocaleDateString('es-MX', {
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                    })}
+                    {new Date(req.created_at).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric' })}
                   </p>
                   {req.tiktok_url && (
                     <a
@@ -209,8 +237,8 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
                       {truncateUrl(req.tiktok_url)}
                     </a>
                   )}
-                  {req.boost_reason && (
-                    <p className="font-dm text-xs text-gray-500 mt-0.5">{req.boost_reason}</p>
+                  {req.status === 'rejected' && req.rejection_reason && (
+                    <p className="font-dm text-xs text-red-600 mt-1">Razón: {req.rejection_reason}</p>
                   )}
                 </div>
                 <div className="shrink-0">

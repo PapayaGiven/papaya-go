@@ -708,10 +708,10 @@ export async function updateBoostStatus(id: string, status: string): Promise<{ e
 
 export async function deleteBoostRequest(id: string): Promise<{ error?: string }> {
   const supabase = createAdminClient()
-  // Look up the row first so we know whose counters to decrement.
+  // Look up the row first so we know whether to decrement counters.
   const { data: row, error: fetchErr } = await supabase
     .from('go_boost_requests')
-    .select('creator_id, video_type, created_at')
+    .select('creator_id, video_type, status, created_at')
     .eq('id', id)
     .maybeSingle()
   if (fetchErr) return { error: fetchErr.message }
@@ -719,9 +719,10 @@ export async function deleteBoostRequest(id: string): Promise<{ error?: string }
   const { error: delErr } = await supabase.from('go_boost_requests').delete().eq('id', id)
   if (delErr) return { error: delErr.message }
 
-  // Only decrement counters if the deleted row belongs to the current month.
-  // Older rows are no longer reflected in *_this_month fields.
-  if (row?.creator_id) {
+  // Only decrement counters when the deleted row was approved AND belongs to
+  // the current month. Pending or rejected rows never contributed, and older
+  // rows have already been rolled into snapshots.
+  if (row?.creator_id && row.status === 'boosteado') {
     const created = row.created_at ? new Date(row.created_at) : null
     const now = new Date()
     const sameMonth = !!created && created.getUTCFullYear() === now.getUTCFullYear() && created.getUTCMonth() === now.getUTCMonth()
@@ -1054,15 +1055,63 @@ export async function upsertMonthlyGoal(data: {
 }
 
 // ── Boost request approve/reject (admin dashboard video tracker) ──
+//
+// "Approved" boost requests are stored with status='boosteado' (kept for
+// backwards-compatibility with existing rows). Counters in go_creators
+// only advance when a row transitions INTO the boosteado state, and
+// retreat when it transitions OUT — and only if the row is in the
+// current calendar month (older rows are rolled into snapshots).
+
+function isThisMonthIso(iso: string | null | undefined): boolean {
+  if (!iso) return false
+  const d = new Date(iso)
+  const now = new Date()
+  return d.getUTCFullYear() === now.getUTCFullYear() && d.getUTCMonth() === now.getUTCMonth()
+}
+
+async function adjustCreatorCounters(
+  supabase: ReturnType<typeof createAdminClient>,
+  creatorId: string,
+  videoType: 'ACC' | 'TTD' | null,
+  delta: 1 | -1,
+) {
+  const { data: c } = await supabase
+    .from('go_creators')
+    .select('acc_this_month, ttd_this_month, videos_this_month')
+    .eq('id', creatorId)
+    .maybeSingle()
+  if (!c) return
+  const accDelta = videoType === 'ACC' ? delta : 0
+  const ttdDelta = videoType === 'TTD' ? delta : 0
+  await supabase.from('go_creators').update({
+    acc_this_month: Math.max(0, (c.acc_this_month ?? 0) + accDelta),
+    ttd_this_month: Math.max(0, (c.ttd_this_month ?? 0) + ttdDelta),
+    videos_this_month: Math.max(0, (c.videos_this_month ?? 0) + delta),
+  }).eq('id', creatorId)
+}
 
 export async function approveBoostRequest(id: string): Promise<{ error?: string }> {
   const supabase = createAdminClient()
+  const { data: row, error: readErr } = await supabase
+    .from('go_boost_requests')
+    .select('creator_id, video_type, status, created_at')
+    .eq('id', id)
+    .maybeSingle()
+  if (readErr) return { error: readErr.message }
+  if (!row) return { error: 'Video no encontrado' }
+
+  const wasApproved = row.status === 'boosteado'
   const { error } = await supabase
     .from('go_boost_requests')
     .update({ status: 'boosteado', rejection_reason: null })
     .eq('id', id)
   if (error) return { error: error.message }
+
+  if (!wasApproved && row.creator_id && isThisMonthIso(row.created_at)) {
+    await adjustCreatorCounters(supabase, row.creator_id, row.video_type as 'ACC' | 'TTD' | null, 1)
+  }
   revalidatePath('/admin')
+  revalidatePath('/dashboard')
   return {}
 }
 
@@ -1070,11 +1119,42 @@ export async function rejectBoostRequest(id: string, reason: string): Promise<{ 
   const trimmed = reason.trim()
   if (!trimmed) return { error: 'Razón de rechazo requerida' }
   const supabase = createAdminClient()
+  const { data: row, error: readErr } = await supabase
+    .from('go_boost_requests')
+    .select('creator_id, video_type, status, created_at')
+    .eq('id', id)
+    .maybeSingle()
+  if (readErr) return { error: readErr.message }
+  if (!row) return { error: 'Video no encontrado' }
+
+  const wasApproved = row.status === 'boosteado'
   const { error } = await supabase
     .from('go_boost_requests')
     .update({ status: 'rejected', rejection_reason: trimmed })
     .eq('id', id)
   if (error) return { error: error.message }
+
+  if (wasApproved && row.creator_id && isThisMonthIso(row.created_at)) {
+    await adjustCreatorCounters(supabase, row.creator_id, row.video_type as 'ACC' | 'TTD' | null, -1)
+  }
   revalidatePath('/admin')
+  revalidatePath('/dashboard')
+  return {}
+}
+
+// Reset a creator's monthly counters (used when admin changes their nivel).
+// Per spec: "Cambiar el nivel reiniciará el contador mensual de esta creadora".
+// The new nivel's go_nivel_requirements then applies as the goal automatically
+// because dashboard reads pull requirements by current nivel.
+export async function updateCreatorNivel(id: string, nivel: number): Promise<{ error?: string }> {
+  if (nivel < 1 || nivel > 4) return { error: 'Nivel inválido' }
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('go_creators')
+    .update({ nivel, acc_this_month: 0, ttd_this_month: 0, videos_this_month: 0 })
+    .eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/dashboard')
   return {}
 }

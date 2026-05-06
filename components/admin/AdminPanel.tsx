@@ -70,6 +70,7 @@ import {
   approveBoostRequest,
   rejectBoostRequest,
   takeMonthlySnapshot,
+  updateCreatorNivel,
 } from '@/app/admin/actions'
 
 // ── Types ─────────────────────────────────────────────
@@ -1309,15 +1310,28 @@ function CreatorsTab({
   }
 
   function saveEdit(id: string) {
+    const original = creators.find(c => c.id === id)
+    const newNivel = Number(editData.nivel)
+    const nivelChanged = !!original && original.nivel !== newNivel
+    if (nivelChanged) {
+      const ok = confirm(`¿Confirmas? Esto reiniciará el contador de videos de este mes para ${original.full_name ?? original.email}.`)
+      if (!ok) return
+    }
     startTransition(async () => {
+      // Other fields go through the regular update path. If the nivel
+      // changed, updateCreatorNivel takes care of nivel + monthly counter
+      // reset atomically afterward.
       await updateCreator(id, {
-        nivel: Number(editData.nivel),
+        nivel: newNivel,
         gmv_total: Number(editData.gmv_total),
         acc_this_month: Number(editData.acc_this_month),
         ttd_this_month: Number(editData.ttd_this_month),
         videos_this_month: Number(editData.videos_this_month),
         status: editData.status as Creator['status'],
       })
+      if (nivelChanged) {
+        await updateCreatorNivel(id, newNivel)
+      }
       setEditId(null)
     })
   }
@@ -1432,6 +1446,11 @@ function CreatorsTab({
                             </option>
                           ))}
                         </select>
+                        {Number(editData.nivel) !== c.nivel && (
+                          <p className="font-dm text-[10px] text-amber-700 mt-1 max-w-[160px]">
+                            ⚠️ Cambiar el nivel reiniciará el contador mensual.
+                          </p>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right">
                         <input
@@ -2963,8 +2982,8 @@ function VideoTrackerSection({
     requestsByCreator.set(r.creator_id, arr)
   }
 
-  // ACC / TTD totals reflect every video submitted this month — boost
-  // approval is independent of whether the video counts.
+  // ACC / TTD per-creator totals reflect APPROVED videos this month;
+  // pending count is shown alongside but doesn't add to the total.
   const now = new Date()
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
   const isThisMonth = (iso: string) => iso >= monthStart
@@ -2972,9 +2991,10 @@ function VideoTrackerSection({
   const rows = regular.map(c => {
     const all = requestsByCreator.get(c.id) ?? []
     const thisMonth = all.filter(b => isThisMonth(b.created_at))
-    const acc = thisMonth.filter(b => b.video_type === 'ACC').length
-    const ttd = thisMonth.filter(b => b.video_type === 'TTD').length
-    const pending = all.filter(b => b.status === 'pending').length
+    const approvedThisMonth = thisMonth.filter(b => b.status === 'boosteado')
+    const acc = approvedThisMonth.filter(b => b.video_type === 'ACC').length
+    const ttd = approvedThisMonth.filter(b => b.video_type === 'TTD').length
+    const pending = thisMonth.filter(b => b.status === 'pending').length
     const lastUpload = all.reduce<string | null>((latest, b) => {
       if (!latest || b.created_at > latest) return b.created_at
       return latest
@@ -3164,17 +3184,19 @@ function CrecimientoTab({
   const accGoal = monthlyGoal?.acc_goal ?? 300
   const ttdGoal = monthlyGoal?.ttd_goal ?? 300
 
-  // Live current-month aggregates
+  // Live current-month aggregates — only APPROVED boosts count toward
+  // the videos totals; pending and rejected stay separate.
   const startOfMonth = new Date(Date.UTC(currentYear, currentMonth - 1, 1)).toISOString()
   const active = creators.filter(c => c.status === 'active')
   const regular = active.filter(c => !c.is_internal)
   const internal = active.filter(c => c.is_internal)
   const regularIds = new Set(regular.map(c => c.id))
   const regularBoostsThisMonth = boostRequests.filter(b => b.creator_id && regularIds.has(b.creator_id) && b.created_at >= startOfMonth)
-  const regAcc = regularBoostsThisMonth.filter(b => b.video_type === 'ACC').length
-  const regTtd = regularBoostsThisMonth.filter(b => b.video_type === 'TTD').length
+  const regularApproved = regularBoostsThisMonth.filter(b => b.status === 'boosteado')
+  const regAcc = regularApproved.filter(b => b.video_type === 'ACC').length
+  const regTtd = regularApproved.filter(b => b.video_type === 'TTD').length
   const regSubmitted = regularBoostsThisMonth.length
-  const regApproved = regularBoostsThisMonth.filter(b => b.status === 'boosteado').length
+  const regApproved = regularApproved.length
   const regPending = regularBoostsThisMonth.filter(b => b.status === 'pending').length
   const internalApprovedThisMonth = internalVideos.filter(v => v.status === 'approved' && v.approved_at && v.approved_at >= startOfMonth)
   const intAcc = internalApprovedThisMonth.filter(v => v.video_type === 'ACC').length
@@ -3223,10 +3245,10 @@ function CrecimientoTab({
     }
   }
 
-  // Top contributors (this month)
+  // Top contributors (approved-only this month)
   const accByCreator = new Map<string, number>()
   const ttdByCreator = new Map<string, number>()
-  for (const b of regularBoostsThisMonth) {
+  for (const b of regularApproved) {
     if (!b.creator_id) continue
     if (b.video_type === 'ACC') accByCreator.set(b.creator_id, (accByCreator.get(b.creator_id) ?? 0) + 1)
     if (b.video_type === 'TTD') ttdByCreator.set(b.creator_id, (ttdByCreator.get(b.creator_id) ?? 0) + 1)
@@ -3481,19 +3503,19 @@ function AdminDashboardTab({
   const regular = active.filter(c => !c.is_internal)
   const internal = active.filter(c => c.is_internal)
 
-  // Source-of-truth video counts come from go_boost_requests this month.
-  // boost_requests is now the video tracker; status (pending / boosteado /
-  // rejected) only reflects whether Papaya has chosen to amplify the video,
-  // not whether it counts.
+  // Source-of-truth video counts come from go_boost_requests this month,
+  // restricted to APPROVED rows (status='boosteado'). Pending and rejected
+  // submissions don't count toward team totals.
   const startOfMonth = new Date(currentYear, currentMonth - 1, 1).toISOString()
   const regularIds = new Set(regular.map(c => c.id))
   const regularBoostsThisMonth = boostRequests.filter(b =>
     b.creator_id && regularIds.has(b.creator_id) && b.created_at >= startOfMonth,
   )
-  const regAcc = regularBoostsThisMonth.filter(b => b.video_type === 'ACC').length
-  const regTtd = regularBoostsThisMonth.filter(b => b.video_type === 'TTD').length
+  const regularApproved = regularBoostsThisMonth.filter(b => b.status === 'boosteado')
+  const regAcc = regularApproved.filter(b => b.video_type === 'ACC').length
+  const regTtd = regularApproved.filter(b => b.video_type === 'TTD').length
   const regSubmitted = regularBoostsThisMonth.length
-  const regApproved = regularBoostsThisMonth.filter(b => b.status === 'boosteado').length
+  const regApproved = regularApproved.length
   const regPending = regularBoostsThisMonth.filter(b => b.status === 'pending').length
 
   // Internal team aggregates — count approved videos this month by type
@@ -3518,10 +3540,11 @@ function AdminDashboardTab({
   const totalAccBar = safe(totalAcc, accGoal)
   const totalTtdBar = safe(totalTtd, ttdGoal)
 
-  // Top contributors — derive ACC/TTD per creator from this-month boosts
+  // Top contributors — count only APPROVED boosts so the leaderboard
+  // matches the BreakdownCard numbers above.
   const accByCreator = new Map<string, number>()
   const ttdByCreator = new Map<string, number>()
-  for (const b of regularBoostsThisMonth) {
+  for (const b of regularApproved) {
     if (!b.creator_id) continue
     if (b.video_type === 'ACC') accByCreator.set(b.creator_id, (accByCreator.get(b.creator_id) ?? 0) + 1)
     if (b.video_type === 'TTD') ttdByCreator.set(b.creator_id, (ttdByCreator.get(b.creator_id) ?? 0) + 1)
