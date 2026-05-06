@@ -30,14 +30,18 @@ export default async function DashboardPage() {
 
   // Source-of-truth video counts: count this-month boost requests.
   const startOfMonth = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1).toISOString()
+  const prevDate = new Date(nowDate.getFullYear(), nowDate.getMonth() - 1, 1)
+  const prevMonth = prevDate.getMonth() + 1
+  const prevYear = prevDate.getFullYear()
 
-  const [announcementRes, currentNivelRes, challengeRes, leaderboardRes, todayPlanRes, myBoostsRes] = await Promise.all([
+  const [announcementRes, currentNivelRes, challengeRes, leaderboardRes, todayPlanRes, myBoostsRes, lastSnapshotRes] = await Promise.all([
     admin.from('go_announcements').select('*').eq('is_active', true).order('created_at', { ascending: false }),
     admin.from('go_nivel_requirements').select('*').eq('nivel', creator.nivel).maybeSingle(),
     admin.from('go_challenges').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1).maybeSingle(),
     admin.from('go_creators').select('id, full_name, nivel, videos_this_month, gmv_this_month, acc_this_month, ttd_this_month').eq('status', 'active').order('videos_this_month', { ascending: false }).limit(10),
     admin.from('go_content_plan').select('*').eq('creator_id', creator.id).eq('week_start', weekStart).eq('day_of_week', todayName).limit(1).maybeSingle(),
     admin.from('go_boost_requests').select('video_type, created_at').eq('creator_id', creator.id).gte('created_at', startOfMonth),
+    admin.from('go_creator_snapshots').select('acc_videos, ttd_videos, gmv').eq('creator_id', creator.id).eq('month', prevMonth).eq('year', prevYear).maybeSingle(),
   ])
 
   const myBoostsThisMonth = (myBoostsRes.data ?? []) as { video_type: 'ACC' | 'TTD' | null; created_at: string }[]
@@ -207,6 +211,43 @@ export default async function DashboardPage() {
 
           {/* CARD 4: Boost rápido */}
           <DashboardClient creatorId={creator.id} creatorName={creator.full_name} tiktokHandle={creator.tiktok_handle} />
+
+          {/* CARD 5: Tu crecimiento (vs mes pasado) */}
+          {(() => {
+            const prev = lastSnapshotRes.data as { acc_videos: number; ttd_videos: number; gmv: number } | null
+            if (!prev) {
+              return (
+                <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5">
+                  <h2 className="font-syne font-bold text-base text-[#1a0800] mb-2">📈 Tu crecimiento</h2>
+                  <p className="font-dm text-sm text-gray-500">Este es tu primer mes — los datos de comparación estarán disponibles el próximo mes 🧡</p>
+                </div>
+              )
+            }
+            const accDelta = liveAccThisMonth - prev.acc_videos
+            const ttdDelta = liveTtdThisMonth - prev.ttd_videos
+            const gmvDelta = (creator.gmv_this_month ?? 0) - Number(prev.gmv ?? 0)
+            const tone = (delta: number) => delta === 0 ? 'text-gray-500' : delta > 0 ? 'text-emerald-600' : 'text-red-600'
+            const arrow = (delta: number) => delta === 0 ? '=' : delta > 0 ? '▲' : '▼'
+            const Row = ({ label, current, last, delta, formatter }: { label: string; current: number; last: number; delta: number; formatter: (n: number) => string }) => (
+              <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-b-0">
+                <span className="font-dm text-sm font-semibold text-go-dark">{label}</span>
+                <div className="flex items-center gap-3 text-xs font-dm">
+                  <span className="text-go-dark/60">Este mes: <span className="font-bold text-go-dark">{formatter(current)}</span></span>
+                  <span className="text-go-dark/40">·</span>
+                  <span className="text-go-dark/60">Mes pasado: <span className="font-bold text-go-dark/80">{formatter(last)}</span></span>
+                  <span className={`font-bold ${tone(delta)}`}>{arrow(delta)} {formatter(Math.abs(delta))}</span>
+                </div>
+              </div>
+            )
+            return (
+              <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5">
+                <h2 className="font-syne font-bold text-base text-[#1a0800] mb-3">📈 Tu crecimiento</h2>
+                <Row label="ACC" current={liveAccThisMonth} last={prev.acc_videos} delta={accDelta} formatter={(n) => String(n)} />
+                <Row label="TTD" current={liveTtdThisMonth} last={prev.ttd_videos} delta={ttdDelta} formatter={(n) => String(n)} />
+                <Row label="GMV" current={creator.gmv_this_month ?? 0} last={Number(prev.gmv ?? 0)} delta={gmvDelta} formatter={(n) => `$${Math.round(n).toLocaleString('en-US')}`} />
+              </div>
+            )
+          })()}
 
           {/* WhatsApp */}
           <div className="text-center">

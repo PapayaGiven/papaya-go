@@ -271,3 +271,45 @@ CREATE TABLE IF NOT EXISTS go_monthly_goals (
 ALTER TABLE go_monthly_goals ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "go_monthly_goals_service" ON go_monthly_goals FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE POLICY "go_monthly_goals_read" ON go_monthly_goals FOR SELECT TO authenticated USING (true);
+
+-- 15. go_monthly_snapshots — frozen team-wide totals at end of each month
+CREATE TABLE IF NOT EXISTS go_monthly_snapshots (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  month int NOT NULL,
+  year int NOT NULL,
+  total_acc_videos int DEFAULT 0,
+  total_ttd_videos int DEFAULT 0,
+  total_gmv numeric DEFAULT 0,
+  total_creators int DEFAULT 0,
+  new_creators int DEFAULT 0,
+  internal_acc_videos int DEFAULT 0,
+  internal_ttd_videos int DEFAULT 0,
+  snapshot_taken_at timestamp DEFAULT now(),
+  updated_at timestamp DEFAULT now(),
+  UNIQUE(month, year)
+);
+ALTER TABLE go_monthly_snapshots ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "go_snapshots_service" ON go_monthly_snapshots;
+CREATE POLICY "go_snapshots_service" ON go_monthly_snapshots FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "go_snapshots_read" ON go_monthly_snapshots;
+CREATE POLICY "go_snapshots_read" ON go_monthly_snapshots FOR SELECT TO authenticated USING (true);
+
+-- 16. go_creator_snapshots — per-creator monthly snapshot for vs-prev-month comparisons
+CREATE TABLE IF NOT EXISTS go_creator_snapshots (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  creator_id uuid REFERENCES go_creators(id) ON DELETE CASCADE,
+  month int NOT NULL,
+  year int NOT NULL,
+  acc_videos int DEFAULT 0,
+  ttd_videos int DEFAULT 0,
+  total_videos int DEFAULT 0,
+  gmv numeric DEFAULT 0,
+  nivel int DEFAULT 1,
+  snapshot_taken_at timestamp DEFAULT now(),
+  UNIQUE(creator_id, month, year)
+);
+ALTER TABLE go_creator_snapshots ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "go_creator_snapshots_service" ON go_creator_snapshots;
+CREATE POLICY "go_creator_snapshots_service" ON go_creator_snapshots FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "go_creator_snapshots_read_own" ON go_creator_snapshots;
+CREATE POLICY "go_creator_snapshots_read_own" ON go_creator_snapshots FOR SELECT USING (creator_id IN (SELECT id FROM go_creators WHERE email = auth.email()));

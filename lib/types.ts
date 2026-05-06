@@ -221,3 +221,31 @@ export interface MonthlyGoal {
   created_at: string
   updated_at: string | null
 }
+
+export interface MonthlySnapshot {
+  id: string
+  month: number
+  year: number
+  total_acc_videos: number
+  total_ttd_videos: number
+  total_gmv: number
+  total_creators: number
+  new_creators: number
+  internal_acc_videos: number
+  internal_ttd_videos: number
+  snapshot_taken_at: string
+  updated_at: string
+}
+
+export interface CreatorSnapshot {
+  id: string
+  creator_id: string
+  month: number
+  year: number
+  acc_videos: number
+  ttd_videos: number
+  total_videos: number
+  gmv: number
+  nivel: number
+  snapshot_taken_at: string
+}

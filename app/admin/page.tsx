@@ -14,6 +14,8 @@ import type {
   TikTokAccount,
   InternalVideo,
   MonthlyGoal,
+  MonthlySnapshot,
+  CreatorSnapshot,
 } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -48,6 +50,8 @@ export default async function AdminPage() {
     { data: tiktokAccounts },
     { data: internalVideos },
     { data: monthlyGoal },
+    { data: monthlySnapshots },
+    { data: creatorSnapshots },
   ] = await Promise.all([
     supabase
       .from('go_creators')
@@ -93,6 +97,15 @@ export default async function AdminPage() {
       .eq('month', currentMonth)
       .eq('year', currentYear)
       .maybeSingle(),
+    supabase
+      .from('go_monthly_snapshots')
+      .select('*')
+      .order('year', { ascending: false })
+      .order('month', { ascending: false })
+      .limit(24),
+    supabase
+      .from('go_creator_snapshots')
+      .select('*'),
   ])
 
   return (
@@ -117,6 +130,8 @@ export default async function AdminPage() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       internalVideos={(internalVideos ?? []) as InternalVideo[]}
       monthlyGoal={(monthlyGoal as MonthlyGoal | null) ?? null}
+      monthlySnapshots={(monthlySnapshots as MonthlySnapshot[]) ?? []}
+      creatorSnapshots={(creatorSnapshots as CreatorSnapshot[]) ?? []}
       currentMonth={currentMonth}
       currentYear={currentYear}
     />

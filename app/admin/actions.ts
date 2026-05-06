@@ -940,6 +940,93 @@ export async function applyGlobalPlan(
   return { count: creatorIds.length }
 }
 
+// ── Monthly snapshots ────────────────────────────────
+
+export async function takeMonthlySnapshot(targetMonth?: number, targetYear?: number): Promise<{ error?: string; month?: number; year?: number }> {
+  const supabase = createAdminClient()
+  const now = new Date()
+  // Default: snapshot the PREVIOUS month
+  let month = targetMonth ?? now.getMonth() // 0-indexed: getMonth() returns current; -1 for previous
+  let year = targetYear ?? now.getFullYear()
+  if (targetMonth == null) {
+    if (month === 0) { month = 12; year = year - 1 }
+    // else month already = previous month (because getMonth is 0-indexed and we want 1-indexed previous)
+  }
+  // Normalize: month is now 1-indexed
+  if (month < 1 || month > 12) return { error: 'Mes inválido' }
+
+  const startIso = new Date(Date.UTC(year, month - 1, 1)).toISOString()
+  const endIso = new Date(Date.UTC(year, month, 1)).toISOString()
+
+  // Team-wide aggregates
+  const [boostsRes, creatorsRes, internalRes] = await Promise.all([
+    supabase.from('go_boost_requests').select('creator_id, video_type, created_at').gte('created_at', startIso).lt('created_at', endIso),
+    supabase.from('go_creators').select('id, status, gmv_this_month, nivel, approved_at, is_internal'),
+    supabase.from('go_internal_videos').select('creator_id, video_type, status, submitted_at, approved_at').gte('submitted_at', startIso).lt('submitted_at', endIso),
+  ])
+  if (boostsRes.error) return { error: boostsRes.error.message }
+  if (creatorsRes.error) return { error: creatorsRes.error.message }
+  if (internalRes.error) return { error: internalRes.error.message }
+
+  const boosts = boostsRes.data ?? []
+  const creators = creatorsRes.data ?? []
+  const internalRows = internalRes.data ?? []
+
+  const activeCreators = creators.filter(c => c.status === 'active')
+  const totalAcc = boosts.filter(b => b.video_type === 'ACC').length
+  const totalTtd = boosts.filter(b => b.video_type === 'TTD').length
+  const totalGmv = activeCreators.reduce((s, c) => s + Number(c.gmv_this_month ?? 0), 0)
+  const newCreators = creators.filter(c => c.approved_at && c.approved_at >= startIso && c.approved_at < endIso).length
+  const intApproved = internalRows.filter(v => v.status === 'approved')
+  const intAcc = intApproved.filter(v => v.video_type === 'ACC').length
+  const intTtd = intApproved.filter(v => v.video_type === 'TTD').length
+
+  const upsertMonthly = await supabase.from('go_monthly_snapshots').upsert({
+    month, year,
+    total_acc_videos: totalAcc,
+    total_ttd_videos: totalTtd,
+    total_gmv: totalGmv,
+    total_creators: activeCreators.length,
+    new_creators: newCreators,
+    internal_acc_videos: intAcc,
+    internal_ttd_videos: intTtd,
+    snapshot_taken_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'month,year' })
+  if (upsertMonthly.error) return { error: upsertMonthly.error.message }
+
+  // Per-creator snapshots
+  const accByCreator = new Map<string, number>()
+  const ttdByCreator = new Map<string, number>()
+  for (const b of boosts) {
+    if (!b.creator_id) continue
+    if (b.video_type === 'ACC') accByCreator.set(b.creator_id, (accByCreator.get(b.creator_id) ?? 0) + 1)
+    if (b.video_type === 'TTD') ttdByCreator.set(b.creator_id, (ttdByCreator.get(b.creator_id) ?? 0) + 1)
+  }
+  const rows = activeCreators.map(c => {
+    const acc = accByCreator.get(c.id) ?? 0
+    const ttd = ttdByCreator.get(c.id) ?? 0
+    return {
+      creator_id: c.id,
+      month, year,
+      acc_videos: acc,
+      ttd_videos: ttd,
+      total_videos: acc + ttd,
+      gmv: Number(c.gmv_this_month ?? 0),
+      nivel: c.nivel,
+      snapshot_taken_at: new Date().toISOString(),
+    }
+  })
+  if (rows.length > 0) {
+    const upsertCreator = await supabase.from('go_creator_snapshots').upsert(rows, { onConflict: 'creator_id,month,year' })
+    if (upsertCreator.error) return { error: upsertCreator.error.message }
+  }
+
+  revalidatePath('/admin')
+  revalidatePath('/dashboard')
+  return { month, year }
+}
+
 // ── Monthly goals (admin dashboard) ──────────────────
 
 export async function upsertMonthlyGoal(data: {

@@ -14,6 +14,8 @@ import type {
   TikTokAccount,
   InternalVideo,
   MonthlyGoal,
+  MonthlySnapshot,
+  CreatorSnapshot,
 } from '@/lib/types'
 import { NIVEL_NAMES, POI_TYPE_LABELS, CHALLENGE_TYPE_LABELS } from '@/lib/types'
 import {
@@ -67,6 +69,7 @@ import {
   upsertMonthlyGoal,
   approveBoostRequest,
   rejectBoostRequest,
+  takeMonthlySnapshot,
 } from '@/app/admin/actions'
 
 // ── Types ─────────────────────────────────────────────
@@ -95,7 +98,7 @@ interface POIRequest {
   creator?: { full_name: string | null; email: string } | null
 }
 
-type Tab = 'dashboard' | 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests' | 'rewards-admin' | 'boosts' | 'reward-requests' | 'weekly-plan' | 'challenges' | 'global-plan' | 'tiktok-accounts' | 'internal-videos'
+type Tab = 'dashboard' | 'crecimiento' | 'creators' | 'pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests' | 'rewards-admin' | 'boosts' | 'reward-requests' | 'weekly-plan' | 'challenges' | 'global-plan' | 'tiktok-accounts' | 'internal-videos'
 
 interface AdminPanelProps {
   creators: Creator[]
@@ -113,6 +116,8 @@ interface AdminPanelProps {
   tiktokAccounts: TikTokAccount[]
   internalVideos: InternalVideo[]
   monthlyGoal: MonthlyGoal | null
+  monthlySnapshots: MonthlySnapshot[]
+  creatorSnapshots: CreatorSnapshot[]
   currentMonth: number
   currentYear: number
 }
@@ -1082,6 +1087,8 @@ export default function AdminPanel({
   tiktokAccounts,
   internalVideos,
   monthlyGoal,
+  monthlySnapshots,
+  creatorSnapshots,
   currentMonth,
   currentYear,
 }: AdminPanelProps) {
@@ -1092,6 +1099,7 @@ export default function AdminPanel({
 
   const tabs: { key: Tab; label: string; count: number }[] = [
     { key: 'dashboard', label: '📊 Dashboard', count: 0 },
+    { key: 'crecimiento', label: '📈 Crecimiento', count: monthlySnapshots.length },
     { key: 'creators', label: 'Creators', count: creators.length },
     { key: 'pois', label: 'POIs', count: pois.length },
     { key: 'templates', label: 'CapCut Templates', count: templates.length },
@@ -1162,6 +1170,19 @@ export default function AdminPanel({
             creators={creators}
             internalVideos={internalVideos}
             boostRequests={boostRequests}
+            creatorSnapshots={creatorSnapshots}
+            monthlyGoal={monthlyGoal}
+            currentMonth={currentMonth}
+            currentYear={currentYear}
+            startTransition={startTransition}
+          />
+        )}
+        {tab === 'crecimiento' && (
+          <CrecimientoTab
+            monthlySnapshots={monthlySnapshots}
+            creators={creators}
+            internalVideos={internalVideos}
+            boostRequests={boostRequests}
             monthlyGoal={monthlyGoal}
             currentMonth={currentMonth}
             currentYear={currentYear}
@@ -1169,7 +1190,7 @@ export default function AdminPanel({
           />
         )}
         {tab === 'creators' && (
-          <CreatorsTab creators={creators} startTransition={startTransition} />
+          <CreatorsTab creators={creators} boostRequests={boostRequests} creatorSnapshots={creatorSnapshots} currentMonth={currentMonth} currentYear={currentYear} startTransition={startTransition} />
         )}
         {tab === 'pois' && <POIsTab pois={pois} startTransition={startTransition} />}
         {tab === 'templates' && (
@@ -1202,11 +1223,28 @@ export default function AdminPanel({
 
 // ── Creators Tab ──────────────────────────────────────
 
+type ActivityStatus = 'inactive' | 'risk' | 'active' | 'no_quota'
+
+function classifyCreatorActivity(c: Creator, boostsLast14d: number, boostsWeek1: number, boostsWeek2: number): ActivityStatus {
+  if (!c.weekly_quota || c.weekly_quota <= 0) return 'no_quota'
+  if (boostsLast14d === 0) return 'inactive'
+  if (boostsWeek1 < c.weekly_quota && boostsWeek2 < c.weekly_quota) return 'risk'
+  return 'active'
+}
+
 function CreatorsTab({
   creators,
+  boostRequests,
+  creatorSnapshots,
+  currentMonth,
+  currentYear,
   startTransition,
 }: {
   creators: Creator[]
+  boostRequests: BoostRequest[]
+  creatorSnapshots: CreatorSnapshot[]
+  currentMonth: number
+  currentYear: number
   startTransition: (cb: () => void) => void
 }) {
   const [showAdd, setShowAdd] = useState(false)
@@ -1225,6 +1263,38 @@ function CreatorsTab({
   const [newEmail, setNewEmail] = useState('')
   const [newName, setNewName] = useState('')
   const [newTiktok, setNewTiktok] = useState('')
+
+  // Activity filter
+  const [activityFilter, setActivityFilter] = useState<'all' | ActivityStatus>('all')
+
+  // Per-creator boost-request derivations
+  const now = new Date()
+  const fourteenDaysAgo = new Date(now.getTime() - 14 * 86400000).toISOString()
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 86400000).toISOString()
+  const startOfMonth = new Date(currentYear, currentMonth - 1, 1).toISOString()
+
+  const lastSnapshotByCreator = new Map<string, CreatorSnapshot>()
+  const prevDate = new Date(currentYear, currentMonth - 2, 1)
+  const prevMonth = prevDate.getMonth() + 1
+  const prevYear = prevDate.getFullYear()
+  for (const s of creatorSnapshots) {
+    if (s.month === prevMonth && s.year === prevYear) lastSnapshotByCreator.set(s.creator_id, s)
+  }
+
+  const derived = creators.map((c) => {
+    const mine = boostRequests.filter((b) => b.creator_id === c.id)
+    const last14 = mine.filter((b) => b.created_at >= fourteenDaysAgo).length
+    const week1 = mine.filter((b) => b.created_at >= fourteenDaysAgo && b.created_at < sevenDaysAgo).length
+    const week2 = mine.filter((b) => b.created_at >= sevenDaysAgo).length
+    const thisMonth = mine.filter((b) => b.created_at >= startOfMonth).length
+    const status = classifyCreatorActivity(c, last14, week1, week2)
+    const snap = lastSnapshotByCreator.get(c.id)
+    const lastTotal = snap ? snap.total_videos : null
+    const monthDelta = lastTotal == null ? null : thisMonth - lastTotal
+    return { creator: c, status, thisMonth, monthDelta }
+  })
+
+  const visibleCreators = activityFilter === 'all' ? derived : derived.filter((d) => d.status === activityFilter)
 
   function startEdit(c: Creator) {
     setEditId(c.id)
@@ -1293,6 +1363,27 @@ function CreatorsTab({
         </SectionCard>
       )}
 
+      {/* Activity filter */}
+      <div className="flex flex-wrap gap-1.5">
+        {([
+          ['all', `Todas (${derived.length})`],
+          ['active', `✅ Activas (${derived.filter(d => d.status === 'active').length})`],
+          ['risk', `📉 En riesgo (${derived.filter(d => d.status === 'risk').length})`],
+          ['inactive', `⚠️ Inactivas (${derived.filter(d => d.status === 'inactive').length})`],
+          ['no_quota', `Sin cuota (${derived.filter(d => d.status === 'no_quota').length})`],
+        ] as const).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setActivityFilter(key)}
+            className={`text-xs font-semibold px-3 py-1.5 rounded-full font-dm transition ${
+              activityFilter === key ? 'bg-go-orange text-white' : 'bg-go-dark/[0.04] text-go-dark/60 hover:bg-go-dark/[0.08]'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       <SectionCard>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -1306,13 +1397,15 @@ function CreatorsTab({
                 <th className="text-right px-4 py-3 font-medium text-go-dark/60">ACC</th>
                 <th className="text-right px-4 py-3 font-medium text-go-dark/60">TTD</th>
                 <th className="text-right px-4 py-3 font-medium text-go-dark/60">Videos</th>
+                <th className="text-left px-4 py-3 font-medium text-go-dark/60">Actividad</th>
+                <th className="text-left px-4 py-3 font-medium text-go-dark/60">vs mes pasado</th>
                 <th className="text-left px-4 py-3 font-medium text-go-dark/60">Status</th>
                 <th className="text-left px-4 py-3 font-medium text-go-dark/60">Código</th>
                 <th className="text-right px-4 py-3 font-medium text-go-dark/60">Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {creators.map((c) => (
+              {visibleCreators.map(({ creator: c, status: activity, monthDelta }) => (
                 <tr key={c.id} className="border-b border-go-border/50 hover:bg-go-light/30">
                   <td className="px-4 py-3 font-medium text-go-dark">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -1372,6 +1465,8 @@ function CreatorsTab({
                           className="w-16 px-1 py-1 text-xs rounded border border-go-border text-right"
                         />
                       </td>
+                      <td className="px-4 py-3 text-xs text-gray-300">—</td>
+                      <td className="px-4 py-3 text-xs text-gray-300">—</td>
                       <td className="px-4 py-3">
                         <select
                           value={editData.status}
@@ -1408,6 +1503,18 @@ function CreatorsTab({
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-go-dark/70">
                         {c.videos_this_month}
+                      </td>
+                      <td className="px-4 py-3">
+                        {activity === 'inactive' && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">⚠️ Inactiva</span>}
+                        {activity === 'risk' && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">📉 En riesgo</span>}
+                        {activity === 'active' && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">✅ Activa</span>}
+                        {activity === 'no_quota' && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">Sin cuota</span>}
+                      </td>
+                      <td className="px-4 py-3 text-xs">
+                        {monthDelta == null ? <span className="text-gray-300">—</span>
+                          : monthDelta > 0 ? <span className="font-bold text-emerald-700">▲ {monthDelta} videos más</span>
+                          : monthDelta < 0 ? <span className="font-bold text-red-600">▼ {Math.abs(monthDelta)} videos menos</span>
+                          : <span className="text-gray-500 font-semibold">= Sin cambio</span>}
                       </td>
                       <td className="px-4 py-3">
                         <StatusBadge status={c.status} />
@@ -3034,12 +3141,333 @@ function VideoTrackerSection({
   )
 }
 
+// ── Crecimiento Tab ───────────────────────────────────
+
+import { MonthlyAccTtdBars, GmvLine, CreatorsLine, type SnapshotPoint } from './CrecimientoCharts'
+
+function CrecimientoTab({
+  monthlySnapshots, creators, internalVideos, boostRequests, monthlyGoal, currentMonth, currentYear, startTransition,
+}: {
+  monthlySnapshots: MonthlySnapshot[]
+  creators: Creator[]
+  internalVideos: InternalVideo[]
+  boostRequests: BoostRequest[]
+  monthlyGoal: MonthlyGoal | null
+  currentMonth: number
+  currentYear: number
+  startTransition: (cb: () => void) => void
+}) {
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const [selectedKey, setSelectedKey] = useState<string>(`${currentYear}-${String(currentMonth).padStart(2, '0')}`)
+  function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 4000) }
+
+  const accGoal = monthlyGoal?.acc_goal ?? 300
+  const ttdGoal = monthlyGoal?.ttd_goal ?? 300
+
+  // Live current-month aggregates
+  const startOfMonth = new Date(Date.UTC(currentYear, currentMonth - 1, 1)).toISOString()
+  const active = creators.filter(c => c.status === 'active')
+  const regular = active.filter(c => !c.is_internal)
+  const internal = active.filter(c => c.is_internal)
+  const regularIds = new Set(regular.map(c => c.id))
+  const regularBoostsThisMonth = boostRequests.filter(b => b.creator_id && regularIds.has(b.creator_id) && b.created_at >= startOfMonth)
+  const regAcc = regularBoostsThisMonth.filter(b => b.video_type === 'ACC').length
+  const regTtd = regularBoostsThisMonth.filter(b => b.video_type === 'TTD').length
+  const regSubmitted = regularBoostsThisMonth.length
+  const regApproved = regularBoostsThisMonth.filter(b => b.status === 'boosteado').length
+  const regPending = regularBoostsThisMonth.filter(b => b.status === 'pending').length
+  const internalApprovedThisMonth = internalVideos.filter(v => v.status === 'approved' && v.approved_at && v.approved_at >= startOfMonth)
+  const intAcc = internalApprovedThisMonth.filter(v => v.video_type === 'ACC').length
+  const intTtd = internalApprovedThisMonth.filter(v => v.video_type === 'TTD').length
+  const intPending = internalVideos.filter(v => v.status === 'pending').length
+  const totalAcc = regAcc + intAcc
+  const totalTtd = regTtd + intTtd
+  const totalGmv = active.reduce((s, c) => s + Number(c.gmv_this_month ?? 0), 0)
+  const newCreatorsThisMonth = creators.filter(c => c.approved_at && c.approved_at >= startOfMonth).length
+
+  // Look up the previous month's snapshot for MoM cards
+  const prevDate = new Date(Date.UTC(currentYear, currentMonth - 2, 1))
+  const prevMonth = prevDate.getUTCMonth() + 1
+  const prevYear = prevDate.getUTCFullYear()
+  const prev = monthlySnapshots.find(s => s.month === prevMonth && s.year === prevYear)
+
+  const mom = (current: number, last: number | undefined): { delta: number; pct: number | null } => {
+    if (last == null) return { delta: current, pct: null }
+    const delta = current - last
+    if (last === 0) return { delta, pct: current > 0 ? 100 : 0 }
+    return { delta, pct: Math.round((delta / last) * 100) }
+  }
+  const accMom = mom(totalAcc, prev?.total_acc_videos)
+  const ttdMom = mom(totalTtd, prev?.total_ttd_videos)
+  const gmvMom = mom(totalGmv, prev ? Number(prev.total_gmv) : undefined)
+  const newMom = mom(newCreatorsThisMonth, prev?.new_creators)
+
+  // Build the last-6-months chart series (ascending), preferring snapshot data
+  // and using live current-month aggregates only for the current cell.
+  const series: SnapshotPoint[] = []
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(Date.UTC(currentYear, currentMonth - 1 - i, 1))
+    const m = d.getUTCMonth() + 1
+    const y = d.getUTCFullYear()
+    if (m === currentMonth && y === currentYear) {
+      series.push({ month: m, year: y, acc: totalAcc, ttd: totalTtd, gmv: totalGmv, creators: active.length })
+    } else {
+      const snap = monthlySnapshots.find(s => s.month === m && s.year === y)
+      series.push({
+        month: m, year: y,
+        acc: snap?.total_acc_videos ?? 0,
+        ttd: snap?.total_ttd_videos ?? 0,
+        gmv: snap ? Number(snap.total_gmv) : 0,
+        creators: snap?.total_creators ?? 0,
+      })
+    }
+  }
+
+  // Top contributors (this month)
+  const accByCreator = new Map<string, number>()
+  const ttdByCreator = new Map<string, number>()
+  for (const b of regularBoostsThisMonth) {
+    if (!b.creator_id) continue
+    if (b.video_type === 'ACC') accByCreator.set(b.creator_id, (accByCreator.get(b.creator_id) ?? 0) + 1)
+    if (b.video_type === 'TTD') ttdByCreator.set(b.creator_id, (ttdByCreator.get(b.creator_id) ?? 0) + 1)
+  }
+  const topAcc = [...regular].map(c => ({ ...c, _v: accByCreator.get(c.id) ?? 0 })).filter(c => c._v > 0).sort((a, b) => b._v - a._v).slice(0, 5)
+  const topTtd = [...regular].map(c => ({ ...c, _v: ttdByCreator.get(c.id) ?? 0 })).filter(c => c._v > 0).sort((a, b) => b._v - a._v).slice(0, 5)
+  const intByCreator = new Map<string, { acc: number; ttd: number }>()
+  for (const v of internalApprovedThisMonth) {
+    if (!v.creator_id) continue
+    const cur = intByCreator.get(v.creator_id) ?? { acc: 0, ttd: 0 }
+    if (v.video_type === 'ACC') cur.acc++
+    else if (v.video_type === 'TTD') cur.ttd++
+    intByCreator.set(v.creator_id, cur)
+  }
+  const internalById = new Map(internal.map(c => [c.id, c]))
+  const topInt = Array.from(intByCreator.entries())
+    .map(([id, c]) => ({ creator: internalById.get(id), acc: c.acc, ttd: c.ttd, total: c.acc + c.ttd }))
+    .filter(x => x.creator)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 5)
+
+  // Snapshot the user has selected from the dropdown (header)
+  const sortedSnapshots = [...monthlySnapshots].sort((a, b) => (b.year * 100 + b.month) - (a.year * 100 + a.month))
+  const lastSnapshotAt = sortedSnapshots[0]?.snapshot_taken_at ?? null
+
+  function exportCsv() {
+    const header = ['Mes', 'Año', 'ACC', 'TTD', 'GMV', 'Creadoras', 'Nuevas', 'Int. ACC', 'Int. TTD', 'Guardado']
+    const rows = sortedSnapshots.map(s => [
+      MONTH_NAMES_ES[s.month - 1], s.year, s.total_acc_videos, s.total_ttd_videos,
+      Number(s.total_gmv).toFixed(2), s.total_creators, s.new_creators,
+      s.internal_acc_videos, s.internal_ttd_videos,
+      new Date(s.snapshot_taken_at).toISOString().split('T')[0],
+    ])
+    const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replaceAll('"', '""')}"`).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `papaya-go-snapshots-${new Date().toISOString().split('T')[0]}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  function MomCard({ label, current, mom: m, formatter }: { label: string; current: number; mom: { delta: number; pct: number | null }; formatter: (n: number) => string }) {
+    const up = m.delta > 0
+    const flat = m.delta === 0
+    const color = flat ? 'text-gray-500' : up ? 'text-emerald-600' : 'text-red-600'
+    const arrow = flat ? '=' : up ? '▲' : '▼'
+    return (
+      <div className="bg-white border border-go-dark/[0.06] rounded-2xl p-5">
+        <p className="font-dm text-xs text-go-dark/50 uppercase tracking-wide">{label}</p>
+        <p className="font-syne font-bold text-3xl text-go-dark mt-1">{formatter(current)}</p>
+        <p className={`font-dm text-xs font-semibold mt-2 ${color}`}>
+          {arrow} {formatter(Math.abs(m.delta))} {m.pct != null && `(${m.pct >= 0 ? '+' : ''}${m.pct}%)`} vs mes pasado
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="font-syne text-2xl font-bold text-go-dark">📈 Panel de Crecimiento</h2>
+          {lastSnapshotAt && (
+            <p className="font-dm text-xs text-go-dark/50 mt-1">Último snapshot: {new Date(lastSnapshotAt).toLocaleString('es')}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select
+            value={selectedKey}
+            onChange={(e) => setSelectedKey(e.target.value)}
+            className="text-xs px-3 py-1.5 rounded-lg border border-go-border bg-go-light font-dm text-go-dark"
+          >
+            <option value={`${currentYear}-${String(currentMonth).padStart(2, '0')}`}>
+              {MONTH_NAMES_ES[currentMonth - 1]} {currentYear} (en curso)
+            </option>
+            {sortedSnapshots.map(s => (
+              <option key={`${s.year}-${s.month}`} value={`${s.year}-${String(s.month).padStart(2, '0')}`}>
+                {MONTH_NAMES_ES[s.month - 1]} {s.year}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => startTransition(async () => {
+              const r = await takeMonthlySnapshot(currentMonth, currentYear)
+              if (r.error) fb(`Error: ${r.error}`)
+              else fb(`✓ Snapshot guardado para ${MONTH_NAMES_ES[(r.month! - 1)]} ${r.year}`)
+            })}
+            className="text-xs font-syne font-bold bg-go-orange text-white px-3 py-1.5 rounded-lg hover:bg-go-orange/90 transition"
+          >
+            📸 Guardar snapshot ahora
+          </button>
+        </div>
+      </div>
+      {feedback && (
+        <p className={`text-sm font-dm px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{feedback}</p>
+      )}
+
+      {/* Section 1 — MoM cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <MomCard label="ACC Videos" current={totalAcc} mom={accMom} formatter={(n) => String(n)} />
+        <MomCard label="TTD Videos" current={totalTtd} mom={ttdMom} formatter={(n) => String(n)} />
+        <MomCard label="GMV Total" current={totalGmv} mom={gmvMom} formatter={(n) => `$${Math.round(n).toLocaleString('en-US')}`} />
+        <MomCard label="Nuevas creadoras" current={newCreatorsThisMonth} mom={newMom} formatter={(n) => String(n)} />
+      </div>
+
+      {/* Section 2 — ACC vs TTD bars (last 6 months) */}
+      <SectionCard>
+        <div className="p-6">
+          <h3 className="font-syne font-bold text-base text-go-dark mb-4">Videos por mes (últimos 6)</h3>
+          <MonthlyAccTtdBars data={series} />
+        </div>
+      </SectionCard>
+
+      {/* Section 3 — Two line charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <SectionCard>
+          <div className="p-6">
+            <h3 className="font-syne font-bold text-base text-go-dark mb-4">GMV por mes</h3>
+            <GmvLine data={series} />
+          </div>
+        </SectionCard>
+        <SectionCard>
+          <div className="p-6">
+            <h3 className="font-syne font-bold text-base text-go-dark mb-4">Creadoras activas por mes</h3>
+            <CreatorsLine data={series} />
+          </div>
+        </SectionCard>
+      </div>
+
+      {/* Section 4 — Breakdown */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <BreakdownCard
+          title="👥 Creadoras Regulares"
+          subtitle="Videos enviados por la comunidad"
+          accent="orange"
+          accNumber={regAcc}
+          ttdNumber={regTtd}
+          accBar={accGoal > 0 ? Math.min(100, (regAcc / accGoal) * 100) : 0}
+          ttdBar={ttdGoal > 0 ? Math.min(100, (regTtd / ttdGoal) * 100) : 0}
+          accPctOfTotal={totalAcc > 0 ? Math.round((regAcc / totalAcc) * 100) : 0}
+          ttdPctOfTotal={totalTtd > 0 ? Math.round((regTtd / totalTtd) * 100) : 0}
+          footer={`${regular.length} creadoras activas · ${regSubmitted} enviados · ${regApproved} boosteados · ${regPending} pendientes`}
+        />
+        <BreakdownCard
+          title="🏢 Equipo Interno"
+          subtitle="Videos verificados del equipo interno"
+          accent="green"
+          accNumber={intAcc}
+          ttdNumber={intTtd}
+          accBar={accGoal > 0 ? Math.min(100, (intAcc / accGoal) * 100) : 0}
+          ttdBar={ttdGoal > 0 ? Math.min(100, (intTtd / ttdGoal) * 100) : 0}
+          accPctOfTotal={totalAcc > 0 ? Math.round((intAcc / totalAcc) * 100) : 0}
+          ttdPctOfTotal={totalTtd > 0 ? Math.round((intTtd / totalTtd) * 100) : 0}
+          footer={`${internal.length} creadoras internas activas`}
+          warning={intPending > 0 ? `${intPending} pendientes de verificar` : null}
+        />
+      </div>
+
+      <SectionCard>
+        <div className="p-6">
+          <h3 className="font-syne font-bold text-base text-go-dark mb-4">Total combinado este mes</h3>
+          <CombinedBar label="ACC" current={totalAcc} goal={accGoal} barPct={accGoal > 0 ? Math.min(100, (totalAcc / accGoal) * 100) : 0} complete={accGoal > 0 && totalAcc >= accGoal} />
+          <div className="h-4" />
+          <CombinedBar label="TTD" current={totalTtd} goal={ttdGoal} barPct={ttdGoal > 0 ? Math.min(100, (totalTtd / ttdGoal) * 100) : 0} complete={ttdGoal > 0 && totalTtd >= ttdGoal} />
+        </div>
+      </SectionCard>
+
+      {/* Section 5 — Top contributors */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <TopList
+          title="🌟 Top ACC (Regulares)"
+          rows={topAcc.map(c => ({ id: c.id, name: c.full_name ?? c.email, handle: c.tiktok_handle, value: c._v, valueLabel: 'ACC' }))}
+          accent="orange"
+        />
+        <TopList
+          title="🌟 Top TTD (Regulares)"
+          rows={topTtd.map(c => ({ id: c.id, name: c.full_name ?? c.email, handle: c.tiktok_handle, value: c._v, valueLabel: 'TTD' }))}
+          accent="pink"
+        />
+        <TopInternalList rows={topInt} />
+      </div>
+
+      {/* Section 6 — Historical snapshots table */}
+      <SectionCard>
+        <div className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-syne font-bold text-base text-go-dark">Histórico de snapshots</h3>
+            <button
+              onClick={exportCsv}
+              disabled={sortedSnapshots.length === 0}
+              className="text-xs font-semibold bg-go-dark/[0.04] text-go-dark/70 hover:bg-go-dark/[0.08] px-3 py-1.5 rounded-lg disabled:opacity-40"
+            >
+              ⬇ Exportar CSV
+            </button>
+          </div>
+          {sortedSnapshots.length === 0 ? (
+            <p className="text-xs text-go-dark/40 py-4 text-center">No hay snapshots todavía. Pulsa &ldquo;Guardar snapshot ahora&rdquo; para crear el primero.</p>
+          ) : (
+            <div className="overflow-x-auto rounded-2xl border border-go-dark/5">
+              <table className="w-full text-xs font-dm">
+                <thead className="bg-go-dark/[0.03]">
+                  <tr>
+                    {['Mes', 'ACC', 'TTD', 'GMV', 'Creadoras', 'Nuevas', 'Int. ACC', 'Int. TTD', 'Guardado'].map(h => (
+                      <th key={h} className="px-3 py-2 text-left text-[10px] text-go-dark/50 font-semibold uppercase">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-go-dark/5">
+                  {sortedSnapshots.map(s => (
+                    <tr key={s.id}>
+                      <td className="px-3 py-2 font-semibold text-go-dark">{MONTH_NAMES_ES[s.month - 1]} {s.year}</td>
+                      <td className="px-3 py-2">{s.total_acc_videos}</td>
+                      <td className="px-3 py-2">{s.total_ttd_videos}</td>
+                      <td className="px-3 py-2">${Math.round(Number(s.total_gmv)).toLocaleString('en-US')}</td>
+                      <td className="px-3 py-2">{s.total_creators}</td>
+                      <td className="px-3 py-2">{s.new_creators}</td>
+                      <td className="px-3 py-2">{s.internal_acc_videos}</td>
+                      <td className="px-3 py-2">{s.internal_ttd_videos}</td>
+                      <td className="px-3 py-2 text-go-dark/40">{new Date(s.snapshot_taken_at).toLocaleDateString('es')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </SectionCard>
+    </div>
+  )
+}
+
 function AdminDashboardTab({
-  creators, internalVideos, boostRequests, monthlyGoal, currentMonth, currentYear, startTransition,
+  creators, internalVideos, boostRequests, creatorSnapshots, monthlyGoal, currentMonth, currentYear, startTransition,
 }: {
   creators: Creator[]
   internalVideos: InternalVideo[]
   boostRequests: BoostRequest[]
+  creatorSnapshots: CreatorSnapshot[]
   monthlyGoal: MonthlyGoal | null
   currentMonth: number
   currentYear: number
@@ -3130,8 +3558,62 @@ function AdminDashboardTab({
   const pendingAcc = pendingByType.filter(b => b.video_type === 'ACC').length
   const pendingTtd = pendingByType.filter(b => b.video_type === 'TTD').length
 
+  // Activity alerts — derive from boost requests + creator snapshots
+  const fourteenDaysAgo = new Date(Date.now() - 14 * 86400000).toISOString()
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString()
+  const prevD = new Date(currentYear, currentMonth - 2, 1)
+  const prevM = prevD.getMonth() + 1
+  const prevY = prevD.getFullYear()
+  const lastMonthByCreator = new Map<string, CreatorSnapshot>()
+  for (const s of creatorSnapshots) {
+    if (s.month === prevM && s.year === prevY) lastMonthByCreator.set(s.creator_id, s)
+  }
+  let inactiveCount = 0
+  let riskCount = 0
+  let droppedCount = 0
+  for (const c of regular) {
+    const mine = boostRequests.filter(b => b.creator_id === c.id)
+    const last14 = mine.filter(b => b.created_at >= fourteenDaysAgo).length
+    const week1 = mine.filter(b => b.created_at >= fourteenDaysAgo && b.created_at < sevenDaysAgo).length
+    const week2 = mine.filter(b => b.created_at >= sevenDaysAgo).length
+    const status = classifyCreatorActivity(c, last14, week1, week2)
+    if (status === 'inactive') inactiveCount++
+    else if (status === 'risk') riskCount++
+    const snap = lastMonthByCreator.get(c.id)
+    if (snap) {
+      const thisMonth = mine.filter(b => b.created_at >= startOfMonth).length
+      if (thisMonth < snap.total_videos) droppedCount++
+    }
+  }
+  const hasAlerts = inactiveCount > 0 || riskCount > 0 || droppedCount > 0
+
   return (
     <div className="space-y-6">
+      {/* Activity alerts — only shown when there's something to flag */}
+      {hasAlerts && (
+        <div className="bg-amber-50 border-2 border-amber-200 rounded-2xl p-5">
+          <h3 className="font-syne font-bold text-base text-amber-900 mb-3">⚠️ Atención</h3>
+          <ul className="space-y-1">
+            {inactiveCount > 0 && (
+              <li className="font-dm text-sm text-amber-900">
+                <strong className="font-bold">{inactiveCount}</strong> creadoras inactivas (sin videos en 14+ días)
+              </li>
+            )}
+            {riskCount > 0 && (
+              <li className="font-dm text-sm text-amber-900">
+                <strong className="font-bold">{riskCount}</strong> creadoras en riesgo (bajo cuota 2 semanas)
+              </li>
+            )}
+            {droppedCount > 0 && (
+              <li className="font-dm text-sm text-amber-900">
+                <strong className="font-bold">{droppedCount}</strong> creadoras con menos videos que el mes pasado
+              </li>
+            )}
+          </ul>
+          <p className="font-dm text-xs text-amber-800/70 mt-2">Revisa la pestaña <strong>Creators</strong> para filtrar y atender.</p>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
