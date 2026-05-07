@@ -34,6 +34,10 @@ export default async function DashboardPage() {
 
   // Source-of-truth video counts: count this-month boost requests.
   const startOfMonth = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1).toISOString()
+  // Last day of current month at 23:59:59 — explicit upper bound so a row
+  // saved with a future created_at (timezone skew, manual import) doesn't
+  // leak into the month total.
+  const endOfMonth = new Date(nowDate.getFullYear(), nowDate.getMonth() + 1, 0, 23, 59, 59).toISOString()
   const prevDate = new Date(nowDate.getFullYear(), nowDate.getMonth() - 1, 1)
   const prevMonth = prevDate.getMonth() + 1
   const prevYear = prevDate.getFullYear()
@@ -44,7 +48,7 @@ export default async function DashboardPage() {
     admin.from('go_challenges').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1).maybeSingle(),
     admin.from('go_creators').select('id, full_name, nivel, videos_this_month, gmv_this_month, acc_this_month, ttd_this_month').eq('status', 'active').order('videos_this_month', { ascending: false }).limit(10),
     admin.from('go_content_plan').select('*').eq('creator_id', creator.id).eq('week_start', weekStart).eq('day_of_week', todayName).limit(1).maybeSingle(),
-    admin.from('go_boost_requests').select('id, tiktok_url, video_type, status, is_valid, boost_status, rejection_reason, created_at').eq('creator_id', creator.id).gte('created_at', startOfMonth).order('created_at', { ascending: false }),
+    admin.from('go_boost_requests').select('id, tiktok_url, video_type, status, is_valid, boost_status, rejection_reason, created_at').eq('creator_id', creator.id).gte('created_at', startOfMonth).lte('created_at', endOfMonth).order('created_at', { ascending: false }),
     admin.from('go_creator_snapshots').select('acc_videos, ttd_videos, gmv').eq('creator_id', creator.id).eq('month', prevMonth).eq('year', prevYear).maybeSingle(),
     admin
       .from('go_level_up_events')
@@ -204,6 +208,15 @@ export default async function DashboardPage() {
             ttdThisMonth={liveTtdThisMonth}
             daysRemaining={daysRemainingInMonth}
           />
+          <p className="text-center font-dm text-sm text-go-dark/70 -mt-2">
+            <span className="font-semibold text-emerald-700">{liveVideosThisMonth} aprobados</span>
+            <span className="mx-2 text-go-dark/30">·</span>
+            <span className="font-semibold text-amber-700">{pendingThisMonth} pendientes de revisión</span>
+          </p>
+          {/* TODO: remove once counts are confirmed in production. */}
+          <p className="text-center font-dm text-[11px] text-go-dark/40 -mt-2">
+            [Debug] Aprobados en BD: {liveAccThisMonth} ACC · {liveTtdThisMonth} TTD · {liveVideosThisMonth} total este mes
+          </p>
 
           {/* CARD 3: Challenge */}
           {challenge && (

@@ -1199,7 +1199,11 @@ async function adjustCreatorCounters(
 
 // ── Validation: counts toward the monthly goal ───────────
 
-export async function setBoostValidity(id: string, isValid: boolean, reason?: string): Promise<{ error?: string }> {
+export async function setBoostValidity(
+  id: string,
+  isValid: boolean,
+  reason?: string,
+): Promise<{ success?: true; error?: string; counters?: { acc_this_month: number; ttd_this_month: number; videos_this_month: number } | null }> {
   console.log(`[setBoostValidity] id=${id} → isValid=${isValid}, reason=${reason ? `"${reason.slice(0, 40)}…"` : '(none)'}`)
   const supabase = createAdminClient()
   const { data: row, error: readErr } = await supabase
@@ -1209,6 +1213,7 @@ export async function setBoostValidity(id: string, isValid: boolean, reason?: st
     .maybeSingle()
   if (readErr) return { error: readErr.message }
   if (!row) return { error: 'Video no encontrado' }
+  console.log(`[setBoostValidity] before: is_valid=${row.is_valid} type=${row.video_type} created_at=${row.created_at}`)
 
   // is_valid is tri-state (null = unreviewed, true = valid, false = invalid).
   // Only short-circuit when the EXACT same state is already persisted. The
@@ -1216,7 +1221,8 @@ export async function setBoostValidity(id: string, isValid: boolean, reason?: st
   // silently treated as a no-op because `(null === true) === false` evaluates
   // to true; that's the bug this guard now avoids.
   if (row.is_valid === isValid) {
-    return {}
+    console.log(`[setBoostValidity] no-op: row.is_valid already ${isValid}`)
+    return { success: true, counters: null }
   }
 
   // Keep legacy `status` column in sync only when transitioning INTO valid +
@@ -1242,7 +1248,9 @@ export async function setBoostValidity(id: string, isValid: boolean, reason?: st
   const willContribute = isValid === true
   const counterDelta: 0 | 1 | -1 =
     wasContributing === willContribute ? 0 : (willContribute ? 1 : -1)
+  console.log(`[setBoostValidity] counterDelta=${counterDelta} (wasContributing=${wasContributing} willContribute=${willContribute})`)
 
+  let counters: { acc_this_month: number; ttd_this_month: number; videos_this_month: number } | null = null
   if (counterDelta !== 0 && row.creator_id && isThisMonthIso(row.created_at)) {
     await adjustCreatorCounters(
       supabase,
@@ -1254,15 +1262,27 @@ export async function setBoostValidity(id: string, isValid: boolean, reason?: st
       console.log(`[setBoostValidity] running level-up check after validating boost ${id}`)
       await checkAndApplyLevelUps(row.creator_id)
     }
+    const { data: c } = await supabase
+      .from('go_creators')
+      .select('acc_this_month, ttd_this_month, videos_this_month')
+      .eq('id', row.creator_id)
+      .maybeSingle()
+    counters = c ?? null
+    console.log(`[setBoostValidity] post-update counters:`, counters)
+  } else {
+    console.log(`[setBoostValidity] counters unchanged (delta=${counterDelta}, this-month=${row.created_at && isThisMonthIso(row.created_at)})`)
   }
   revalidatePath('/admin')
   revalidatePath('/dashboard')
-  return {}
+  return { success: true, counters }
 }
 
 // Thin wrapper used by the admin "❌ Inválido" modal flow. Accepts an
 // optional rejection reason; mirrors setBoostValidity(id, false, reason).
-export async function setBoostInvalid(boostId: string, rejectionReason?: string): Promise<{ error?: string }> {
+export async function setBoostInvalid(
+  boostId: string,
+  rejectionReason?: string,
+): Promise<{ success?: true; error?: string; counters?: { acc_this_month: number; ttd_this_month: number; videos_this_month: number } | null }> {
   return setBoostValidity(boostId, false, rejectionReason)
 }
 

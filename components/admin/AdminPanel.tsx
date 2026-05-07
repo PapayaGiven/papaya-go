@@ -991,11 +991,11 @@ function ResolveLinkButton({
 // ── Invalid-reason modal (shown when admin marks a video invalid) ────
 
 const COMMON_INVALID_REASONS = [
-  'No es TikTok GO',
+  'No es un video de TikTok GO',
   'Tag incorrecto (blanco, no verde)',
   'Video duplicado',
-  'Link no funciona',
-  'No es ACC/TTD correcto',
+  'Link no funciona / link corto',
+  'No corresponde al tipo (ACC/TTD)',
   'Contenido inapropiado',
 ]
 
@@ -1032,15 +1032,22 @@ function InvalidReasonModal({
           </a>
         )}
         <p className="font-dm text-xs text-go-dark/60 mb-2">Elige una razón rápida o escribe abajo:</p>
-        <div className="flex flex-wrap gap-1.5 mb-3">
-          {COMMON_INVALID_REASONS.map(r => (
-            <button
-              key={r}
-              type="button"
-              onClick={() => onReasonChange(r)}
-              className="text-[11px] font-semibold bg-go-dark/[0.05] text-go-dark/70 hover:bg-go-dark/[0.1] px-2.5 py-1 rounded-md"
-            >{r}</button>
-          ))}
+        <div className="flex flex-wrap gap-2 mb-3">
+          {COMMON_INVALID_REASONS.map(r => {
+            const selected = reason === r
+            return (
+              <button
+                key={r}
+                type="button"
+                onClick={() => onReasonChange(r)}
+                className={`text-[11px] font-semibold px-3 py-1 rounded-full border transition cursor-pointer ${
+                  selected
+                    ? 'bg-go-orange text-white border-go-orange'
+                    : 'bg-white text-go-dark/70 border-go-border hover:border-go-orange/50 hover:text-go-dark'
+                }`}
+              >{r}</button>
+            )
+          })}
         </div>
         <label className="block font-dm text-xs font-semibold text-go-dark/60 uppercase tracking-wide mb-1">
           Motivo detallado (opcional)
@@ -1048,7 +1055,7 @@ function InvalidReasonModal({
         <textarea
           value={reason}
           onChange={(e) => onReasonChange(e.target.value)}
-          placeholder="Se lo mostraremos a la creadora para que pueda corregir…"
+          placeholder="Escribe el motivo o selecciona uno arriba..."
           rows={3}
           className="w-full border border-go-border rounded-lg px-3 py-2 font-dm text-sm focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange"
         />
@@ -4545,12 +4552,13 @@ function AdminDashboardTab({
         </div>
       </SectionCard>
 
-      {/* Quick stats */}
+      {/* Quick stats — counts use is_valid as the source of truth so they
+          stay aligned with the rings and Videos por Creadora table. */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <QuickStat label="Total videos este mes" value={totalAcc + totalTtd} accent="dark" />
-        <QuickStat label="Creadoras regulares activas" value={regular.length} accent="orange" />
-        <QuickStat label="Creadoras internas activas" value={internal.length} accent="green" />
-        <QuickStat label="Videos pendientes de verificar" value={intPending + pendingByType.length} accent="pink" />
+        <QuickStat label="Total videos aprobados" value={totalAcc + totalTtd} accent="dark" />
+        <QuickStat label="Pendientes de revisión" value={regPendingReview + intPending} accent="pink" />
+        <QuickStat label="Creadoras activas" value={regular.length} accent="orange" />
+        <QuickStat label="Internas activas" value={internal.length} accent="green" />
       </div>
 
       {/* Section 2 — Breakdown cards */}
