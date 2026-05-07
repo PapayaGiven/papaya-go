@@ -53,16 +53,13 @@ import {
   // updateBoostStatus retired in favor of setBoostValidity + setBoostStatus
 
   updateRewardRequestStatus,
-  addWeeklyPlan,
-  // updateWeeklyPlan,
-  toggleWeeklyPlan,
-  deleteWeeklyPlan,
+  // Plan Semanal + Plan Global archived for now — addWeeklyPlan/
+  // toggleWeeklyPlan/deleteWeeklyPlan/saveContentPlan/getCreatorPlan/
+  // applyGlobalPlan stay exported in app/admin/actions so we can re-enable
+  // the feature later without re-implementing the server side.
   addChallenge,
   toggleChallenge,
   deleteChallenge,
-  saveContentPlan,
-  getCreatorPlan,
-  applyGlobalPlan,
   toggleCreatorInternal,
   addTikTokAccount,
   updateTikTokAccount,
@@ -114,7 +111,7 @@ interface POIRequest {
   creator?: { full_name: string | null; email: string } | null
 }
 
-type Tab = 'dashboard' | 'crecimiento' | 'creators' | 'pois' | 'top-pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests' | 'rewards-admin' | 'boosts' | 'reward-requests' | 'weekly-plan' | 'challenges' | 'global-plan' | 'tiktok-accounts' | 'internal-videos'
+type Tab = 'dashboard' | 'crecimiento' | 'creators' | 'pois' | 'top-pois' | 'templates' | 'announcements' | 'portfolios' | 'viral' | 'poi-requests' | 'rewards-admin' | 'boosts' | 'reward-requests' | 'challenges' | 'tiktok-accounts' | 'internal-videos'
 
 interface AdminPanelProps {
   creators: Creator[]
@@ -127,7 +124,6 @@ interface AdminPanelProps {
   nivelRewards: NivelReward[]
   boostRequests: BoostRequest[]
   rewardRequests: RewardRequest[]
-  weeklyPlan: WeeklyPlanItem[]
   challenges: Challenge[]
   tiktokAccounts: TikTokAccount[]
   internalVideos: InternalVideo[]
@@ -140,17 +136,6 @@ interface AdminPanelProps {
   currentYear: number
 }
 
-interface WeeklyPlanItem {
-  id: string
-  day_name: string
-  day_es: string
-  video_type: string | null
-  title: string
-  description: string | null
-  tip: string | null
-  sort_order: number
-  is_active: boolean
-}
 
 // ── Shared helpers ────────────────────────────────────
 
@@ -1448,75 +1433,8 @@ function RewardRequestsTab({ requests, startTransition }: { requests: RewardRequ
   )
 }
 
-// ── Weekly Plan Tab ──────────────────────────────────
-
-function WeeklyPlanTab({ items, startTransition }: { items: WeeklyPlanItem[]; startTransition: (fn: () => void) => void }) {
-  const [showAdd, setShowAdd] = useState(false)
-  const [form, setForm] = useState({ day_name: 'monday', day_es: '', video_type: 'ACC', title: '', description: '', tip: '', sort_order: '' })
-  const [feedback, setFeedback] = useState<string | null>(null)
-  const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 4000) }
-
-  return (
-    <SectionCard>
-      <div className="p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-syne font-bold text-lg text-go-dark">Plan Semanal ({items.length})</h2>
-          <ActionButton onClick={() => setShowAdd(!showAdd)}>{showAdd ? 'Cancelar' : '+ Agregar'}</ActionButton>
-        </div>
-        {feedback && <p className={`text-sm font-dm mb-3 px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{feedback}</p>}
-
-        {showAdd && (
-          <div className="bg-go-light border border-go-border rounded-2xl p-4 mb-4">
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              <div><label className="block text-xs font-medium text-gray-500 mb-1">Día (español)</label><input value={form.day_es} onChange={e => setForm(f => ({ ...f, day_es: e.target.value }))} placeholder="Ej: Lunes" className="input-field" /></div>
-              <div><label className="block text-xs font-medium text-gray-500 mb-1">Tipo de video</label>
-                <select value={form.video_type} onChange={e => setForm(f => ({ ...f, video_type: e.target.value }))} className="input-field">
-                  <option value="ACC">ACC</option><option value="TTD">TTD</option><option value="general">Orgánico</option>
-                </select>
-              </div>
-              <div><label className="block text-xs font-medium text-gray-500 mb-1">Orden</label><input type="number" value={form.sort_order} onChange={e => setForm(f => ({ ...f, sort_order: e.target.value }))} className="input-field" placeholder="1" /></div>
-              <div className="sm:col-span-2"><label className="block text-xs font-medium text-gray-500 mb-1">Título</label><input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} className="input-field" placeholder="Video ACC en hotel" /></div>
-              <div><label className="block text-xs font-medium text-gray-500 mb-1">Descripción</label><input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} className="input-field" /></div>
-              <div className="sm:col-span-3"><label className="block text-xs font-medium text-gray-500 mb-1">Tip</label><input value={form.tip} onChange={e => setForm(f => ({ ...f, tip: e.target.value }))} className="input-field" placeholder="Consejo para la creadora" /></div>
-            </div>
-            <button
-              disabled={!form.day_es || !form.title}
-              onClick={() => startTransition(async () => {
-                const r = await addWeeklyPlan({ day_name: form.day_es.toLowerCase(), day_es: form.day_es, video_type: form.video_type, title: form.title, description: form.description || null, tip: form.tip || null, sort_order: parseInt(form.sort_order) || 0 })
-                if (r.error) fb(`Error: ${r.error}`)
-                else { fb('✓ Plan agregado'); setForm({ day_name: 'monday', day_es: '', video_type: 'ACC', title: '', description: '', tip: '', sort_order: '' }); setShowAdd(false) }
-              })}
-              className="mt-3 font-dm text-sm font-semibold bg-go-orange text-white px-4 py-2 rounded-xl disabled:opacity-50"
-            >Guardar</button>
-          </div>
-        )}
-
-        <div className="space-y-2">
-          {items.map(item => (
-            <div key={item.id} className="border border-go-dark/5 rounded-xl p-4 flex items-center gap-4">
-              <span className="font-dm text-xs font-bold text-gray-400 w-6">{item.sort_order}</span>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-syne font-bold text-sm text-go-dark">{item.day_es}</span>
-                  <span className={`font-dm text-[10px] font-bold px-2 py-0.5 rounded-full ${item.video_type === 'ACC' ? 'bg-blue-100 text-blue-700' : item.video_type === 'TTD' ? 'bg-purple-100 text-purple-700' : 'bg-emerald-100 text-emerald-700'}`}>{item.video_type}</span>
-                </div>
-                <p className="font-dm text-sm text-go-dark">{item.title}</p>
-                {item.tip && <p className="font-dm text-xs text-gray-400 mt-0.5">{item.tip}</p>}
-              </div>
-              <div className="flex gap-2 shrink-0">
-                <button onClick={() => startTransition(async () => { await toggleWeeklyPlan(item.id, !item.is_active); fb('✓') })} className={`text-xs font-semibold px-2 py-1 rounded-full ${item.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-400'}`}>
-                  {item.is_active ? 'Activo' : 'Inactivo'}
-                </button>
-                <button onClick={() => { if (confirm('¿Eliminar?')) startTransition(async () => { await deleteWeeklyPlan(item.id); fb('✓ Eliminado') }) }} className="text-xs text-red-400 hover:text-red-600">Eliminar</button>
-              </div>
-            </div>
-          ))}
-          {items.length === 0 && <p className="text-center text-gray-400 py-6 font-dm text-sm">No hay plan semanal configurado.</p>}
-        </div>
-      </div>
-    </SectionCard>
-  )
-}
+// Plan Semanal tab archived. WeeklyPlanTab removed — go_weekly_plan_items
+// stays in the DB, server actions still exist, just no UI surface.
 
 // ── Challenges Tab ───────────────────────────────────
 
@@ -1584,84 +1502,8 @@ function ChallengesTab({ challenges, startTransition }: { challenges: Challenge[
   )
 }
 
-// ── Global Plan Tab ──────────────────────────────────
-
-function GlobalPlanTab({ creators, startTransition }: { creators: Creator[]; startTransition: (fn: () => void) => void }) {
-  const activeCreators = creators.filter(c => c.status === 'active')
-  const [slots, setSlots] = useState<Array<{day_of_week: string; video_type: string; place_name: string; hashtags: string}>>([])
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(activeCreators.map(c => c.id)))
-  const [feedback, setFeedback] = useState<string | null>(null)
-  const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
-
-  function toggleAll(checked: boolean) {
-    setSelectedIds(checked ? new Set(activeCreators.map(c => c.id)) : new Set())
-  }
-  function toggleCreator(id: string) {
-    const next = new Set(selectedIds)
-    if (next.has(id)) next.delete(id); else next.add(id)
-    setSelectedIds(next)
-  }
-
-  return (
-    <SectionCard>
-      <div className="p-6">
-        <h2 className="font-syne font-bold text-lg text-go-dark mb-4">📅 Plan Global</h2>
-        <p className="font-dm text-xs text-gray-400 mb-4">Crea un plan semanal y aplícalo a múltiples creadoras</p>
-
-        {feedback && <p className={`text-sm font-dm mb-3 px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{feedback}</p>}
-
-        {/* Slot builder */}
-        <div className="space-y-2 mb-6">
-          {slots.map((slot, idx) => (
-            <div key={idx} className="flex gap-2 items-center">
-              <select value={slot.day_of_week} onChange={e => { const u = [...slots]; u[idx] = {...slot, day_of_week: e.target.value}; setSlots(u) }} className="input-field w-28 text-xs">
-                {['lunes','martes','miercoles','jueves','viernes','sabado','domingo'].map(d => <option key={d} value={d}>{d.charAt(0).toUpperCase()+d.slice(1)}</option>)}
-              </select>
-              <select value={slot.video_type} onChange={e => { const u = [...slots]; u[idx] = {...slot, video_type: e.target.value}; setSlots(u) }} className="input-field w-20 text-xs">
-                <option value="ACC">ACC</option><option value="TTD">TTD</option><option value="general">Orgánico</option>
-              </select>
-              <input placeholder="Lugar" value={slot.place_name} onChange={e => { const u = [...slots]; u[idx] = {...slot, place_name: e.target.value}; setSlots(u) }} className="input-field flex-1 text-xs" />
-              <input placeholder="Hashtags" value={slot.hashtags} onChange={e => { const u = [...slots]; u[idx] = {...slot, hashtags: e.target.value}; setSlots(u) }} className="input-field flex-1 text-xs" />
-              <button onClick={() => setSlots(slots.filter((_, i) => i !== idx))} className="text-xs text-red-400">✕</button>
-            </div>
-          ))}
-          {slots.length < 7 && (
-            <button onClick={() => setSlots([...slots, { day_of_week: 'lunes', video_type: 'ACC', place_name: '', hashtags: '' }])} className="font-dm text-xs font-semibold text-go-orange hover:underline">+ Agregar día</button>
-          )}
-        </div>
-
-        {/* Creator checklist */}
-        <div className="border border-go-border rounded-xl p-4 mb-4">
-          <label className="flex items-center gap-2 mb-3 font-dm text-sm font-semibold text-go-dark cursor-pointer">
-            <input type="checkbox" checked={selectedIds.size === activeCreators.length} onChange={e => toggleAll(e.target.checked)} className="accent-go-orange" />
-            Seleccionar todas ({activeCreators.length})
-          </label>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto">
-            {activeCreators.map(c => (
-              <label key={c.id} className="flex items-center gap-2 font-dm text-xs text-go-dark cursor-pointer">
-                <input type="checkbox" checked={selectedIds.has(c.id)} onChange={() => toggleCreator(c.id)} className="accent-go-orange" />
-                {c.full_name ?? c.email}
-              </label>
-            ))}
-          </div>
-        </div>
-
-        <button
-          disabled={slots.length === 0 || selectedIds.size === 0}
-          onClick={() => startTransition(async () => {
-            const ids = Array.from(selectedIds)
-            const r = await applyGlobalPlan(ids, slots)
-            if (r.error) fb(`Error: ${r.error}`)
-            else fb(`Plan aplicado a ${r.count} creadoras`)
-          })}
-          className="w-full py-3 rounded-xl font-dm text-sm font-semibold text-white bg-go-orange hover:bg-go-orange/90 transition disabled:opacity-50"
-        >
-          Aplicar a seleccionadas
-        </button>
-      </div>
-    </SectionCard>
-  )
-}
+// Plan Global tab archived alongside Plan Semanal — GlobalPlanTab removed
+// from the UI; applyGlobalPlan stays exported on the server for re-enable.
 
 // ── Main Component ────────────────────────────────────
 
@@ -1676,7 +1518,6 @@ export default function AdminPanel({
   nivelRewards,
   boostRequests,
   rewardRequests,
-  weeklyPlan,
   challenges,
   tiktokAccounts,
   internalVideos,
@@ -1707,9 +1548,7 @@ export default function AdminPanel({
     { key: 'rewards-admin', label: '🎁 Rewards', count: nivelRewards.length },
     { key: 'boosts', label: '🚀 Boosts', count: boostRequests.length },
     { key: 'reward-requests', label: '🎀 Reward Requests', count: rewardRequests.length },
-    { key: 'weekly-plan', label: '📅 Plan Semanal', count: weeklyPlan.length },
     { key: 'challenges', label: '🏆 Retos', count: challenges.length },
-    { key: 'global-plan', label: '📅 Plan Global', count: 0 },
     { key: 'tiktok-accounts', label: '📱 Cuentas TikTok', count: tiktokAccounts.length },
     { key: 'internal-videos', label: '🎬 Videos Internos', count: pendingInternalCount },
   ]
@@ -1810,9 +1649,7 @@ export default function AdminPanel({
         {tab === 'rewards-admin' && <NivelRewardsTab rewards={nivelRewards} startTransition={startTransition} />}
         {tab === 'boosts' && <BoostsTab boosts={boostRequests} startTransition={startTransition} />}
         {tab === 'reward-requests' && <RewardRequestsTab requests={rewardRequests} startTransition={startTransition} />}
-        {tab === 'weekly-plan' && <WeeklyPlanTab items={weeklyPlan} startTransition={startTransition} />}
         {tab === 'challenges' && <ChallengesTab challenges={challenges} startTransition={startTransition} />}
-        {tab === 'global-plan' && <GlobalPlanTab creators={creators} startTransition={startTransition} />}
         {tab === 'tiktok-accounts' && <TikTokAccountsTab accounts={tiktokAccounts} startTransition={startTransition} />}
         {tab === 'internal-videos' && <InternalVideosTab videos={internalVideos} creators={creators} startTransition={startTransition} />}
       </main>
@@ -1856,10 +1693,9 @@ function CreatorsTab({
   const [strategyId, setStrategyId] = useState<string | null>(null)
   const [submittingForCreatorId, setSubmittingForCreatorId] = useState<string | null>(null)
   const [strategyForm, setStrategyForm] = useState({ acc_goal: '', ttd_goal: '', gmv_goal: '', special_hashtags: '', creative_brief: '', daily_quota: '', weekly_quota: '', monthly_quota: '' })
+  // Plan Semanal feature is archived — state removed; planSlots/applyToAll/
+  // planLoading no longer surfaced in the modal.
   const [internalStats, setInternalStats] = useState<{ today: number; week: number; month: number } | null>(null)
-  const [planSlots, setPlanSlots] = useState<Array<{day_of_week: string; video_type: string; place_name: string; hashtags: string}>>([])
-  const [applyToAll, setApplyToAll] = useState(false)
-  const [planLoading, setPlanLoading] = useState(false)
 
   // Add form state
   const [newEmail, setNewEmail] = useState('')
@@ -2206,11 +2042,6 @@ function CreatorsTab({
                               setInternalStats({ today: s.today, week: s.week, month: s.month })
                             })
                           }
-                          setPlanLoading(true)
-                          getCreatorPlan(c.id).then(p => {
-                            setPlanSlots(p.map(s => ({ day_of_week: s.day_of_week, video_type: s.video_type, place_name: s.place_name ?? '', hashtags: s.hashtags ?? '' })))
-                            setPlanLoading(false)
-                          })
                         }}>
                           Estrategia
                         </ActionButton>
@@ -2296,44 +2127,7 @@ function CreatorsTab({
             </div>
           )}
 
-          {/* Plan Semanal */}
-          <div className="mt-4 pt-4 border-t border-go-border">
-            <h4 className="font-syne font-bold text-sm text-go-dark mb-3">📅 Plan Semanal</h4>
-            {planLoading ? (
-              <p className="font-dm text-xs text-gray-400">Cargando plan...</p>
-            ) : (
-              <div className="space-y-2">
-                {planSlots.map((slot, idx) => (
-                  <div key={idx} className="flex gap-2 items-center">
-                    <select value={slot.day_of_week} onChange={e => {
-                      const updated = [...planSlots]; updated[idx] = {...slot, day_of_week: e.target.value}; setPlanSlots(updated)
-                    }} className="input-field w-24 text-xs">
-                      {['lunes','martes','miercoles','jueves','viernes','sabado','domingo'].map(d => <option key={d} value={d}>{d.charAt(0).toUpperCase()+d.slice(1)}</option>)}
-                    </select>
-                    <select value={slot.video_type} onChange={e => {
-                      const updated = [...planSlots]; updated[idx] = {...slot, video_type: e.target.value}; setPlanSlots(updated)
-                    }} className="input-field w-20 text-xs">
-                      <option value="ACC">ACC</option><option value="TTD">TTD</option><option value="general">Orgánico</option>
-                    </select>
-                    <input placeholder="Lugar" value={slot.place_name} onChange={e => {
-                      const updated = [...planSlots]; updated[idx] = {...slot, place_name: e.target.value}; setPlanSlots(updated)
-                    }} className="input-field flex-1 text-xs" />
-                    <input placeholder="Hashtags" value={slot.hashtags} onChange={e => {
-                      const updated = [...planSlots]; updated[idx] = {...slot, hashtags: e.target.value}; setPlanSlots(updated)
-                    }} className="input-field flex-1 text-xs" />
-                    <button onClick={() => setPlanSlots(planSlots.filter((_, i) => i !== idx))} className="text-xs text-red-400">✕</button>
-                  </div>
-                ))}
-                {planSlots.length < 7 && (
-                  <button onClick={() => setPlanSlots([...planSlots, { day_of_week: 'lunes', video_type: 'ACC', place_name: '', hashtags: '' }])} className="font-dm text-xs font-semibold text-go-orange hover:underline">+ Agregar día</button>
-                )}
-                <label className="flex items-center gap-2 mt-3 font-dm text-xs text-gray-600">
-                  <input type="checkbox" checked={applyToAll} onChange={e => setApplyToAll(e.target.checked)} className="accent-go-orange" />
-                  Aplicar este plan a todas las creadoras activas
-                </label>
-              </div>
-            )}
-          </div>
+          {/* Plan Semanal section archived — see go_content_plan table. */}
           {/* Level-up history for this creator */}
           {(() => {
             const myEvents = levelUpEvents.filter(e => e.creator_id === strategyId)
@@ -2379,13 +2173,9 @@ function CreatorsTab({
                 monthly_quota: parseInt(strategyForm.monthly_quota) || 0,
               })
               if (r.error) { fb(`Error: ${r.error}`); return }
-              const p = await saveContentPlan(strategyId, planSlots, applyToAll)
-              if (p.error) { fb(`Error plan: ${p.error}`); return }
-              fb(applyToAll ? `✓ Estrategia y plan guardados. Plan aplicado a ${p.count} creadoras` : '✓ Estrategia y plan guardados')
+              fb('✓ Estrategia guardada')
               setStrategyId(null)
-              setPlanSlots([])
-              setApplyToAll(false)
-            })} className="font-dm text-sm font-semibold bg-go-orange text-white px-4 py-2 rounded-xl">Guardar todo</button>
+            })} className="font-dm text-sm font-semibold bg-go-orange text-white px-4 py-2 rounded-xl">Guardar</button>
             <button onClick={() => setStrategyId(null)} className="font-dm text-sm text-gray-500 px-4 py-2">Cancelar</button>
           </div>
         </div>

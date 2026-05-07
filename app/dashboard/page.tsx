@@ -4,7 +4,6 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import Sidebar from '@/components/Sidebar'
 import AnnouncementPopup from '@/components/AnnouncementPopup'
 import DashboardClient from './DashboardClient'
-import DashboardHashtags from './DashboardHashtags'
 import ProgressRings from './ProgressRings'
 import MisVideosCard from './MisVideosCard'
 import LevelUpPopup from './LevelUpPopup'
@@ -22,15 +21,7 @@ export default async function DashboardPage() {
   if (creator.status === 'pending') redirect('/pending')
 
   const admin = createAdminClient()
-  // Calculate current week Monday
   const nowDate = new Date()
-  const dayOfWeek = nowDate.getDay()
-  const mondayDiff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
-  const monday = new Date(nowDate)
-  monday.setDate(nowDate.getDate() + mondayDiff)
-  const weekStart = monday.toISOString().split('T')[0]
-  const dayNames = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']
-  const todayName = dayNames[nowDate.getDay()]
 
   // Source-of-truth video counts: count this-month boost requests.
   const startOfMonth = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1).toISOString()
@@ -42,12 +33,11 @@ export default async function DashboardPage() {
   const prevMonth = prevDate.getMonth() + 1
   const prevYear = prevDate.getFullYear()
 
-  const [announcementRes, currentNivelRes, challengeRes, leaderboardRes, todayPlanRes, myBoostsRes, lastSnapshotRes, levelUpsRes, nivelRewardsRes] = await Promise.all([
+  const [announcementRes, currentNivelRes, challengeRes, leaderboardRes, myBoostsRes, lastSnapshotRes, levelUpsRes, nivelRewardsRes] = await Promise.all([
     admin.from('go_announcements').select('*').eq('is_active', true).order('created_at', { ascending: false }),
     admin.from('go_nivel_requirements').select('*').eq('nivel', creator.nivel).maybeSingle(),
     admin.from('go_challenges').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1).maybeSingle(),
     admin.from('go_creators').select('id, full_name, nivel, videos_this_month, gmv_this_month, acc_this_month, ttd_this_month').eq('status', 'active').order('videos_this_month', { ascending: false }).limit(10),
-    admin.from('go_content_plan').select('*').eq('creator_id', creator.id).eq('week_start', weekStart).eq('day_of_week', todayName).limit(1).maybeSingle(),
     admin.from('go_boost_requests').select('id, tiktok_url, video_type, status, is_valid, boost_status, rejection_reason, created_at').eq('creator_id', creator.id).gte('created_at', startOfMonth).lte('created_at', endOfMonth).order('created_at', { ascending: false }),
     admin.from('go_creator_snapshots').select('acc_videos, ttd_videos, gmv').eq('creator_id', creator.id).eq('month', prevMonth).eq('year', prevYear).maybeSingle(),
     admin
@@ -78,7 +68,6 @@ export default async function DashboardPage() {
   // "Pending review" = not yet validated (regardless of boost decision).
   const pendingThisMonth = myBoostsThisMonth.filter(b => b.is_valid == null).length
 
-  const todayPlan = todayPlanRes.data as { video_type: string; place_name: string | null; hashtags: string | null } | null
   const allAnnouncements = (announcementRes.data ?? []) as Announcement[]
   const banners = allAnnouncements.filter(a => a.display_type !== 'popup')
   const popup = allAnnouncements.find(a => a.display_type === 'popup') ?? null
@@ -160,42 +149,7 @@ export default async function DashboardPage() {
             </div>
           </div>
 
-          {/* CARD 1: Tu tarea de hoy */}
-          {(() => {
-            // Use today's plan hashtags if available, else creator's special_hashtags, else default
-            const rawHashtags = todayPlan?.hashtags || creator.special_hashtags || '#tiktokgostay'
-            const tags = rawHashtags.replace(/,/g, ' ').split(/\s+/).filter(Boolean).map(t => t.startsWith('#') ? t : `#${t}`)
-            const taskVideoType = todayPlan?.video_type ?? 'ACC'
-            const taskPlace = todayPlan?.place_name
-            return (
-              <div className="bg-white border-2 border-[#ff7700]/30 rounded-2xl p-6 shadow-sm">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xl">🎯</span>
-                  <h2 className="font-syne font-bold text-lg text-[#1a0800]">Tu tarea de hoy</h2>
-                </div>
-                {todayPlan ? (
-                  <p className="font-dm text-sm text-gray-500 mb-4">
-                    {taskPlace ? `Graba un video ${taskVideoType} en ${taskPlace}.` : `Graba un video ${taskVideoType} hoy.`}
-                  </p>
-                ) : (
-                  <p className="font-dm text-sm text-gray-500 mb-4">
-                    {creator.nivel <= 2 ? 'Postea 1 video ACC de un hotel hoy. Usa el tag verde.' : 'Postea 1 video ACC o TTD hoy. Revisa tus Papaya Visits para inspiración.'}
-                  </p>
-                )}
-                <div className="flex flex-wrap gap-2 mb-3">
-                  <span className={`font-dm text-xs font-semibold px-3 py-1 rounded-full ${taskVideoType === 'TTD' ? 'bg-purple-100 text-purple-700' : taskVideoType === 'general' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>{taskVideoType}</span>
-                  {taskPlace && <span className="font-dm text-xs font-semibold px-3 py-1 rounded-full bg-gray-100 text-gray-600">📍 {taskPlace}</span>}
-                  {tags.map(tag => (
-                    <span key={tag} className="font-dm text-xs font-semibold px-3 py-1 rounded-full bg-[#ff7700]/10 text-[#ff7700]">{tag}</span>
-                  ))}
-                </div>
-                <DashboardHashtags tags={tags} />
-                <a href="/ai-coach" className="block text-center py-3 rounded-xl font-dm text-sm font-semibold text-white bg-[#ff7700] hover:bg-[#ff7700]/90 transition mt-3">
-                  ✨ Crear contenido →
-                </a>
-              </div>
-            )
-          })()}
+          {/* Plan Semanal archived — "Tu tarea de hoy" card removed for now. */}
 
           {/* CARD 2: Monthly goal rings */}
           <ProgressRings
