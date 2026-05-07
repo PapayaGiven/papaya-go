@@ -933,6 +933,60 @@ function ShortLinkBadge({ url }: { url: string | null | undefined }) {
   return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700" title="Link corto — puede no funcionar">⚠️ Link corto</span>
 }
 
+// One-click resolver next to the short-link warning. POSTs the URL to the
+// resolution route, then persists the canonical form via updateBoostRequest
+// so the row stops being a short link on the next render.
+function ResolveLinkButton({
+  boostId,
+  url,
+  onDone,
+}: {
+  boostId: string
+  url: string | null | undefined
+  onDone: (msg: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  if (!isShortTikTokLink(url)) return null
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={async (e) => {
+        e.stopPropagation()
+        if (!url) return
+        setBusy(true)
+        try {
+          const res = await fetch('/api/resolve-tiktok-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url }),
+            signal: AbortSignal.timeout(7000),
+          })
+          if (!res.ok) {
+            onDone('⚠️ No pudimos resolver este link. Intenta copiar el link desde tu perfil de TikTok.')
+            return
+          }
+          const data = await res.json()
+          const resolved = typeof data?.resolvedUrl === 'string' ? data.resolvedUrl : null
+          if (!resolved) {
+            onDone('⚠️ No pudimos resolver este link. Intenta copiar el link desde tu perfil de TikTok.')
+            return
+          }
+          const upd = await updateBoostRequest(boostId, { tiktok_url: resolved })
+          if (upd.error) onDone(`Error: ${upd.error}`)
+          else onDone('✅ Link resuelto correctamente')
+        } catch {
+          onDone('⚠️ No pudimos resolver este link. Intenta copiar el link desde tu perfil de TikTok.')
+        } finally {
+          setBusy(false)
+        }
+      }}
+      className="text-[10px] font-semibold text-go-dark/70 bg-go-dark/[0.05] hover:bg-go-dark/[0.1] disabled:opacity-50 px-2 py-0.5 rounded-md"
+      title="Resolver al link completo"
+    >{busy ? '🔄 Resolviendo…' : '🔗 Resolver link'}</button>
+  )
+}
+
 // ── Invalid-reason modal (shown when admin marks a video invalid) ────
 
 const COMMON_INVALID_REASONS = [
@@ -1087,7 +1141,7 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
   const [feedback, setFeedback] = useState<string | null>(null)
   const [typeFilter, setTypeFilter] = useState<'all' | 'ACC' | 'TTD'>('all')
   const [editing, setEditing] = useState<{ id: string; url: string; type: 'ACC' | 'TTD' } | null>(null)
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [preview, setPreview] = useState<{ url: string; boostId: string } | null>(null)
   const [invalidating, setInvalidating] = useState<{ id: string; url: string | null } | null>(null)
   function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
 
@@ -1150,8 +1204,12 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
                         <a href={b.tiktok_url || b.video_url || '#'} target="_blank" rel="noopener noreferrer" className="text-go-orange hover:underline truncate block max-w-[180px]">
                           {b.tiktok_url || b.video_url}
                         </a>
-                        <PreviewButton url={b.tiktok_url || b.video_url} onOpen={() => setPreviewUrl(b.tiktok_url || b.video_url)} />
+                        <PreviewButton url={b.tiktok_url || b.video_url} onOpen={() => {
+                          const u = b.tiktok_url || b.video_url
+                          if (u) setPreview({ url: u, boostId: b.id })
+                        }} />
                         <ShortLinkBadge url={b.tiktok_url || b.video_url} />
+                        <ResolveLinkButton boostId={b.id} url={b.tiktok_url || b.video_url} onDone={fb} />
                       </div>
                     ) : '—'}
                   </td>
@@ -1199,7 +1257,12 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
       </div>
 
       {/* TikTok preview modal */}
-      <TikTokPreviewModal url={previewUrl} onClose={() => setPreviewUrl(null)} />
+      <TikTokPreviewModal
+        url={preview?.url ?? null}
+        boostId={preview?.boostId}
+        onClose={() => setPreview(null)}
+        onResolved={() => fb('✅ Link resuelto correctamente')}
+      />
 
       {/* Invalid-reason modal */}
       {invalidating && (
@@ -3639,7 +3702,7 @@ function VideoTrackerSection({
   const [rejectingId, setRejectingId] = useState<string | null>(null)
   const [rejectReason, setRejectReason] = useState('')
   const [editing, setEditing] = useState<{ id: string; url: string; type: 'ACC' | 'TTD' } | null>(null)
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [preview, setPreview] = useState<{ url: string; boostId: string } | null>(null)
   const [invalidating, setInvalidating] = useState<{ id: string; url: string | null } | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
   function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 4000) }
@@ -3758,8 +3821,12 @@ function VideoTrackerSection({
                                     >
                                       {req.tiktok_url || req.video_url || '(sin URL)'}
                                     </a>
-                                    <PreviewButton url={req.tiktok_url || req.video_url} onOpen={() => setPreviewUrl(req.tiktok_url || req.video_url)} />
+                                    <PreviewButton url={req.tiktok_url || req.video_url} onOpen={() => {
+                                      const u = req.tiktok_url || req.video_url
+                                      if (u) setPreview({ url: u, boostId: req.id })
+                                    }} />
                                     <ShortLinkBadge url={req.tiktok_url || req.video_url} />
+                                    <ResolveLinkButton boostId={req.id} url={req.tiktok_url || req.video_url} onDone={fb} />
                                   </div>
                                   <div className="flex flex-wrap items-center gap-3">
                                     <ValidityCell
@@ -3833,7 +3900,12 @@ function VideoTrackerSection({
       </div>
 
       {/* TikTok preview modal */}
-      <TikTokPreviewModal url={previewUrl} onClose={() => setPreviewUrl(null)} />
+      <TikTokPreviewModal
+        url={preview?.url ?? null}
+        boostId={preview?.boostId}
+        onClose={() => setPreview(null)}
+        onResolved={() => fb('✅ Link resuelto correctamente')}
+      />
 
       {/* Invalid-reason modal */}
       {invalidating && (
