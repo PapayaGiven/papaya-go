@@ -9,6 +9,7 @@ import type {
   Announcement,
   PortfolioSubmission,
   NivelReward,
+  NivelRequirement,
   BoostRequest,
   RewardRequest,
   Challenge,
@@ -50,6 +51,7 @@ import {
   updateNivelReward,
   toggleNivelReward,
   deleteNivelReward,
+  updateNivelRequirement,
   // updateBoostStatus retired in favor of setBoostValidity + setBoostStatus
 
   updateRewardRequestStatus,
@@ -122,6 +124,7 @@ interface AdminPanelProps {
   viralVideos: ViralVideo[]
   poiRequests: POIRequest[]
   nivelRewards: NivelReward[]
+  nivelRequirements: NivelRequirement[]
   boostRequests: BoostRequest[]
   rewardRequests: RewardRequest[]
   challenges: Challenge[]
@@ -508,7 +511,128 @@ function FormFieldsBuilder({ fields, onChange }: FormFieldBuilderProps) {
 
 // ── Nivel Rewards Tab ────────────────────────────────
 
-function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[]; startTransition: (fn: () => void) => void }) {
+// Editable per-nivel commitment table. Lives at the top of the Rewards tab
+// so admin can adjust the level-up bar without touching the DB. Writes via
+// updateNivelRequirement, which checkAndApplyLevelUps reads from on each
+// validation pass.
+function NivelRequirementsCard({
+  requirements,
+  startTransition,
+}: {
+  requirements: NivelRequirement[]
+  startTransition: (fn: () => void) => void
+}) {
+  type Draft = { acc_required: string; ttd_required: string; total_videos_required: string; gmv_required: string; perks: string }
+  const niveles: Array<{ nivel: number; label: string }> = [
+    { nivel: 1, label: '1 Explorer' },
+    { nivel: 2, label: '2 Contributor' },
+    { nivel: 3, label: '3 Partner' },
+    { nivel: 4, label: '4 Elite' },
+  ]
+  const byNivel = new Map(requirements.map(r => [r.nivel, r]))
+  const initial = (n: number): Draft => {
+    const r = byNivel.get(n)
+    return {
+      acc_required: String(r?.acc_required ?? 0),
+      ttd_required: String(r?.ttd_required ?? 0),
+      total_videos_required: String(r?.total_videos_required ?? 0),
+      gmv_required: String(r?.gmv_required ?? 0),
+      perks: r?.perks ?? '',
+    }
+  }
+  const [drafts, setDrafts] = useState<Record<number, Draft>>(() =>
+    Object.fromEntries(niveles.map(({ nivel }) => [nivel, initial(nivel)])),
+  )
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const [savingNivel, setSavingNivel] = useState<number | null>(null)
+  function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 4000) }
+  function patch(nivel: number, key: keyof Draft, value: string) {
+    setDrafts(prev => ({ ...prev, [nivel]: { ...prev[nivel], [key]: value } }))
+  }
+
+  return (
+    <SectionCard>
+      <div className="p-6">
+        <h2 className="font-syne font-bold text-lg text-go-dark">📋 Requisitos por Nivel</h2>
+        <p className="font-dm text-xs text-go-dark/60 mt-1 mb-4">
+          Define cuántos videos y GMV necesita cada creadora para alcanzar cada nivel.
+        </p>
+        {feedback && (
+          <p className={`text-sm font-dm mb-3 px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>
+            {feedback}
+          </p>
+        )}
+        <div className="overflow-x-auto rounded-2xl border border-go-dark/5">
+          <table className="w-full text-sm font-dm">
+            <thead className="bg-go-dark/[0.03]">
+              <tr>
+                {['Nivel', 'ACC/mes', 'TTD/mes', 'Total/mes', 'GMV $', 'Perks', ''].map(h => (
+                  <th key={h} className="px-3 py-2 text-left text-[10px] text-go-dark/50 font-semibold uppercase tracking-wide">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-go-dark/5">
+              {niveles.map(({ nivel, label }) => {
+                const d = drafts[nivel]
+                const saving = savingNivel === nivel
+                return (
+                  <tr key={nivel}>
+                    <td className="px-3 py-2 font-semibold text-go-dark whitespace-nowrap">{label}</td>
+                    <td className="px-3 py-2">
+                      <input type="number" min="0" value={d.acc_required} onChange={e => patch(nivel, 'acc_required', e.target.value)}
+                        className="w-20 px-2 py-1 rounded-md border border-go-border bg-white text-sm focus:outline-none focus:ring-2 focus:ring-go-orange/30" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input type="number" min="0" value={d.ttd_required} onChange={e => patch(nivel, 'ttd_required', e.target.value)}
+                        className="w-20 px-2 py-1 rounded-md border border-go-border bg-white text-sm focus:outline-none focus:ring-2 focus:ring-go-orange/30" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input type="number" min="0" value={d.total_videos_required} onChange={e => patch(nivel, 'total_videos_required', e.target.value)}
+                        className="w-20 px-2 py-1 rounded-md border border-go-border bg-white text-sm focus:outline-none focus:ring-2 focus:ring-go-orange/30" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input type="number" min="0" value={d.gmv_required} onChange={e => patch(nivel, 'gmv_required', e.target.value)}
+                        className="w-24 px-2 py-1 rounded-md border border-go-border bg-white text-sm focus:outline-none focus:ring-2 focus:ring-go-orange/30" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input type="text" value={d.perks} onChange={e => patch(nivel, 'perks', e.target.value)}
+                        placeholder="Beneficios de este nivel"
+                        className="w-full min-w-[200px] px-2 py-1 rounded-md border border-go-border bg-white text-sm focus:outline-none focus:ring-2 focus:ring-go-orange/30" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => {
+                          setSavingNivel(nivel)
+                          startTransition(async () => {
+                            const r = await updateNivelRequirement(nivel, {
+                              acc_required: parseInt(d.acc_required) || 0,
+                              ttd_required: parseInt(d.ttd_required) || 0,
+                              total_videos_required: parseInt(d.total_videos_required) || 0,
+                              gmv_required: parseInt(d.gmv_required) || 0,
+                              perks: d.perks.trim() || null,
+                            })
+                            setSavingNivel(null)
+                            if (r.error) fb(`Error: ${r.error}`)
+                            else fb(`✅ Nivel ${nivel} actualizado`)
+                          })
+                        }}
+                        className="text-xs font-semibold bg-go-orange text-white px-3 py-1.5 rounded-md hover:bg-go-orange/90 disabled:opacity-50"
+                      >{saving ? 'Guardando…' : 'Guardar'}</button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </SectionCard>
+  )
+}
+
+function NivelRewardsTab({ rewards, requirements, startTransition }: { rewards: NivelReward[]; requirements: NivelRequirement[]; startTransition: (fn: () => void) => void }) {
   const [showAdd, setShowAdd] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState({ nivel: '1', reward_name: '', reward_description: '', reward_emoji: '🎁', cta_label: '', cta_url: '', cta_type: 'none', cta_whatsapp_message: '', form_fields: [] as Array<{label: string; type: string; required: boolean; options?: string[]}> })
@@ -540,7 +664,9 @@ function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[];
   const grouped = [1, 2, 3, 4].map(n => ({ nivel: n, items: rewards.filter(r => r.nivel === n) }))
 
   return (
-    <SectionCard>
+    <div className="space-y-6">
+      <NivelRequirementsCard requirements={requirements} startTransition={startTransition} />
+      <SectionCard>
       <div className="p-6">
         <h2 className="font-syne font-bold text-lg text-go-dark mb-4">Rewards por Nivel ({rewards.length})</h2>
 
@@ -679,6 +805,7 @@ function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[];
         ))}
       </div>
     </SectionCard>
+    </div>
   )
 }
 
@@ -1516,6 +1643,7 @@ export default function AdminPanel({
   viralVideos,
   poiRequests,
   nivelRewards,
+  nivelRequirements,
   boostRequests,
   rewardRequests,
   challenges,
@@ -1646,7 +1774,7 @@ export default function AdminPanel({
         {tab === 'poi-requests' && (
           <POIRequestsTab requests={poiRequests} startTransition={startTransition} />
         )}
-        {tab === 'rewards-admin' && <NivelRewardsTab rewards={nivelRewards} startTransition={startTransition} />}
+        {tab === 'rewards-admin' && <NivelRewardsTab rewards={nivelRewards} requirements={nivelRequirements} startTransition={startTransition} />}
         {tab === 'boosts' && <BoostsTab boosts={boostRequests} startTransition={startTransition} />}
         {tab === 'reward-requests' && <RewardRequestsTab requests={rewardRequests} startTransition={startTransition} />}
         {tab === 'challenges' && <ChallengesTab challenges={challenges} startTransition={startTransition} />}

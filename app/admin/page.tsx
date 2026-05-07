@@ -9,6 +9,7 @@ import type {
   Announcement,
   PortfolioSubmission,
   NivelReward,
+  NivelRequirement,
   BoostRequest,
   RewardRequest,
   TikTokAccount,
@@ -45,6 +46,7 @@ export default async function AdminPage() {
     { data: viralVideos },
     { data: poiRequests },
     { data: nivelRewards },
+    { data: nivelRequirements },
     { data: boostRequests },
     { data: rewardRequests },
     { data: challenges },
@@ -85,6 +87,7 @@ export default async function AdminPage() {
       .select('*, creator:go_creators(full_name, email)')
       .order('created_at', { ascending: false }),
     supabase.from('go_nivel_rewards').select('*').order('nivel, created_at'),
+    supabase.from('go_nivel_requirements').select('*').order('nivel'),
     supabase.from('go_boost_requests').select('*').order('created_at', { ascending: false }),
     supabase.from('go_reward_requests').select('*').order('created_at', { ascending: false }),
     supabase.from('go_challenges').select('*').order('created_at', { ascending: false }),
@@ -130,6 +133,7 @@ export default async function AdminPage() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       poiRequests={(poiRequests ?? []) as any}
       nivelRewards={(nivelRewards as NivelReward[]) ?? []}
+      nivelRequirements={(nivelRequirements as NivelRequirement[]) ?? []}
       boostRequests={(boostRequests as BoostRequest[]) ?? []}
       rewardRequests={(rewardRequests as RewardRequest[]) ?? []}
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

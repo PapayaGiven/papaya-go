@@ -697,6 +697,37 @@ export async function deleteNivelReward(id: string): Promise<void> {
   revalidatePath('/admin')
 }
 
+// ── Nivel Requirements (level commitment) ─────────────
+// Edited inline from the admin Rewards tab. checkAndApplyLevelUps reads
+// from go_nivel_requirements directly, so changes here take effect on the
+// next validation pass without any creator-row migration.
+
+export async function updateNivelRequirement(
+  nivel: number,
+  data: {
+    acc_required?: number
+    ttd_required?: number
+    total_videos_required?: number
+    gmv_required?: number
+    perks?: string | null
+  },
+): Promise<{ error?: string }> {
+  if (!Number.isFinite(nivel) || nivel < 1) return { error: 'Nivel inválido' }
+  const supabase = createAdminClient()
+  const payload: Record<string, unknown> = {}
+  if (data.acc_required != null) payload.acc_required = Math.max(0, Math.floor(data.acc_required))
+  if (data.ttd_required != null) payload.ttd_required = Math.max(0, Math.floor(data.ttd_required))
+  if (data.total_videos_required != null) payload.total_videos_required = Math.max(0, Math.floor(data.total_videos_required))
+  if (data.gmv_required != null) payload.gmv_required = Math.max(0, Math.floor(data.gmv_required))
+  if (data.perks !== undefined) payload.perks = data.perks
+  if (Object.keys(payload).length === 0) return {}
+  const { error } = await supabase.from('go_nivel_requirements').update(payload).eq('nivel', nivel)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  revalidatePath('/dashboard')
+  return {}
+}
+
 // ── Boost Requests ───────────────────────────────────
 
 export async function updateBoostStatus(id: string, status: string): Promise<{ error?: string }> {
