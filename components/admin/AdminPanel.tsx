@@ -931,60 +931,79 @@ function isShortTikTokLink(url: string | null | undefined): boolean {
 
 function ShortLinkBadge({ url }: { url: string | null | undefined }) {
   if (!isShortTikTokLink(url)) return null
-  return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700" title="Link corto — puede no funcionar">⚠️ Link corto</span>
+  // Tooltip carries the full instruction ("Pide a la creadora que reenvíe
+  // el link completo") since the badge has no room inline. Compact note
+  // sits beside it for screens with space.
+  return (
+    <>
+      <span
+        className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700"
+        title="Link corto — pide a la creadora que reenvíe el link completo"
+      >⚠️ Link corto</span>
+      <span className="text-[10px] text-orange-700/80 font-dm hidden sm:inline">
+        Pide a la creadora que reenvíe el link completo
+      </span>
+    </>
+  )
 }
 
-// One-click resolver next to the short-link warning. POSTs the URL to the
-// resolution route, then persists the canonical form via updateBoostRequest
-// so the row stops being a short link on the next render.
-function ResolveLinkButton({
+// Inline link editor used in the admin tables. Click ✏️ Editar link to swap
+// the URL for an input + save/cancel; saving calls updateBoostRequest. This
+// is the manual escape hatch when a creator pastes a short link and admin
+// gets the full link via WhatsApp.
+function EditableLinkRow({
   boostId,
   url,
-  onDone,
+  onSaved,
 }: {
   boostId: string
   url: string | null | undefined
-  onDone: (msg: string) => void
+  onSaved: (msg: string) => void
 }) {
-  const [busy, setBusy] = useState(false)
-  if (!isShortTikTokLink(url)) return null
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(url ?? '')
+  const [saving, setSaving] = useState(false)
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setDraft(url ?? ''); setEditing(true) }}
+        className="text-[10px] font-semibold text-go-dark/70 bg-go-dark/[0.05] hover:bg-go-dark/[0.1] px-2 py-0.5 rounded-md"
+        title="Reemplazar el link con la versión completa"
+      >✏️ Editar link</button>
+    )
+  }
+
   return (
-    <button
-      type="button"
-      disabled={busy}
-      onClick={async (e) => {
-        e.stopPropagation()
-        if (!url) return
-        setBusy(true)
-        try {
-          const res = await fetch('/api/resolve-tiktok-url', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url }),
-            signal: AbortSignal.timeout(7000),
-          })
-          if (!res.ok) {
-            onDone('⚠️ No pudimos resolver este link. Intenta copiar el link desde tu perfil de TikTok.')
-            return
-          }
-          const data = await res.json()
-          const resolved = typeof data?.resolvedUrl === 'string' ? data.resolvedUrl : null
-          if (!resolved) {
-            onDone('⚠️ No pudimos resolver este link. Intenta copiar el link desde tu perfil de TikTok.')
-            return
-          }
-          const upd = await updateBoostRequest(boostId, { tiktok_url: resolved })
-          if (upd.error) onDone(`Error: ${upd.error}`)
-          else onDone('✅ Link resuelto correctamente')
-        } catch {
-          onDone('⚠️ No pudimos resolver este link. Intenta copiar el link desde tu perfil de TikTok.')
-        } finally {
-          setBusy(false)
-        }
-      }}
-      className="text-[10px] font-semibold text-go-dark/70 bg-go-dark/[0.05] hover:bg-go-dark/[0.1] disabled:opacity-50 px-2 py-0.5 rounded-md"
-      title="Resolver al link completo"
-    >{busy ? '🔄 Resolviendo…' : '🔗 Resolver link'}</button>
+    <div className="flex items-center gap-1 flex-wrap" onClick={(e) => e.stopPropagation()}>
+      <input
+        type="url"
+        value={draft}
+        autoFocus
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder="https://www.tiktok.com/@…/video/…"
+        className="text-[11px] px-2 py-0.5 rounded-md border border-go-border bg-white min-w-[220px]"
+      />
+      <button
+        type="button"
+        disabled={saving || !draft.trim()}
+        onClick={async () => {
+          setSaving(true)
+          const r = await updateBoostRequest(boostId, { tiktok_url: draft.trim() })
+          setSaving(false)
+          if (r.error) { onSaved(`Error: ${r.error}`); return }
+          onSaved('✅ Link actualizado')
+          setEditing(false)
+        }}
+        className="text-[10px] font-semibold bg-go-orange text-white px-2 py-0.5 rounded-md hover:bg-go-orange/90 disabled:opacity-40"
+      >{saving ? 'Guardando…' : 'Guardar'}</button>
+      <button
+        type="button"
+        onClick={() => { setEditing(false); setDraft(url ?? '') }}
+        className="text-[10px] font-semibold bg-go-dark/[0.06] text-go-dark/60 px-2 py-0.5 rounded-md"
+      >Cancelar</button>
+    </div>
   )
 }
 
@@ -1230,7 +1249,7 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
                           if (u) setPreview({ url: u, boostId: b.id })
                         }} />
                         <ShortLinkBadge url={b.tiktok_url || b.video_url} />
-                        <ResolveLinkButton boostId={b.id} url={b.tiktok_url || b.video_url} onDone={fb} />
+                        <EditableLinkRow boostId={b.id} url={b.tiktok_url || b.video_url} onSaved={fb} />
                       </div>
                     ) : '—'}
                   </td>
@@ -1283,9 +1302,7 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
       {/* TikTok preview modal */}
       <TikTokPreviewModal
         url={preview?.url ?? null}
-        boostId={preview?.boostId}
         onClose={() => setPreview(null)}
-        onResolved={() => fb('✅ Link resuelto correctamente')}
       />
 
       {/* Invalid-reason modal */}
@@ -3860,7 +3877,7 @@ function VideoTrackerSection({
                                       if (u) setPreview({ url: u, boostId: req.id })
                                     }} />
                                     <ShortLinkBadge url={req.tiktok_url || req.video_url} />
-                                    <ResolveLinkButton boostId={req.id} url={req.tiktok_url || req.video_url} onDone={fb} />
+                                    <EditableLinkRow boostId={req.id} url={req.tiktok_url || req.video_url} onSaved={fb} />
                                   </div>
                                   <div className="flex flex-wrap items-center gap-3">
                                     <ValidityCell
@@ -3939,9 +3956,7 @@ function VideoTrackerSection({
       {/* TikTok preview modal */}
       <TikTokPreviewModal
         url={preview?.url ?? null}
-        boostId={preview?.boostId}
         onClose={() => setPreview(null)}
-        onResolved={() => fb('✅ Link resuelto correctamente')}
       />
 
       {/* Invalid-reason modal */}

@@ -12,40 +12,25 @@ interface BoostClientProps {
   pastRequests: BoostRequest[]
 }
 
-type ResolveStatus = 'idle' | 'resolving' | 'resolved' | 'failed'
-
 interface Row {
   id: number
   url: string
   type: 'ACC' | 'TTD' | null
   boost: boolean
   error?: string
-  resolveStatus?: ResolveStatus
 }
 
 let nextId = 1
 function newRow(): Row {
-  return { id: nextId++, url: '', type: null, boost: false, resolveStatus: 'idle' }
+  return { id: nextId++, url: '', type: null, boost: false }
 }
 
+// Short links (tiktok.com/t/…, vm.tiktok.com/…, vt.tiktok.com/…) are
+// region-bound and frequently die. We don't try to resolve them server-side
+// — TikTok blocks bot fetches and returns the homepage — so the only safe
+// move is to ask the creator to copy the canonical link.
 function isShortTikTokLink(url: string): boolean {
   return /tiktok\.com\/t\//i.test(url) || /vm\.tiktok\.com/i.test(url) || /vt\.tiktok\.com/i.test(url)
-}
-
-async function resolveShortLink(url: string): Promise<string | null> {
-  try {
-    const res = await fetch('/api/resolve-tiktok-url', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
-      signal: AbortSignal.timeout(7000),
-    })
-    if (!res.ok) return null
-    const data = await res.json()
-    return typeof data?.resolvedUrl === 'string' ? data.resolvedUrl : null
-  } catch {
-    return null
-  }
 }
 
 function statusBadge(status: string) {
@@ -81,19 +66,6 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
   function updateRow(id: number, patch: Partial<Row>) {
     setRows((prev) => prev.map((r) => r.id === id ? { ...r, ...patch, error: undefined } : r))
     setTopError('')
-  }
-  // Patch a row by id without touching `error` (used by async resolution that
-  // shouldn't clear validation errors set elsewhere).
-  function patchRow(id: number, patch: Partial<Row>) {
-    setRows((prev) => prev.map((r) => r.id === id ? { ...r, ...patch } : r))
-  }
-  async function maybeResolve(id: number, url: string) {
-    const trimmed = url.trim()
-    if (!trimmed || !isShortTikTokLink(trimmed)) return
-    patchRow(id, { resolveStatus: 'resolving' })
-    const resolved = await resolveShortLink(trimmed)
-    if (resolved) patchRow(id, { url: resolved, resolveStatus: 'resolved' })
-    else patchRow(id, { resolveStatus: 'failed' })
   }
   function addRow() {
     setRows((prev) => [...prev, newRow()])
@@ -204,31 +176,22 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
                     <input
                       type="url"
                       value={r.url}
-                      onChange={(e) => updateRow(r.id, { url: e.target.value, resolveStatus: 'idle' })}
-                      onBlur={(e) => maybeResolve(r.id, e.target.value)}
-                      onPaste={(e) => {
-                        // Resolve as soon as a short link is pasted, without
-                        // waiting for blur — paste gives us the full value
-                        // synchronously via clipboardData.
-                        const pasted = e.clipboardData.getData('text')
-                        if (pasted && isShortTikTokLink(pasted)) {
-                          // Defer so React applies the change first.
-                          setTimeout(() => maybeResolve(r.id, pasted), 0)
-                        }
-                      }}
+                      onChange={(e) => updateRow(r.id, { url: e.target.value })}
                       placeholder="https://www.tiktok.com/@..."
                       className={`w-full border rounded-lg px-3 py-2 font-dm text-sm text-go-dark placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition-all ${r.error ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
                     />
-                    {r.resolveStatus === 'resolving' && (
-                      <p className="font-dm text-[11px] text-gray-500 mt-1">🔄 Resolviendo link…</p>
-                    )}
-                    {r.resolveStatus === 'resolved' && (
-                      <p className="font-dm text-[11px] text-emerald-700 mt-1">✅ Link resuelto correctamente</p>
-                    )}
-                    {r.resolveStatus === 'failed' && (
-                      <p className="font-dm text-[11px] text-yellow-700 mt-1">
-                        ⚠️ No pudimos resolver este link. Intenta copiar el link desde tu perfil de TikTok.
-                      </p>
+                    {isShortTikTokLink(r.url) && (
+                      <div className="mt-2 bg-orange-50 border border-orange-300 rounded-lg px-3 py-2">
+                        <p className="font-dm text-xs font-semibold text-orange-900">
+                          ⚠️ Detectamos un link corto. Para que funcione correctamente, sigue estos pasos:
+                        </p>
+                        <ol className="font-dm text-xs text-orange-900/90 mt-1 list-decimal list-inside space-y-0.5">
+                          <li>Abre el link en TikTok</li>
+                          <li>Toca los 3 puntos (...) en tu video</li>
+                          <li>Toca &lsquo;Copiar link&rsquo;</li>
+                          <li>Pega el nuevo link aquí</li>
+                        </ol>
+                      </div>
                     )}
                   </div>
                   {rows.length > 1 && (
