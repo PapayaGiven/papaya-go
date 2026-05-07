@@ -1250,6 +1250,12 @@ export async function setBoostValidity(id: string, isValid: boolean, reason?: st
   return {}
 }
 
+// Thin wrapper used by the admin "❌ Inválido" modal flow. Accepts an
+// optional rejection reason; mirrors setBoostValidity(id, false, reason).
+export async function setBoostInvalid(boostId: string, rejectionReason?: string): Promise<{ error?: string }> {
+  return setBoostValidity(boostId, false, rejectionReason)
+}
+
 // ── Boost decision (separate from validity) ──────────────
 
 export async function setBoostStatus(id: string, status: BoostStatus, reason?: string): Promise<{ error?: string }> {

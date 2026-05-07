@@ -76,6 +76,7 @@ import {
   takeMonthlySnapshot,
   updateCreatorNivel,
   setBoostValidity,
+  setBoostInvalid,
   setBoostStatus,
   updateBoostRequest,
   syncTopPois,
@@ -936,19 +937,35 @@ function ShortLinkBadge({ url }: { url: string | null | undefined }) {
 
 const COMMON_INVALID_REASONS = [
   'No es un video de TikTok GO',
-  'Location tag incorrecto (tag blanco, no verde)',
+  'Tag incorrecto (tag blanco, no verde)',
   'Video duplicado',
-  'Link no funciona',
-  'No corresponde al tipo seleccionado (ACC/TTD)',
+  'Link no funciona / link corto',
+  'No corresponde al tipo (ACC/TTD)',
+  'Contenido inapropiado',
 ]
 
-function InvalidReasonModal({ onConfirm, onClose }: { onConfirm: (reason: string) => void; onClose: () => void }) {
+function InvalidReasonModal({ tiktokUrl, onConfirm, onClose }: {
+  tiktokUrl: string | null
+  onConfirm: (reason: string) => void
+  onClose: () => void
+}) {
   const [reason, setReason] = useState('')
   return (
     <div className="fixed inset-0 z-[180] bg-black/60 flex items-center justify-center px-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
-        <h3 className="font-syne font-bold text-lg text-go-dark mb-3">¿Por qué es inválido este video?</h3>
-        <p className="font-dm text-xs text-go-dark/60 mb-3">Se lo mostraremos a la creadora para que pueda corregir.</p>
+        <h3 className="font-syne font-bold text-lg text-go-dark mb-2">¿Por qué es inválido este video?</h3>
+        {tiktokUrl && (
+          <a
+            href={tiktokUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block font-dm text-xs text-go-orange hover:underline truncate bg-go-light/60 border border-go-border/60 rounded-md px-2 py-1.5 mb-3"
+            title={tiktokUrl}
+          >
+            🔗 {tiktokUrl}
+          </a>
+        )}
+        <p className="font-dm text-xs text-go-dark/60 mb-2">Elige una razón rápida o escribe abajo:</p>
         <div className="flex flex-wrap gap-1.5 mb-3">
           {COMMON_INVALID_REASONS.map(r => (
             <button
@@ -959,20 +976,25 @@ function InvalidReasonModal({ onConfirm, onClose }: { onConfirm: (reason: string
             >{r}</button>
           ))}
         </div>
+        <label className="block font-dm text-xs font-semibold text-go-dark/60 uppercase tracking-wide mb-1">
+          Motivo detallado (opcional)
+        </label>
         <textarea
           value={reason}
           onChange={(e) => setReason(e.target.value)}
-          placeholder="Motivo (se lo mostraremos a la creadora)…"
+          placeholder="Se lo mostraremos a la creadora para que pueda corregir…"
           rows={3}
           className="w-full border border-go-border rounded-lg px-3 py-2 font-dm text-sm focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange"
         />
         <div className="flex gap-2 mt-4">
           <button
-            disabled={!reason.trim()}
+            onClick={onClose}
+            className="flex-1 bg-go-dark/[0.06] text-go-dark/70 font-dm font-semibold text-sm py-2.5 rounded-lg hover:bg-go-dark/[0.1]"
+          >Cancelar</button>
+          <button
             onClick={() => onConfirm(reason.trim())}
-            className="flex-1 bg-red-500 text-white font-dm font-bold text-sm py-2.5 rounded-lg hover:bg-red-600 disabled:opacity-40"
-          >Marcar inválido</button>
-          <button onClick={onClose} className="flex-1 bg-go-dark/[0.06] text-go-dark/70 font-dm font-semibold text-sm py-2.5 rounded-lg">Cancelar</button>
+            className="flex-1 bg-red-500 text-white font-dm font-bold text-sm py-2.5 rounded-lg hover:bg-red-600"
+          >Marcar como inválido →</button>
         </div>
       </div>
     </div>
@@ -1066,7 +1088,7 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
   const [typeFilter, setTypeFilter] = useState<'all' | 'ACC' | 'TTD'>('all')
   const [editing, setEditing] = useState<{ id: string; url: string; type: 'ACC' | 'TTD' } | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [invalidatingId, setInvalidatingId] = useState<string | null>(null)
+  const [invalidating, setInvalidating] = useState<{ id: string; url: string | null } | null>(null)
   function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
 
   const filtered = typeFilter === 'all' ? boosts : boosts.filter(b => b.video_type === typeFilter)
@@ -1140,7 +1162,7 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
                         const r = await setBoostValidity(b.id, true)
                         if (r.error) fb(`Error: ${r.error}`); else fb('✓ Marcado válido')
                       })}
-                      onMarkInvalid={() => setInvalidatingId(b.id)}
+                      onMarkInvalid={() => setInvalidating({ id: b.id, url: b.tiktok_url || b.video_url || null })}
                     />
                   </td>
                   <td className="px-4 py-3">
@@ -1180,13 +1202,14 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
       <TikTokPreviewModal url={previewUrl} onClose={() => setPreviewUrl(null)} />
 
       {/* Invalid-reason modal */}
-      {invalidatingId && (
+      {invalidating && (
         <InvalidReasonModal
-          onClose={() => setInvalidatingId(null)}
+          tiktokUrl={invalidating.url}
+          onClose={() => setInvalidating(null)}
           onConfirm={(reason) => startTransition(async () => {
-            const r = await setBoostValidity(invalidatingId, false, reason)
+            const r = await setBoostInvalid(invalidating.id, reason)
             if (r.error) fb(`Error: ${r.error}`)
-            else { fb('✓ Marcado inválido'); setInvalidatingId(null) }
+            else { fb('❌ Video marcado como inválido'); setInvalidating(null) }
           })}
         />
       )}
@@ -3617,7 +3640,7 @@ function VideoTrackerSection({
   const [rejectReason, setRejectReason] = useState('')
   const [editing, setEditing] = useState<{ id: string; url: string; type: 'ACC' | 'TTD' } | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [invalidatingId, setInvalidatingId] = useState<string | null>(null)
+  const [invalidating, setInvalidating] = useState<{ id: string; url: string | null } | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
   function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 4000) }
 
@@ -3745,7 +3768,7 @@ function VideoTrackerSection({
                                         const r = await setBoostValidity(req.id, true)
                                         if (r.error) fb(`Error: ${r.error}`); else fb('✓ Marcado válido')
                                       })}
-                                      onMarkInvalid={() => setInvalidatingId(req.id)}
+                                      onMarkInvalid={() => setInvalidating({ id: req.id, url: req.tiktok_url || req.video_url || null })}
                                     />
                                     {rejectingId === req.id ? (
                                       <div className="flex gap-1 items-center">
@@ -3813,13 +3836,14 @@ function VideoTrackerSection({
       <TikTokPreviewModal url={previewUrl} onClose={() => setPreviewUrl(null)} />
 
       {/* Invalid-reason modal */}
-      {invalidatingId && (
+      {invalidating && (
         <InvalidReasonModal
-          onClose={() => setInvalidatingId(null)}
+          tiktokUrl={invalidating.url}
+          onClose={() => setInvalidating(null)}
           onConfirm={(reason) => startTransition(async () => {
-            const r = await setBoostValidity(invalidatingId, false, reason)
+            const r = await setBoostInvalid(invalidating.id, reason)
             if (r.error) fb(`Error: ${r.error}`)
-            else { fb('✓ Marcado inválido'); setInvalidatingId(null) }
+            else { fb('❌ Video marcado como inválido'); setInvalidating(null) }
           })}
         />
       )}
