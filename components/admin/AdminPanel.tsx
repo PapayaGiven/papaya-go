@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useTransition, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import type {
   Creator,
   POI,
@@ -990,20 +991,31 @@ function ResolveLinkButton({
 // ── Invalid-reason modal (shown when admin marks a video invalid) ────
 
 const COMMON_INVALID_REASONS = [
-  'No es un video de TikTok GO',
-  'Tag incorrecto (tag blanco, no verde)',
+  'No es TikTok GO',
+  'Tag incorrecto (blanco, no verde)',
   'Video duplicado',
-  'Link no funciona / link corto',
-  'No corresponde al tipo (ACC/TTD)',
+  'Link no funciona',
+  'No es ACC/TTD correcto',
   'Contenido inapropiado',
 ]
 
-function InvalidReasonModal({ tiktokUrl, onConfirm, onClose }: {
+// Controlled modal: parent owns `reason` so the field state lives in the
+// {open, boostId, url, reason} state object the spec describes. Parent also
+// owns onConfirm timing — we don't fire any network call until the admin
+// clicks "Marcar inválido →".
+function InvalidReasonModal({
+  tiktokUrl,
+  reason,
+  onReasonChange,
+  onConfirm,
+  onClose,
+}: {
   tiktokUrl: string | null
-  onConfirm: (reason: string) => void
+  reason: string
+  onReasonChange: (next: string) => void
+  onConfirm: () => void
   onClose: () => void
 }) {
-  const [reason, setReason] = useState('')
   return (
     <div className="fixed inset-0 z-[180] bg-black/60 flex items-center justify-center px-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
@@ -1025,7 +1037,7 @@ function InvalidReasonModal({ tiktokUrl, onConfirm, onClose }: {
             <button
               key={r}
               type="button"
-              onClick={() => setReason(r)}
+              onClick={() => onReasonChange(r)}
               className="text-[11px] font-semibold bg-go-dark/[0.05] text-go-dark/70 hover:bg-go-dark/[0.1] px-2.5 py-1 rounded-md"
             >{r}</button>
           ))}
@@ -1035,7 +1047,7 @@ function InvalidReasonModal({ tiktokUrl, onConfirm, onClose }: {
         </label>
         <textarea
           value={reason}
-          onChange={(e) => setReason(e.target.value)}
+          onChange={(e) => onReasonChange(e.target.value)}
           placeholder="Se lo mostraremos a la creadora para que pueda corregir…"
           rows={3}
           className="w-full border border-go-border rounded-lg px-3 py-2 font-dm text-sm focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange"
@@ -1046,9 +1058,9 @@ function InvalidReasonModal({ tiktokUrl, onConfirm, onClose }: {
             className="flex-1 bg-go-dark/[0.06] text-go-dark/70 font-dm font-semibold text-sm py-2.5 rounded-lg hover:bg-go-dark/[0.1]"
           >Cancelar</button>
           <button
-            onClick={() => onConfirm(reason.trim())}
+            onClick={onConfirm}
             className="flex-1 bg-red-500 text-white font-dm font-bold text-sm py-2.5 rounded-lg hover:bg-red-600"
-          >Marcar como inválido →</button>
+          >Marcar inválido →</button>
         </div>
       </div>
     </div>
@@ -1138,12 +1150,14 @@ function BoostDecisionCell({
 // ── Boosts Tab ──────────────────────────────────────
 
 function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startTransition: (fn: () => void) => void }) {
+  const router = useRouter()
   const [feedback, setFeedback] = useState<string | null>(null)
   const [typeFilter, setTypeFilter] = useState<'all' | 'ACC' | 'TTD'>('all')
   const [editing, setEditing] = useState<{ id: string; url: string; type: 'ACC' | 'TTD' } | null>(null)
   const [preview, setPreview] = useState<{ url: string; boostId: string } | null>(null)
-  const [invalidating, setInvalidating] = useState<{ id: string; url: string | null } | null>(null)
+  const [rejectModal, setRejectModal] = useState<{ open: boolean; boostId: string | null; url: string | null; reason: string }>({ open: false, boostId: null, url: null, reason: '' })
   function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
+  function closeRejectModal() { setRejectModal({ open: false, boostId: null, url: null, reason: '' }) }
 
   const filtered = typeFilter === 'all' ? boosts : boosts.filter(b => b.video_type === typeFilter)
 
@@ -1220,7 +1234,10 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
                         const r = await setBoostValidity(b.id, true)
                         if (r.error) fb(`Error: ${r.error}`); else fb('✓ Marcado válido')
                       })}
-                      onMarkInvalid={() => setInvalidating({ id: b.id, url: b.tiktok_url || b.video_url || null })}
+                      onMarkInvalid={() => {
+                        console.log(`Inválido button clicked for boost ID: ${b.id}`)
+                        setRejectModal({ open: true, boostId: b.id, url: b.tiktok_url || b.video_url || null, reason: '' })
+                      }}
                     />
                   </td>
                   <td className="px-4 py-3">
@@ -1265,15 +1282,23 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
       />
 
       {/* Invalid-reason modal */}
-      {invalidating && (
+      {rejectModal.open && (
         <InvalidReasonModal
-          tiktokUrl={invalidating.url}
-          onClose={() => setInvalidating(null)}
-          onConfirm={(reason) => startTransition(async () => {
-            const r = await setBoostInvalid(invalidating.id, reason)
-            if (r.error) fb(`Error: ${r.error}`)
-            else { fb('❌ Video marcado como inválido'); setInvalidating(null) }
-          })}
+          tiktokUrl={rejectModal.url}
+          reason={rejectModal.reason}
+          onReasonChange={(next) => setRejectModal((m) => ({ ...m, reason: next }))}
+          onClose={closeRejectModal}
+          onConfirm={() => {
+            const { boostId, reason } = rejectModal
+            if (!boostId) return
+            startTransition(async () => {
+              const r = await setBoostInvalid(boostId, reason.trim())
+              if (r.error) { fb(`Error: ${r.error}`); return }
+              fb('❌ Video marcado como inválido')
+              closeRejectModal()
+              router.refresh()
+            })
+          }}
         />
       )}
 
@@ -3703,9 +3728,11 @@ function VideoTrackerSection({
   const [rejectReason, setRejectReason] = useState('')
   const [editing, setEditing] = useState<{ id: string; url: string; type: 'ACC' | 'TTD' } | null>(null)
   const [preview, setPreview] = useState<{ url: string; boostId: string } | null>(null)
-  const [invalidating, setInvalidating] = useState<{ id: string; url: string | null } | null>(null)
+  const [rejectModal, setRejectModal] = useState<{ open: boolean; boostId: string | null; url: string | null; reason: string }>({ open: false, boostId: null, url: null, reason: '' })
   const [feedback, setFeedback] = useState<string | null>(null)
+  const router = useRouter()
   function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 4000) }
+  function closeRejectModal() { setRejectModal({ open: false, boostId: null, url: null, reason: '' }) }
 
   const requestsByCreator = new Map<string, BoostRequest[]>()
   for (const r of boostRequests) {
@@ -3835,7 +3862,10 @@ function VideoTrackerSection({
                                         const r = await setBoostValidity(req.id, true)
                                         if (r.error) fb(`Error: ${r.error}`); else fb('✓ Marcado válido')
                                       })}
-                                      onMarkInvalid={() => setInvalidating({ id: req.id, url: req.tiktok_url || req.video_url || null })}
+                                      onMarkInvalid={() => {
+                                        console.log(`Inválido button clicked for boost ID: ${req.id}`)
+                                        setRejectModal({ open: true, boostId: req.id, url: req.tiktok_url || req.video_url || null, reason: '' })
+                                      }}
                                     />
                                     {rejectingId === req.id ? (
                                       <div className="flex gap-1 items-center">
@@ -3908,15 +3938,23 @@ function VideoTrackerSection({
       />
 
       {/* Invalid-reason modal */}
-      {invalidating && (
+      {rejectModal.open && (
         <InvalidReasonModal
-          tiktokUrl={invalidating.url}
-          onClose={() => setInvalidating(null)}
-          onConfirm={(reason) => startTransition(async () => {
-            const r = await setBoostInvalid(invalidating.id, reason)
-            if (r.error) fb(`Error: ${r.error}`)
-            else { fb('❌ Video marcado como inválido'); setInvalidating(null) }
-          })}
+          tiktokUrl={rejectModal.url}
+          reason={rejectModal.reason}
+          onReasonChange={(next) => setRejectModal((m) => ({ ...m, reason: next }))}
+          onClose={closeRejectModal}
+          onConfirm={() => {
+            const { boostId, reason } = rejectModal
+            if (!boostId) return
+            startTransition(async () => {
+              const r = await setBoostInvalid(boostId, reason.trim())
+              if (r.error) { fb(`Error: ${r.error}`); return }
+              fb('❌ Video marcado como inválido')
+              closeRejectModal()
+              router.refresh()
+            })
+          }}
         />
       )}
 

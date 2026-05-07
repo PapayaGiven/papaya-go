@@ -1200,6 +1200,7 @@ async function adjustCreatorCounters(
 // ── Validation: counts toward the monthly goal ───────────
 
 export async function setBoostValidity(id: string, isValid: boolean, reason?: string): Promise<{ error?: string }> {
+  console.log(`[setBoostValidity] id=${id} → isValid=${isValid}, reason=${reason ? `"${reason.slice(0, 40)}…"` : '(none)'}`)
   const supabase = createAdminClient()
   const { data: row, error: readErr } = await supabase
     .from('go_boost_requests')
@@ -1209,9 +1210,12 @@ export async function setBoostValidity(id: string, isValid: boolean, reason?: st
   if (readErr) return { error: readErr.message }
   if (!row) return { error: 'Video no encontrado' }
 
-  const wasValid = row.is_valid === true
-  if (wasValid === isValid) {
-    // Idempotent: no transition, nothing to do.
+  // is_valid is tri-state (null = unreviewed, true = valid, false = invalid).
+  // Only short-circuit when the EXACT same state is already persisted. The
+  // common path null → false (admin rejecting a fresh submission) used to be
+  // silently treated as a no-op because `(null === true) === false` evaluates
+  // to true; that's the bug this guard now avoids.
+  if (row.is_valid === isValid) {
     return {}
   }
 
@@ -1231,16 +1235,22 @@ export async function setBoostValidity(id: string, isValid: boolean, reason?: st
     .eq('id', id)
   if (error) return { error: error.message }
 
-  if (row.creator_id && isThisMonthIso(row.created_at)) {
+  // Counters track only "currently contributing" rows. Move them only when
+  // the contribution state actually flips, derived from prior is_valid:
+  //   null → true:  +1   null → false: 0   true → false: -1   false → true: +1
+  const wasContributing = row.is_valid === true
+  const willContribute = isValid === true
+  const counterDelta: 0 | 1 | -1 =
+    wasContributing === willContribute ? 0 : (willContribute ? 1 : -1)
+
+  if (counterDelta !== 0 && row.creator_id && isThisMonthIso(row.created_at)) {
     await adjustCreatorCounters(
       supabase,
       row.creator_id,
       row.video_type as 'ACC' | 'TTD' | null,
-      isValid ? 1 : -1,
+      counterDelta,
     )
-    // After validating a video that counts, check whether the creator just
-    // crossed into the next nivel (and possibly the one after, etc.).
-    if (isValid) {
+    if (counterDelta === 1) {
       console.log(`[setBoostValidity] running level-up check after validating boost ${id}`)
       await checkAndApplyLevelUps(row.creator_id)
     }
