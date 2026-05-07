@@ -18,6 +18,7 @@ import type {
   CreatorSnapshot,
   LevelUpEvent,
   TopPoi,
+  BoostStatus,
 } from '@/lib/types'
 import { NIVEL_NAMES, POI_TYPE_LABELS, CHALLENGE_TYPE_LABELS } from '@/lib/types'
 import {
@@ -80,7 +81,10 @@ import {
   syncTopPois,
   updateTopPoi,
   deleteTopPoi,
+  resetCalendarMonth,
+  adminSubmitVideosForCreator,
 } from '@/app/admin/actions'
+import TikTokPreviewModal, { PreviewButton } from './TikTokPreviewModal'
 
 // ── Types ─────────────────────────────────────────────
 
@@ -691,12 +695,311 @@ function NivelRewardsTab({ rewards, startTransition }: { rewards: NivelReward[];
   )
 }
 
+// ── Admin: submit videos for a creator (modal body) ─────
+//
+// Shared between the per-creator "🎬 Agregar Videos" button in CreatorsTab
+// and the bulk "📥 Importar Videos de Mayo" button on the admin Dashboard.
+// Caller supplies an optional preselected creatorId (per-creator flow) or
+// lets the admin pick from a dropdown (bulk flow).
+
+interface SubmitRow { url: string; type: 'ACC' | 'TTD' | null; boost: boolean; error?: string }
+
+function AdminVideoSubmitModal({
+  creators, defaultCreatorId, defaultDate, onClose, startTransition,
+}: {
+  creators: Creator[]
+  defaultCreatorId?: string
+  defaultDate?: string
+  onClose: () => void
+  startTransition: (cb: () => void) => void
+}) {
+  const [creatorId, setCreatorId] = useState(defaultCreatorId ?? '')
+  const [date, setDate] = useState(defaultDate ?? new Date().toISOString().split('T')[0])
+  const [rows, setRows] = useState<SubmitRow[]>([{ url: '', type: null, boost: false }])
+  const [topError, setTopError] = useState('')
+  const [done, setDone] = useState<{ inserted: number; creatorName: string } | null>(null)
+
+  const selectedCreator = creators.find(c => c.id === creatorId)
+
+  function update(i: number, patch: Partial<SubmitRow>) {
+    setRows((p) => p.map((r, idx) => idx === i ? { ...r, ...patch, error: undefined } : r))
+    setTopError('')
+  }
+  function addRow() { setRows((p) => [...p, { url: '', type: null, boost: false }]) }
+  function removeRow(i: number) { setRows((p) => p.length === 1 ? p : p.filter((_, idx) => idx !== i)) }
+
+  function submit() {
+    setTopError('')
+    if (!creatorId) { setTopError('Selecciona una creadora'); return }
+    const cleaned = rows.map((r) => ({ ...r, error: undefined as string | undefined }))
+    cleaned.forEach((r) => {
+      if (!r.url.trim()) r.error = 'URL requerida'
+      else if (!r.type) r.error = 'Selecciona ACC o TTD'
+    })
+    if (cleaned.some(r => r.error)) { setRows(cleaned); setTopError('Revisa los errores'); return }
+
+    startTransition(async () => {
+      const res = await adminSubmitVideosForCreator({
+        creator_id: creatorId,
+        date,
+        videos: cleaned.map(r => ({ tiktok_url: r.url, video_type: r.type as 'ACC' | 'TTD', boost_requested: r.boost })),
+      })
+      if (res.error) { setTopError(res.error); return }
+      if (res.rowErrors && res.rowErrors.length) {
+        const next = [...cleaned]
+        for (const e of res.rowErrors) if (next[e.index]) next[e.index].error = e.message
+        setRows(next)
+        setTopError('Revisa los errores marcados')
+        return
+      }
+      setDone({ inserted: res.inserted ?? 0, creatorName: selectedCreator?.full_name ?? selectedCreator?.email ?? 'creator' })
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 z-[180] bg-black/60 flex items-center justify-center px-4 py-8" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-full overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between mb-4 gap-3">
+          <h3 className="font-syne font-bold text-lg text-go-dark">
+            {selectedCreator ? `Agregar videos para ${selectedCreator.full_name ?? selectedCreator.email}` : 'Importar videos'}
+          </h3>
+          <button onClick={onClose} className="text-go-dark/40 hover:text-go-dark text-lg leading-none">×</button>
+        </div>
+
+        {done ? (
+          <div className="text-center py-6">
+            <p className="font-dm text-go-orange font-bold text-base">✅ {done.inserted} videos agregados para {done.creatorName}</p>
+            <p className="font-dm text-xs text-go-dark/60 mt-2">
+              {date >= new Date().toISOString().split('T')[0].slice(0, 7) + '-01'
+                ? 'Los contadores de este mes se actualizaron.'
+                : 'Fecha en mes pasado — los contadores actuales no se modificaron.'}
+            </p>
+            <button onClick={onClose} className="mt-4 bg-go-orange text-white font-dm font-semibold text-sm px-4 py-2 rounded-lg">Cerrar</button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {!defaultCreatorId && (
+              <div>
+                <label className="block font-dm text-xs font-semibold text-go-dark/60 uppercase mb-1">Creadora</label>
+                <select
+                  value={creatorId}
+                  onChange={(e) => setCreatorId(e.target.value)}
+                  className="w-full border border-go-border rounded-lg px-3 py-2 font-dm text-sm"
+                >
+                  <option value="">Selecciona…</option>
+                  {creators.filter(c => c.status === 'active').map(c => (
+                    <option key={c.id} value={c.id}>{c.full_name ?? c.email}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div>
+              <label className="block font-dm text-xs font-semibold text-go-dark/60 uppercase mb-1">Fecha de los videos</label>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full border border-go-border rounded-lg px-3 py-2 font-dm text-sm"
+              />
+            </div>
+
+            <p className="font-dm text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+              ℹ️ <strong>is_valid = true</strong> automáticamente — estos videos contarán para la creadora.
+            </p>
+
+            <div className="space-y-2">
+              {rows.map((r, i) => (
+                <div key={i} className={`p-3 rounded-xl border ${r.error ? 'border-red-300 bg-red-50' : 'border-go-border bg-go-light/50'}`}>
+                  <div className="flex gap-2 mb-2">
+                    <input
+                      type="url"
+                      value={r.url}
+                      onChange={(e) => update(i, { url: e.target.value })}
+                      placeholder="https://www.tiktok.com/@..."
+                      className="flex-1 border border-go-border rounded-md px-2 py-1.5 font-dm text-sm bg-white"
+                    />
+                    {rows.length > 1 && (
+                      <button onClick={() => removeRow(i)} className="text-red-400 px-2">×</button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex gap-1">
+                      {(['ACC', 'TTD'] as const).map(t => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => update(i, { type: t })}
+                          className={`text-xs font-semibold px-3 py-1 rounded-md border ${r.type === t ? 'bg-go-orange text-white border-go-orange' : 'bg-white text-go-dark/60 border-go-border'}`}
+                        >{t}</button>
+                      ))}
+                    </div>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" checked={r.boost} onChange={(e) => update(i, { boost: e.target.checked })} className="w-3.5 h-3.5 accent-go-orange" />
+                      <span className="font-dm text-xs text-go-dark/70">🚀 Boost</span>
+                    </label>
+                    {r.error && <span className="font-dm text-xs text-red-600 ml-auto">{r.error}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <button onClick={addRow} className="w-full border-2 border-dashed border-go-orange/40 text-go-orange font-dm text-xs font-semibold py-2 rounded-lg hover:bg-go-orange/5">+ Agregar otro video</button>
+
+            {topError && <p className="font-dm text-sm text-red-600">{topError}</p>}
+
+            <div className="flex gap-2 pt-2">
+              <button onClick={submit} className="flex-1 bg-go-orange text-white font-dm font-bold text-sm py-2.5 rounded-lg hover:bg-go-orange/90">Enviar videos</button>
+              <button onClick={onClose} className="flex-1 bg-go-dark/[0.06] text-go-dark/70 font-dm font-semibold text-sm py-2.5 rounded-lg">Cancelar</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Reset Mayo modal ────────────────────────────────────
+
+function ResetMonthModal({ onClose, startTransition }: { onClose: () => void; startTransition: (cb: () => void) => void }) {
+  const [step, setStep] = useState<1 | 2>(1)
+  const [confirm, setConfirm] = useState('')
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const [done, setDone] = useState<{ backedUp: number } | null>(null)
+
+  function fb(msg: string) { setFeedback(msg) }
+
+  return (
+    <div className="fixed inset-0 z-[180] bg-black/60 flex items-center justify-center px-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+        {done ? (
+          <div className="text-center">
+            <p className="font-dm text-emerald-700 font-bold text-base mb-2">✅ Reset completado</p>
+            <p className="font-dm text-sm text-go-dark/70">Backup de {done.backedUp} videos guardado. Contadores en 0.</p>
+            <button onClick={onClose} className="mt-4 bg-go-orange text-white font-dm font-semibold text-sm px-4 py-2 rounded-lg">Cerrar</button>
+          </div>
+        ) : step === 1 ? (
+          <>
+            <h3 className="font-syne font-bold text-lg text-red-700 mb-3">⚠️ ATENCIÓN</h3>
+            <p className="font-dm text-sm text-go-dark/80 mb-4">
+              Esto eliminará TODOS los videos de Mayo 2026 y pondrá los contadores en 0. Se guardará un backup primero. ¿Estás segura?
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => setStep(2)} className="flex-1 bg-red-500 text-white font-dm font-bold text-sm py-2.5 rounded-lg hover:bg-red-600">Continuar →</button>
+              <button onClick={onClose} className="flex-1 bg-go-dark/[0.06] text-go-dark/70 font-dm font-semibold text-sm py-2.5 rounded-lg">Cancelar</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h3 className="font-syne font-bold text-lg text-red-700 mb-3">Confirma escribiendo:</h3>
+            <p className="font-mono font-bold text-base text-go-dark mb-3">RESET MAYO</p>
+            <input
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              placeholder="Escribe RESET MAYO"
+              className="w-full border-2 border-red-200 rounded-lg px-3 py-2 font-mono text-sm mb-3"
+              autoFocus
+            />
+            {feedback && <p className="font-dm text-sm text-red-600 mb-2">{feedback}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={() => startTransition(async () => {
+                  fb('')
+                  const r = await resetCalendarMonth(5, 2026, confirm)
+                  if (r.error) { fb(r.error); return }
+                  setDone({ backedUp: r.backedUp ?? 0 })
+                })}
+                className="flex-1 bg-red-500 text-white font-dm font-bold text-sm py-2.5 rounded-lg hover:bg-red-600"
+              >🔄 Resetear Mayo</button>
+              <button onClick={onClose} className="flex-1 bg-go-dark/[0.06] text-go-dark/70 font-dm font-semibold text-sm py-2.5 rounded-lg">Cancelar</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Validity / Boost cell helpers ───────────────────────
+
+// Validity is tri-state. Show only the relevant action button per state.
+function ValidityCell({ isValid, onSet }: { isValid: boolean | null; onSet: (v: boolean) => void }) {
+  if (isValid === true) {
+    return (
+      <div className="flex flex-col gap-1 items-start">
+        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">✅ Válido</span>
+        <button
+          onClick={() => onSet(false)}
+          className="text-[10px] font-semibold text-go-dark/70 bg-go-dark/[0.05] hover:bg-go-dark/[0.1] px-2 py-0.5 rounded-md"
+        >↩️ Marcar inválido</button>
+      </div>
+    )
+  }
+  if (isValid === false) {
+    return (
+      <div className="flex flex-col gap-1 items-start">
+        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">❌ Inválido</span>
+        <button
+          onClick={() => onSet(true)}
+          className="text-[10px] font-semibold text-go-dark/70 bg-go-dark/[0.05] hover:bg-go-dark/[0.1] px-2 py-0.5 rounded-md"
+        >↩️ Marcar válido</button>
+      </div>
+    )
+  }
+  // Not reviewed yet: both options
+  return (
+    <div className="flex flex-col gap-1 items-start">
+      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">⏳ Sin revisar</span>
+      <div className="flex gap-1">
+        <button
+          onClick={() => onSet(true)}
+          className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700"
+        >✅ Válido</button>
+        <button
+          onClick={() => onSet(false)}
+          className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-red-500 text-white hover:bg-red-600"
+        >❌ Inválido</button>
+      </div>
+    </div>
+  )
+}
+
+// Boost decision is gated on boost_requested. If the creator didn't ask for
+// a boost, admin sees only "Sin solicitud" muted text and no buttons.
+function BoostDecisionCell({
+  boostStatus, boostRequested, onApprove, onReject,
+}: {
+  boostStatus: BoostStatus
+  boostRequested: boolean
+  onApprove: () => void
+  onReject: () => void
+}) {
+  if (!boostRequested) {
+    return <span className="font-dm text-[10px] text-go-dark/40">Sin solicitud</span>
+  }
+  if (boostStatus === 'boosteado') {
+    return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">🚀 Boosteado</span>
+  }
+  if (boostStatus === 'rechazado') {
+    return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">✗ Sin boost</span>
+  }
+  return (
+    <div className="flex flex-col gap-1 items-start">
+      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">🚀 Boost solicitado</span>
+      <div className="flex gap-1">
+        <button onClick={onApprove} className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-orange-500 text-white hover:bg-orange-600">🚀 Boost</button>
+        <button onClick={onReject} className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-gray-200 text-gray-600 hover:bg-gray-300">✗</button>
+      </div>
+    </div>
+  )
+}
+
 // ── Boosts Tab ──────────────────────────────────────
 
 function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startTransition: (fn: () => void) => void }) {
   const [feedback, setFeedback] = useState<string | null>(null)
   const [typeFilter, setTypeFilter] = useState<'all' | 'ACC' | 'TTD'>('all')
   const [editing, setEditing] = useState<{ id: string; url: string; type: 'ACC' | 'TTD' } | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
 
   const filtered = typeFilter === 'all' ? boosts : boosts.filter(b => b.video_type === typeFilter)
@@ -754,66 +1057,40 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
                   </td>
                   <td className="px-4 py-3 text-xs">
                     {(b.tiktok_url || b.video_url) ? (
-                      <a href={b.tiktok_url || b.video_url || '#'} target="_blank" rel="noopener noreferrer" className="text-go-orange hover:underline truncate block max-w-[180px]">
-                        {b.tiktok_url || b.video_url}
-                      </a>
+                      <div className="flex items-center gap-1.5">
+                        <a href={b.tiktok_url || b.video_url || '#'} target="_blank" rel="noopener noreferrer" className="text-go-orange hover:underline truncate block max-w-[180px]">
+                          {b.tiktok_url || b.video_url}
+                        </a>
+                        <PreviewButton url={b.tiktok_url || b.video_url} onOpen={() => setPreviewUrl(b.tiktok_url || b.video_url)} />
+                      </div>
                     ) : '—'}
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex flex-col gap-1">
-                      {b.is_valid === true
-                        ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 self-start">✅ Válido</span>
-                        : <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 self-start">⏳ Sin revisar</span>}
-                      <div className="flex gap-1">
-                        <button
-                          disabled={b.is_valid === true}
-                          onClick={() => startTransition(async () => {
-                            const r = await setBoostValidity(b.id, true)
-                            if (r.error) fb(`Error: ${r.error}`); else fb('✓ Marcado válido')
-                          })}
-                          className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40"
-                        >✅ Válido</button>
-                        <button
-                          disabled={b.is_valid !== true}
-                          onClick={() => startTransition(async () => {
-                            const r = await setBoostValidity(b.id, false)
-                            if (r.error) fb(`Error: ${r.error}`); else fb('✓ Marcado inválido')
-                          })}
-                          className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-gray-200 text-gray-600 hover:bg-gray-300 disabled:opacity-40"
-                        >❌</button>
-                      </div>
-                    </div>
+                    <ValidityCell
+                      isValid={b.is_valid}
+                      onSet={(v) => startTransition(async () => {
+                        const r = await setBoostValidity(b.id, v)
+                        if (r.error) fb(`Error: ${r.error}`); else fb(v ? '✓ Marcado válido' : '✓ Marcado inválido')
+                      })}
+                    />
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex flex-col gap-1">
-                      {b.boost_status === 'boosteado'
-                        ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 self-start">🚀 Boosteado</span>
-                        : b.boost_status === 'rechazado'
-                          ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 self-start">✗ Sin boost</span>
-                          : <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 self-start">⏳ Pendiente</span>}
-                      <div className="flex gap-1">
-                        <button
-                          disabled={b.boost_status === 'boosteado'}
-                          onClick={() => startTransition(async () => {
-                            const r = await setBoostStatus(b.id, 'boosteado')
-                            if (r.error) fb(`Error: ${r.error}`); else fb('✓ Boost aprobado')
-                          })}
-                          className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-40"
-                        >🚀 Boost</button>
-                        <button
-                          disabled={b.boost_status === 'rechazado'}
-                          onClick={() => {
-                            const reason = prompt('Razón para no boostear (visible para la creadora):') ?? ''
-                            if (!reason.trim()) return
-                            startTransition(async () => {
-                              const r = await setBoostStatus(b.id, 'rechazado', reason)
-                              if (r.error) fb(`Error: ${r.error}`); else fb('✓ Boost rechazado')
-                            })
-                          }}
-                          className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-gray-200 text-gray-600 hover:bg-gray-300 disabled:opacity-40"
-                        >✗</button>
-                      </div>
-                    </div>
+                    <BoostDecisionCell
+                      boostStatus={b.boost_status}
+                      boostRequested={!!b.boost_requested}
+                      onApprove={() => startTransition(async () => {
+                        const r = await setBoostStatus(b.id, 'boosteado')
+                        if (r.error) fb(`Error: ${r.error}`); else fb('✓ Boost aprobado')
+                      })}
+                      onReject={() => {
+                        const reason = prompt('Razón para no boostear (visible para la creadora):') ?? ''
+                        if (!reason.trim()) return
+                        startTransition(async () => {
+                          const r = await setBoostStatus(b.id, 'rechazado', reason)
+                          if (r.error) fb(`Error: ${r.error}`); else fb('✓ Boost rechazado')
+                        })
+                      }}
+                    />
                   </td>
                   <td className="px-4 py-3 text-go-dark/40 text-xs">{new Date(b.created_at).toLocaleDateString('es')}</td>
                   <td className="px-4 py-3">
@@ -829,6 +1106,9 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
           </table>
         </div>
       </div>
+
+      {/* TikTok preview modal */}
+      <TikTokPreviewModal url={previewUrl} onClose={() => setPreviewUrl(null)} />
 
       {/* Edit modal */}
       {editing && (
@@ -1358,6 +1638,7 @@ function CreatorsTab({
   const [feedback, setFeedback] = useState<string | null>(null)
   const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
   const [strategyId, setStrategyId] = useState<string | null>(null)
+  const [submittingForCreatorId, setSubmittingForCreatorId] = useState<string | null>(null)
   const [strategyForm, setStrategyForm] = useState({ acc_goal: '', ttd_goal: '', gmv_goal: '', special_hashtags: '', creative_brief: '', daily_quota: '', weekly_quota: '', monthly_quota: '' })
   const [internalStats, setInternalStats] = useState<{ today: number; week: number; month: number } | null>(null)
   const [planSlots, setPlanSlots] = useState<Array<{day_of_week: string; video_type: string; place_name: string; hashtags: string}>>([])
@@ -1453,6 +1734,14 @@ function CreatorsTab({
 
   return (
     <div className="space-y-4">
+      {submittingForCreatorId && (
+        <AdminVideoSubmitModal
+          creators={creators}
+          defaultCreatorId={submittingForCreatorId}
+          onClose={() => setSubmittingForCreatorId(null)}
+          startTransition={startTransition}
+        />
+      )}
       <div className="flex items-center justify-between">
         <h2 className="font-syne text-lg font-bold text-go-dark">Creators</h2>
         <ActionButton onClick={() => setShowAdd(!showAdd)}>
@@ -1708,6 +1997,9 @@ function CreatorsTab({
                           })
                         }}>
                           Estrategia
+                        </ActionButton>
+                        <ActionButton variant="ghost" onClick={() => setSubmittingForCreatorId(c.id)}>
+                          🎬 Agregar Videos
                         </ActionButton>
                         <ActionButton
                           variant="ghost"
@@ -3243,6 +3535,7 @@ function VideoTrackerSection({
   const [rejectingId, setRejectingId] = useState<string | null>(null)
   const [rejectReason, setRejectReason] = useState('')
   const [editing, setEditing] = useState<{ id: string; url: string; type: 'ACC' | 'TTD' } | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
   function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 4000) }
 
@@ -3266,7 +3559,7 @@ function VideoTrackerSection({
     const validThisMonth = thisMonth.filter(b => b.is_valid === true)
     const acc = validThisMonth.filter(b => b.video_type === 'ACC').length
     const ttd = validThisMonth.filter(b => b.video_type === 'TTD').length
-    const pending = thisMonth.filter(b => b.is_valid !== true).length
+    const pending = thisMonth.filter(b => b.is_valid == null).length
     const lastUpload = all.reduce<string | null>((latest, b) => {
       if (!latest || b.created_at > latest) return b.created_at
       return latest
@@ -3276,7 +3569,7 @@ function VideoTrackerSection({
 
   function filterRequests(reqs: BoostRequest[]) {
     if (filter === 'all') return reqs
-    if (filter === 'pending') return reqs.filter(r => r.is_valid !== true)
+    if (filter === 'pending') return reqs.filter(r => r.is_valid == null)
     return reqs.filter(r => r.video_type === filter)
   }
 
@@ -3360,64 +3653,17 @@ function VideoTrackerSection({
                                     >
                                       {req.tiktok_url || req.video_url || '(sin URL)'}
                                     </a>
+                                    <PreviewButton url={req.tiktok_url || req.video_url} onOpen={() => setPreviewUrl(req.tiktok_url || req.video_url)} />
                                   </div>
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    {/* Validity controls */}
-                                    {req.is_valid === true
-                                      ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">✅ Válido</span>
-                                      : <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">⏳ Sin revisar</span>}
-                                    <button
-                                      disabled={req.is_valid === true}
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                        startTransition(async () => {
-                                          const r = await setBoostValidity(req.id, true)
-                                          if (r.error) fb(`Error: ${r.error}`); else fb('✓ Marcado válido')
-                                        })
-                                      }}
-                                      className="text-[10px] font-semibold bg-emerald-600 text-white px-2 py-0.5 rounded-md hover:bg-emerald-700 disabled:opacity-40"
-                                    >✅ Válido</button>
-                                    <button
-                                      disabled={req.is_valid !== true}
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                        startTransition(async () => {
-                                          const r = await setBoostValidity(req.id, false)
-                                          if (r.error) fb(`Error: ${r.error}`); else fb('✓ Marcado inválido')
-                                        })
-                                      }}
-                                      className="text-[10px] font-semibold bg-gray-200 text-gray-700 px-2 py-0.5 rounded-md hover:bg-gray-300 disabled:opacity-40"
-                                    >❌ Inválido</button>
-
-                                    <span className="w-2" aria-hidden />
-
-                                    {/* Boost controls */}
-                                    {req.boost_status === 'boosteado'
-                                      ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">🚀 Boosteado</span>
-                                      : req.boost_status === 'rechazado'
-                                        ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">✗ Sin boost</span>
-                                        : <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">⏳ Pendiente boost</span>}
-                                    {rejectingId !== req.id && (
-                                      <>
-                                        <button
-                                          disabled={req.boost_status === 'boosteado'}
-                                          onClick={(e) => {
-                                            e.stopPropagation()
-                                            startTransition(async () => {
-                                              const r = await setBoostStatus(req.id, 'boosteado')
-                                              if (r.error) fb(`Error: ${r.error}`); else fb('✓ Boost aprobado')
-                                            })
-                                          }}
-                                          className="text-[10px] font-semibold bg-orange-500 text-white px-2 py-0.5 rounded-md hover:bg-orange-600 disabled:opacity-40"
-                                        >🚀 Boost</button>
-                                        <button
-                                          disabled={req.boost_status === 'rechazado'}
-                                          onClick={(e) => { e.stopPropagation(); setRejectingId(req.id); setRejectReason('') }}
-                                          className="text-[10px] font-semibold bg-gray-200 text-gray-700 px-2 py-0.5 rounded-md hover:bg-gray-300 disabled:opacity-40"
-                                        >✗ No boost</button>
-                                      </>
-                                    )}
-                                    {rejectingId === req.id && (
+                                  <div className="flex flex-wrap items-center gap-3">
+                                    <ValidityCell
+                                      isValid={req.is_valid}
+                                      onSet={(v) => startTransition(async () => {
+                                        const r = await setBoostValidity(req.id, v)
+                                        if (r.error) fb(`Error: ${r.error}`); else fb(v ? '✓ Marcado válido' : '✓ Marcado inválido')
+                                      })}
+                                    />
+                                    {rejectingId === req.id ? (
                                       <div className="flex gap-1 items-center">
                                         <input
                                           autoFocus
@@ -3443,6 +3689,16 @@ function VideoTrackerSection({
                                           className="text-[10px] font-semibold bg-go-dark/[0.06] text-go-dark/60 px-2 py-0.5 rounded-md"
                                         >Cancelar</button>
                                       </div>
+                                    ) : (
+                                      <BoostDecisionCell
+                                        boostStatus={req.boost_status}
+                                        boostRequested={!!req.boost_requested}
+                                        onApprove={() => startTransition(async () => {
+                                          const r = await setBoostStatus(req.id, 'boosteado')
+                                          if (r.error) fb(`Error: ${r.error}`); else fb('✓ Boost aprobado')
+                                        })}
+                                        onReject={() => { setRejectingId(req.id); setRejectReason('') }}
+                                      />
                                     )}
                                   </div>
                                   {req.boost_status === 'rechazado' && req.rejection_reason && (
@@ -3468,6 +3724,9 @@ function VideoTrackerSection({
           </table>
         </div>
       </div>
+
+      {/* TikTok preview modal */}
+      <TikTokPreviewModal url={previewUrl} onClose={() => setPreviewUrl(null)} />
 
       {/* Edit modal — same pattern as BoostsTab */}
       {editing && (
@@ -3550,7 +3809,7 @@ function CrecimientoTab({
   const regTtd = regularValid.filter(b => b.video_type === 'TTD').length
   const regSubmitted = regularBoostsThisMonth.length
   const regValid = regularValid.length
-  const regPendingReview = regularBoostsThisMonth.filter(b => b.is_valid !== true).length
+  const regPendingReview = regularBoostsThisMonth.filter(b => b.is_valid == null).length
   const regBoosted = regularBoostsThisMonth.filter(b => b.boost_status === 'boosteado').length
   const internalApprovedThisMonth = internalVideos.filter(v => v.status === 'approved' && v.approved_at && v.approved_at >= startOfMonth)
   const intAcc = internalApprovedThisMonth.filter(v => v.video_type === 'ACC').length
@@ -3871,7 +4130,7 @@ function AdminDashboardTab({
   const regTtd = regularValid.filter(b => b.video_type === 'TTD').length
   const regSubmitted = regularBoostsThisMonth.length
   const regValid = regularValid.length
-  const regPendingReview = regularBoostsThisMonth.filter(b => b.is_valid !== true).length
+  const regPendingReview = regularBoostsThisMonth.filter(b => b.is_valid == null).length
   const regBoosted = regularBoostsThisMonth.filter(b => b.boost_status === 'boosteado').length
 
   // Internal team aggregates — count approved videos this month by type
@@ -3969,8 +4228,34 @@ function AdminDashboardTab({
   // Level-ups this month
   const levelUpsThisMonth = levelUpEvents.filter((e) => e.leveled_up_at >= startOfMonth).length
 
+  // Modals
+  const [showResetMay, setShowResetMay] = useState(false)
+  const [showImport, setShowImport] = useState(false)
+
   return (
     <div className="space-y-6">
+      {showResetMay && <ResetMonthModal onClose={() => setShowResetMay(false)} startTransition={startTransition} />}
+      {showImport && (
+        <AdminVideoSubmitModal
+          creators={creators}
+          defaultDate="2026-05-01"
+          onClose={() => setShowImport(false)}
+          startTransition={startTransition}
+        />
+      )}
+
+      {/* Destructive / bulk-import controls */}
+      <div className="flex flex-wrap gap-2 justify-end">
+        <button
+          onClick={() => setShowImport(true)}
+          className="text-xs font-syne font-bold bg-go-dark/[0.06] text-go-dark hover:bg-go-dark/[0.1] px-4 py-2 rounded-lg"
+        >📥 Importar Videos de Mayo</button>
+        <button
+          onClick={() => setShowResetMay(true)}
+          className="text-xs font-syne font-bold bg-red-500 text-white hover:bg-red-600 px-4 py-2 rounded-lg"
+        >🔄 Reset Mayo</button>
+      </div>
+
       {/* Celebration line — level-ups this month */}
       {levelUpsThisMonth > 0 && (
         <div className="bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-4 flex items-center justify-between flex-wrap gap-2">

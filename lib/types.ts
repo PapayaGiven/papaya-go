@@ -187,8 +187,12 @@ export interface BoostRequest {
   rejection_reason: string | null
   // Split status (added 2026-05): is_valid drives video counting,
   // boost_status drives whether Papaya amplifies the video.
-  is_valid: boolean
+  // is_valid is tri-state: null = not reviewed, true = válido, false = inválido.
+  is_valid: boolean | null
   boost_status: BoostStatus
+  // Did the creator REQUEST a boost on submission? Admin only sees the
+  // boost approval buttons when this is true.
+  boost_requested: boolean
   created_at: string
 }
 

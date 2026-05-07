@@ -7,7 +7,7 @@ interface Video {
   tiktok_url: string
   video_type: 'ACC' | 'TTD' | null
   status: string
-  is_valid: boolean
+  is_valid: boolean | null
   boost_status: 'pending' | 'boosteado' | 'rechazado'
   rejection_reason: string | null
   created_at: string
@@ -19,9 +19,9 @@ function truncate(url: string, max = 36) {
   return url.length > max ? url.slice(0, max) + '...' : url
 }
 
-function validBadge(isValid: boolean, boostStatus: string) {
-  if (isValid) return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">✅ Video válido</span>
-  if (boostStatus === 'rechazado') return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">❌ Inválido</span>
+function validBadge(isValid: boolean | null) {
+  if (isValid === true) return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">✅ Video válido</span>
+  if (isValid === false) return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">❌ Inválido</span>
   return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">⏳ En revisión</span>
 }
 
@@ -44,7 +44,7 @@ export default function MisVideosCard({ videos, approved, pending }: { videos: V
     if (filter === 'all') return true
     if (filter === 'ACC' || filter === 'TTD') return v.video_type === filter
     if (filter === 'approved') return v.is_valid === true
-    if (filter === 'pending') return v.is_valid !== true
+    if (filter === 'pending') return v.is_valid == null
     return true
   })
 
@@ -99,7 +99,7 @@ export default function MisVideosCard({ videos, approved, pending }: { videos: V
                 </span>
               </div>
               <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                {validBadge(v.is_valid, v.boost_status)}
+                {validBadge(v.is_valid)}
                 {boostBadge(v.boost_status)}
               </div>
               {v.boost_status === 'rechazado' && v.rejection_reason && (

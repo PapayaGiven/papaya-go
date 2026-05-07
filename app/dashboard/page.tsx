@@ -61,7 +61,7 @@ export default async function DashboardPage() {
     rewardsByNivel[r.nivel].push(r.reward_name)
   }
 
-  type MyBoost = { id: string; tiktok_url: string; video_type: 'ACC' | 'TTD' | null; status: string; is_valid: boolean; boost_status: 'pending' | 'boosteado' | 'rechazado'; rejection_reason: string | null; created_at: string }
+  type MyBoost = { id: string; tiktok_url: string; video_type: 'ACC' | 'TTD' | null; status: string; is_valid: boolean | null; boost_status: 'pending' | 'boosteado' | 'rechazado'; rejection_reason: string | null; created_at: string }
   const myBoostsThisMonth = (myBoostsRes.data ?? []) as MyBoost[]
   const submittedAcc = myBoostsThisMonth.filter(b => b.video_type === 'ACC').length
   const submittedTtd = myBoostsThisMonth.filter(b => b.video_type === 'TTD').length
@@ -71,7 +71,7 @@ export default async function DashboardPage() {
   const liveVideosThisMonth = liveAccThisMonth + liveTtdThisMonth
   const submittedVideosThisMonth = submittedAcc + submittedTtd
   // "Pending review" = not yet validated (regardless of boost decision).
-  const pendingThisMonth = myBoostsThisMonth.filter(b => b.is_valid !== true).length
+  const pendingThisMonth = myBoostsThisMonth.filter(b => b.is_valid == null).length
 
   const todayPlan = todayPlanRes.data as { video_type: string; place_name: string | null; hashtags: string | null } | null
   const allAnnouncements = (announcementRes.data ?? []) as Announcement[]

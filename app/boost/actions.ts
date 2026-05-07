@@ -14,6 +14,7 @@ function normalizeTikTokUrl(raw: string): string {
 interface BoostInput {
   tiktok_url: string
   video_type: 'ACC' | 'TTD'
+  boost_requested?: boolean
 }
 
 interface BatchInput {
@@ -102,6 +103,7 @@ export async function submitBoostBatch(data: BatchInput): Promise<BoostBatchResu
     video_type: v.video_type,
     notes: data.notes ?? null,
     boost_reason: null,
+    boost_requested: !!v.boost_requested,
   }))
   const { error } = await supabase.from('go_boost_requests').insert(rows)
   if (error) {

@@ -314,6 +314,17 @@ CREATE POLICY "go_top_pois_read" ON go_top_pois FOR SELECT TO authenticated USIN
 DROP POLICY IF EXISTS "go_top_pois_service" ON go_top_pois;
 CREATE POLICY "go_top_pois_service" ON go_top_pois FOR ALL TO service_role USING (true) WITH CHECK (true);
 
+-- boost_requested: did the creator ask Papaya to amplify this video?
+-- Separate from boost_status (admin's decision). Defaults to false so
+-- admin doesn't see "🚀 Boost solicitado" on every old row.
+ALTER TABLE go_boost_requests ADD COLUMN IF NOT EXISTS boost_requested boolean DEFAULT false;
+
+-- Make is_valid tri-state: NULL = not reviewed, true = válido, false = inválido.
+-- Existing 'false' rows that were never explicitly invalidated are migrated to
+-- NULL so admin can re-review them. Approved rows (is_valid=true) stay as-is.
+ALTER TABLE go_boost_requests ALTER COLUMN is_valid DROP DEFAULT;
+UPDATE go_boost_requests SET is_valid = NULL WHERE is_valid = false;
+
 -- 14. go_monthly_goals — central monthly ACC/TTD goals for the whole team
 CREATE TABLE IF NOT EXISTS go_monthly_goals (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

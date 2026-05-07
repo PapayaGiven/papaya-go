@@ -15,12 +15,13 @@ interface Row {
   id: number
   url: string
   type: 'ACC' | 'TTD' | null
+  boost: boolean
   error?: string
 }
 
 let nextId = 1
 function newRow(): Row {
-  return { id: nextId++, url: '', type: null }
+  return { id: nextId++, url: '', type: null, boost: false }
 }
 
 function statusBadge(status: string) {
@@ -84,7 +85,7 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
       creator_id: creatorId,
       creator_name: creatorName,
       tiktok_handle: tiktokHandle,
-      videos: cleaned.map((r) => ({ tiktok_url: r.url, video_type: r.type as 'ACC' | 'TTD' })),
+      videos: cleaned.map((r) => ({ tiktok_url: r.url, video_type: r.type as 'ACC' | 'TTD', boost_requested: r.boost })),
     })
     setLoading(false)
 
@@ -181,6 +182,15 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
                     ))}
                   </div>
                 </div>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={r.boost}
+                    onChange={(e) => updateRow(r.id, { boost: e.target.checked })}
+                    className="w-4 h-4 accent-go-orange"
+                  />
+                  <span className="font-dm text-xs text-go-dark/70">Quiero que Papaya booste este video 🚀</span>
+                </label>
                 {r.error && <p className="font-dm text-xs text-red-600">{r.error}</p>}
               </div>
             ))}

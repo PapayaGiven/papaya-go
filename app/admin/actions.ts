@@ -1085,6 +1085,7 @@ async function checkAndApplyLevelUps(creatorId: string): Promise<{ events: numbe
     .select('nivel, total_videos_required, gmv_required, acc_required, ttd_required')
   const reqs = (reqsData ?? []) as NivelReqRow[]
   const reqByNivel = new Map(reqs.map(r => [r.nivel, r]))
+  console.log(`[level-up] check started for creator=${creatorId}, requirements=`, Array.from(reqByNivel.values()))
 
   // Loop guard: cap iterations to a sane max so we never spin forever even
   // if requirements data is malformed.
@@ -1094,10 +1095,12 @@ async function checkAndApplyLevelUps(creatorId: string): Promise<{ events: numbe
       .select('nivel, acc_this_month, ttd_this_month, videos_this_month, gmv_this_month')
       .eq('id', creatorId)
       .maybeSingle()
-    if (!c) break
+    if (!c) { console.log('[level-up] no creator row, exiting'); break }
+    console.log(`[level-up] iter ${i}: creator nivel=${c.nivel} acc=${c.acc_this_month} ttd=${c.ttd_this_month} total=${c.videos_this_month} gmv=${c.gmv_this_month}`)
 
     const next = reqByNivel.get(c.nivel + 1)
-    if (!next) break // already at max nivel
+    if (!next) { console.log(`[level-up] no requirement for nivel ${c.nivel + 1}, at max`); break }
+    console.log(`[level-up] next nivel ${c.nivel + 1} requires:`, next)
 
     const acc = c.acc_this_month ?? 0
     const ttd = c.ttd_this_month ?? 0
@@ -1109,12 +1112,16 @@ async function checkAndApplyLevelUps(creatorId: string): Promise<{ events: numbe
       && gmv >= Number(next.gmv_required ?? 0)
       && acc >= (next.acc_required ?? 0)
       && ttd >= (next.ttd_required ?? 0)
-    if (!qualifies) break
+    if (!qualifies) {
+      console.log(`[level-up] does not qualify yet (total ${total}/${next.total_videos_required}, acc ${acc}/${next.acc_required}, ttd ${ttd}/${next.ttd_required}, gmv ${gmv}/${next.gmv_required})`)
+      break
+    }
 
     const cur = reqByNivel.get(c.nivel)
     const carryAcc = Math.max(0, acc - (cur?.acc_required ?? 0))
     const carryTtd = Math.max(0, ttd - (cur?.ttd_required ?? 0))
     const carryTotal = Math.max(0, total - (cur?.total_videos_required ?? 0))
+    console.log(`[level-up] LEVELING UP ${c.nivel} -> ${c.nivel + 1}, carry acc=${carryAcc} ttd=${carryTtd} total=${carryTotal}`)
 
     await supabase.from('go_creators').update({
       nivel: c.nivel + 1,
@@ -1217,6 +1224,7 @@ export async function setBoostValidity(id: string, isValid: boolean): Promise<{ 
     // After validating a video that counts, check whether the creator just
     // crossed into the next nivel (and possibly the one after, etc.).
     if (isValid) {
+      console.log(`[setBoostValidity] running level-up check after validating boost ${id}`)
       await checkAndApplyLevelUps(row.creator_id)
     }
   }
@@ -1338,6 +1346,222 @@ export async function updateCreatorNivel(id: string, nivel: number): Promise<{ e
   revalidatePath('/admin')
   revalidatePath('/dashboard')
   return {}
+}
+
+// ── Destructive: reset a calendar month ─────────────────
+//
+// Backs up that month's go_boost_requests rows, deletes them, zeros every
+// active creator's monthly counters, and deletes that month's level-up
+// events. Designed to clean up corrupted monthly data while preserving an
+// audit trail.
+
+export async function resetCalendarMonth(month: number, year: number, confirmation: string): Promise<{ error?: string; backedUp?: number }> {
+  if (confirmation.trim().toUpperCase() !== `RESET ${monthNameUpperEs(month)}`) {
+    return { error: `Escribe RESET ${monthNameUpperEs(month)} para confirmar` }
+  }
+  const supabase = createAdminClient()
+
+  // STEP 1 — backup table (create if missing). Postgres-side: copy structure
+  // from go_boost_requests then add a backed_up_at column.
+  const createSql = `
+    CREATE TABLE IF NOT EXISTS go_boost_requests_backup AS
+    SELECT *, now() as backed_up_at FROM go_boost_requests WHERE false;
+  `
+  const insertSql = `
+    INSERT INTO go_boost_requests_backup
+    SELECT *, now() FROM go_boost_requests
+    WHERE EXTRACT(MONTH FROM created_at) = ${month}
+      AND EXTRACT(YEAR FROM created_at) = ${year};
+  `
+  const deleteRowsSql = `
+    DELETE FROM go_boost_requests
+    WHERE EXTRACT(MONTH FROM created_at) = ${month}
+      AND EXTRACT(YEAR FROM created_at) = ${year};
+  `
+  const deleteEventsSql = `
+    DELETE FROM go_level_up_events
+    WHERE EXTRACT(MONTH FROM leveled_up_at) = ${month}
+      AND EXTRACT(YEAR FROM leveled_up_at) = ${year};
+  `
+
+  // Postgres DDL via Supabase RPC: we use a generic exec_sql RPC if available,
+  // else fall back to row-level operations. Most Supabase projects expose
+  // pg_net or rpc('execute_sql'); to keep this portable we go through the
+  // Postgres-side function. If the project doesn't have it, fall back to
+  // row-by-row using the REST API.
+
+  // Step 1 + 2: try the SQL RPC route. If it fails (function missing) fall
+  // back to a JS-side backup-then-delete loop.
+  const tryRpc = await supabase.rpc('exec_sql' as never, { sql: createSql + insertSql } as never)
+  let backedUpCount = 0
+  if (tryRpc.error) {
+    console.log('[resetCalendarMonth] exec_sql RPC unavailable, falling back to row-level ops:', tryRpc.error.message)
+    // Fallback: fetch this month's rows, push into backup table, delete originals.
+    const startIso = new Date(Date.UTC(year, month - 1, 1)).toISOString()
+    const endIso = new Date(Date.UTC(year, month, 1)).toISOString()
+    const { data: rowsToBackup, error: fetchErr } = await supabase
+      .from('go_boost_requests')
+      .select('*')
+      .gte('created_at', startIso)
+      .lt('created_at', endIso)
+    if (fetchErr) return { error: `Error fetching rows: ${fetchErr.message}` }
+    if (rowsToBackup && rowsToBackup.length > 0) {
+      // Try inserting into backup. If table doesn't exist, surface a friendly
+      // error asking the admin to run the SQL once.
+      const backupRows = rowsToBackup.map(r => ({ ...r, backed_up_at: new Date().toISOString() }))
+      const { error: backupErr } = await supabase.from('go_boost_requests_backup').insert(backupRows)
+      if (backupErr) {
+        return { error: `Backup falló — corre primero en Supabase SQL editor:  CREATE TABLE go_boost_requests_backup AS SELECT *, now() as backed_up_at FROM go_boost_requests WHERE false;  Detalle: ${backupErr.message}` }
+      }
+      backedUpCount = rowsToBackup.length
+    }
+    const { error: delErr } = await supabase
+      .from('go_boost_requests')
+      .delete()
+      .gte('created_at', startIso)
+      .lt('created_at', endIso)
+    if (delErr) return { error: `Error deleting boosts: ${delErr.message}` }
+
+    const { error: delEventsErr } = await supabase
+      .from('go_level_up_events')
+      .delete()
+      .gte('leveled_up_at', startIso)
+      .lt('leveled_up_at', endIso)
+    if (delEventsErr) return { error: `Error deleting level-up events: ${delEventsErr.message}` }
+  } else {
+    // RPC succeeded; run the deletes via RPC too for atomicity.
+    const delRpc = await supabase.rpc('exec_sql' as never, { sql: deleteRowsSql + deleteEventsSql } as never)
+    if (delRpc.error) return { error: `Delete RPC falló: ${delRpc.error.message}` }
+  }
+
+  // STEP 3 — reset all active creator counters. Service-role bulk update
+  // (gmv_this_month and nivel intentionally untouched per spec).
+  const { error: resetErr } = await supabase
+    .from('go_creators')
+    .update({ acc_this_month: 0, ttd_this_month: 0, videos_this_month: 0 })
+    .eq('status', 'active')
+  if (resetErr) return { error: `Error resetting counters: ${resetErr.message}` }
+
+  revalidatePath('/admin')
+  revalidatePath('/dashboard')
+  return { backedUp: backedUpCount }
+}
+
+function monthNameUpperEs(m: number): string {
+  const names = ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE']
+  return names[m - 1] ?? `MES_${m}`
+}
+
+// ── Admin: submit videos for a creator (date-aware) ─────
+//
+// Used by both the per-creator "🎬 Agregar Videos" modal and the bulk
+// "📥 Importar Videos de Mayo" modal. Inserts go_boost_requests rows with
+// is_valid=true so they count automatically, sets created_at to the date
+// the admin picked, and only bumps the creator's *this-month* counters
+// when the submission date falls in the current calendar month.
+
+export interface AdminVideoInput {
+  tiktok_url: string
+  video_type: 'ACC' | 'TTD'
+  boost_requested?: boolean
+}
+
+export async function adminSubmitVideosForCreator(data: {
+  creator_id: string
+  date: string // YYYY-MM-DD
+  videos: AdminVideoInput[]
+}): Promise<{ error?: string; rowErrors?: { index: number; message: string }[]; inserted?: number }> {
+  if (!data.videos.length) return { error: 'Agrega al menos un video' }
+
+  const supabase = createAdminClient()
+  const { data: creator, error: creatorErr } = await supabase
+    .from('go_creators')
+    .select('id, full_name, email, tiktok_handle')
+    .eq('id', data.creator_id)
+    .maybeSingle()
+  if (creatorErr) return { error: creatorErr.message }
+  if (!creator) return { error: 'Creator no encontrada' }
+
+  // Normalize URLs and validate.
+  const rowErrors: { index: number; message: string }[] = []
+  const normalized = data.videos.map((v, i) => {
+    const url = (v.tiktok_url ?? '').trim().toLowerCase().replace(/\/+$/, '')
+    if (!url) rowErrors.push({ index: i, message: 'URL requerida' })
+    if (v.video_type !== 'ACC' && v.video_type !== 'TTD') rowErrors.push({ index: i, message: 'Selecciona ACC o TTD' })
+    return { ...v, tiktok_url: url }
+  })
+
+  // In-batch dedupe.
+  const seen = new Map<string, number>()
+  normalized.forEach((v, i) => {
+    if (!v.tiktok_url) return
+    if (seen.has(v.tiktok_url)) rowErrors.push({ index: i, message: 'URL duplicada en este envío' })
+    else seen.set(v.tiktok_url, i)
+  })
+
+  // DB dedupe.
+  const { data: existing } = await supabase
+    .from('go_boost_requests')
+    .select('tiktok_url')
+    .eq('creator_id', data.creator_id)
+  const existingSet = new Set((existing ?? []).map((r) => (r.tiktok_url ?? '').trim().toLowerCase().replace(/\/+$/, '')))
+  normalized.forEach((v, i) => {
+    if (existingSet.has(v.tiktok_url)) rowErrors.push({ index: i, message: 'Esta URL ya existe para esta creadora' })
+  })
+
+  if (rowErrors.length > 0) return { rowErrors }
+
+  // Insert with the chosen date. Use noon UTC so timezone shifts don't push
+  // it into a different day for any reasonable region.
+  const createdIso = new Date(`${data.date}T12:00:00Z`).toISOString()
+  const rows = normalized.map((v) => ({
+    creator_id: data.creator_id,
+    creator_name: creator.full_name ?? null,
+    tiktok_handle: creator.tiktok_handle ?? null,
+    tiktok_url: v.tiktok_url,
+    video_type: v.video_type,
+    notes: null,
+    boost_reason: null,
+    boost_requested: !!v.boost_requested,
+    is_valid: true, // admin submission: automatically valid
+    boost_status: v.boost_requested ? 'pending' : 'pending',
+    created_at: createdIso,
+  }))
+
+  const { error: insErr } = await supabase.from('go_boost_requests').insert(rows)
+  if (insErr) {
+    if (insErr.code === '23505') {
+      return { error: 'Una de las URLs ya existe (constraint UNIQUE)' }
+    }
+    return { error: insErr.message }
+  }
+
+  // Counter bump only if the submission date lands in the current calendar month.
+  const dateObj = new Date(createdIso)
+  const now = new Date()
+  const sameMonth = dateObj.getUTCFullYear() === now.getUTCFullYear() && dateObj.getUTCMonth() === now.getUTCMonth()
+  if (sameMonth) {
+    const accAdd = rows.filter(r => r.video_type === 'ACC').length
+    const ttdAdd = rows.filter(r => r.video_type === 'TTD').length
+    const { data: c } = await supabase
+      .from('go_creators')
+      .select('acc_this_month, ttd_this_month, videos_this_month')
+      .eq('id', data.creator_id)
+      .maybeSingle()
+    if (c) {
+      await supabase.from('go_creators').update({
+        acc_this_month: (c.acc_this_month ?? 0) + accAdd,
+        ttd_this_month: (c.ttd_this_month ?? 0) + ttdAdd,
+        videos_this_month: (c.videos_this_month ?? 0) + rows.length,
+      }).eq('id', data.creator_id)
+    }
+    await checkAndApplyLevelUps(data.creator_id)
+  }
+
+  revalidatePath('/admin')
+  revalidatePath('/dashboard')
+  revalidatePath('/boost')
+  return { inserted: rows.length }
 }
 
 // ── Top POIs (Google Sheets sync) ───────────────────────
