@@ -1169,24 +1169,37 @@ async function adjustCreatorCounters(
   videoType: 'ACC' | 'TTD' | null,
   delta: 1 | -1,
 ) {
-  const { data: c } = await supabase
+  const { data: c, error: readErr } = await supabase
     .from('go_creators')
     .select('acc_this_month, ttd_this_month, videos_this_month')
     .eq('id', creatorId)
     .maybeSingle()
-  if (!c) return
+  if (readErr) { console.log(`[adjustCreatorCounters] read failed: ${readErr.message}`); return }
+  if (!c) { console.log(`[adjustCreatorCounters] no creator row for ${creatorId}`); return }
   const accDelta = videoType === 'ACC' ? delta : 0
   const ttdDelta = videoType === 'TTD' ? delta : 0
-  await supabase.from('go_creators').update({
+  const next = {
     acc_this_month: Math.max(0, (c.acc_this_month ?? 0) + accDelta),
     ttd_this_month: Math.max(0, (c.ttd_this_month ?? 0) + ttdDelta),
     videos_this_month: Math.max(0, (c.videos_this_month ?? 0) + delta),
-  }).eq('id', creatorId)
+  }
+  console.log(`[adjustCreatorCounters] creator=${creatorId} type=${videoType} delta=${delta}`)
+  console.log(`[adjustCreatorCounters] before:`, c)
+  console.log(`[adjustCreatorCounters] after:`, next)
+  const { error: updErr } = await supabase.from('go_creators').update(next).eq('id', creatorId)
+  if (updErr) { console.log(`[adjustCreatorCounters] update failed: ${updErr.message}`); return }
+  // Verification read — confirm the write actually landed.
+  const { data: verify } = await supabase
+    .from('go_creators')
+    .select('acc_this_month, ttd_this_month, videos_this_month')
+    .eq('id', creatorId)
+    .maybeSingle()
+  console.log(`[adjustCreatorCounters] verified:`, verify)
 }
 
 // ── Validation: counts toward the monthly goal ───────────
 
-export async function setBoostValidity(id: string, isValid: boolean): Promise<{ error?: string }> {
+export async function setBoostValidity(id: string, isValid: boolean, reason?: string): Promise<{ error?: string }> {
   const supabase = createAdminClient()
   const { data: row, error: readErr } = await supabase
     .from('go_boost_requests')
@@ -1207,6 +1220,10 @@ export async function setBoostValidity(id: string, isValid: boolean): Promise<{ 
   // 'rejected' state if admin re-validates a previously rejected video.
   const updatePayload: Record<string, unknown> = { is_valid: isValid }
   if (isValid && row.status !== 'boosteado') updatePayload.status = 'boosteado'
+  // Save rejection_reason so the creator can see why their video was rejected.
+  // Cleared when a video is marked valid again.
+  if (!isValid && reason && reason.trim()) updatePayload.rejection_reason = reason.trim()
+  if (isValid) updatePayload.rejection_reason = null
 
   const { error } = await supabase
     .from('go_boost_requests')

@@ -919,16 +919,82 @@ function ResetMonthModal({ onClose, startTransition }: { onClose: () => void; st
   )
 }
 
-// ── Validity / Boost cell helpers ───────────────────────
+// Short TikTok links (tiktok.com/t/, vm.tiktok.com/) are region/device
+// dependent and may resolve to the wrong video. Surface a warning badge
+// so admin can ask the creator to re-submit with the full link.
+function isShortTikTokLink(url: string | null | undefined): boolean {
+  if (!url) return false
+  return /tiktok\.com\/t\//i.test(url) || /vm\.tiktok\.com/i.test(url) || /vt\.tiktok\.com/i.test(url)
+}
+
+function ShortLinkBadge({ url }: { url: string | null | undefined }) {
+  if (!isShortTikTokLink(url)) return null
+  return <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700" title="Link corto — puede no funcionar">⚠️ Link corto</span>
+}
+
+// ── Invalid-reason modal (shown when admin marks a video invalid) ────
+
+const COMMON_INVALID_REASONS = [
+  'No es un video de TikTok GO',
+  'Location tag incorrecto (tag blanco, no verde)',
+  'Video duplicado',
+  'Link no funciona',
+  'No corresponde al tipo seleccionado (ACC/TTD)',
+]
+
+function InvalidReasonModal({ onConfirm, onClose }: { onConfirm: (reason: string) => void; onClose: () => void }) {
+  const [reason, setReason] = useState('')
+  return (
+    <div className="fixed inset-0 z-[180] bg-black/60 flex items-center justify-center px-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-syne font-bold text-lg text-go-dark mb-3">¿Por qué es inválido este video?</h3>
+        <p className="font-dm text-xs text-go-dark/60 mb-3">Se lo mostraremos a la creadora para que pueda corregir.</p>
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {COMMON_INVALID_REASONS.map(r => (
+            <button
+              key={r}
+              type="button"
+              onClick={() => setReason(r)}
+              className="text-[11px] font-semibold bg-go-dark/[0.05] text-go-dark/70 hover:bg-go-dark/[0.1] px-2.5 py-1 rounded-md"
+            >{r}</button>
+          ))}
+        </div>
+        <textarea
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="Motivo (se lo mostraremos a la creadora)…"
+          rows={3}
+          className="w-full border border-go-border rounded-lg px-3 py-2 font-dm text-sm focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange"
+        />
+        <div className="flex gap-2 mt-4">
+          <button
+            disabled={!reason.trim()}
+            onClick={() => onConfirm(reason.trim())}
+            className="flex-1 bg-red-500 text-white font-dm font-bold text-sm py-2.5 rounded-lg hover:bg-red-600 disabled:opacity-40"
+          >Marcar inválido</button>
+          <button onClick={onClose} className="flex-1 bg-go-dark/[0.06] text-go-dark/70 font-dm font-semibold text-sm py-2.5 rounded-lg">Cancelar</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Short TikTok links (tiktok.com/t/, vm.tiktok.com/) are region/device
 
 // Validity is tri-state. Show only the relevant action button per state.
-function ValidityCell({ isValid, onSet }: { isValid: boolean | null; onSet: (v: boolean) => void }) {
+// The parent decides what each action does — typically "mark valid" runs
+// immediately while "mark invalid" opens an InvalidReasonModal.
+function ValidityCell({ isValid, onMarkValid, onMarkInvalid }: {
+  isValid: boolean | null
+  onMarkValid: () => void
+  onMarkInvalid: () => void
+}) {
   if (isValid === true) {
     return (
       <div className="flex flex-col gap-1 items-start">
         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">✅ Válido</span>
         <button
-          onClick={() => onSet(false)}
+          onClick={onMarkInvalid}
           className="text-[10px] font-semibold text-go-dark/70 bg-go-dark/[0.05] hover:bg-go-dark/[0.1] px-2 py-0.5 rounded-md"
         >↩️ Marcar inválido</button>
       </div>
@@ -939,7 +1005,7 @@ function ValidityCell({ isValid, onSet }: { isValid: boolean | null; onSet: (v: 
       <div className="flex flex-col gap-1 items-start">
         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">❌ Inválido</span>
         <button
-          onClick={() => onSet(true)}
+          onClick={onMarkValid}
           className="text-[10px] font-semibold text-go-dark/70 bg-go-dark/[0.05] hover:bg-go-dark/[0.1] px-2 py-0.5 rounded-md"
         >↩️ Marcar válido</button>
       </div>
@@ -951,11 +1017,11 @@ function ValidityCell({ isValid, onSet }: { isValid: boolean | null; onSet: (v: 
       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">⏳ Sin revisar</span>
       <div className="flex gap-1">
         <button
-          onClick={() => onSet(true)}
+          onClick={onMarkValid}
           className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700"
         >✅ Válido</button>
         <button
-          onClick={() => onSet(false)}
+          onClick={onMarkInvalid}
           className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-red-500 text-white hover:bg-red-600"
         >❌ Inválido</button>
       </div>
@@ -1000,6 +1066,7 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
   const [typeFilter, setTypeFilter] = useState<'all' | 'ACC' | 'TTD'>('all')
   const [editing, setEditing] = useState<{ id: string; url: string; type: 'ACC' | 'TTD' } | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [invalidatingId, setInvalidatingId] = useState<string | null>(null)
   function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
 
   const filtered = typeFilter === 'all' ? boosts : boosts.filter(b => b.video_type === typeFilter)
@@ -1057,21 +1124,23 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
                   </td>
                   <td className="px-4 py-3 text-xs">
                     {(b.tiktok_url || b.video_url) ? (
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <a href={b.tiktok_url || b.video_url || '#'} target="_blank" rel="noopener noreferrer" className="text-go-orange hover:underline truncate block max-w-[180px]">
                           {b.tiktok_url || b.video_url}
                         </a>
                         <PreviewButton url={b.tiktok_url || b.video_url} onOpen={() => setPreviewUrl(b.tiktok_url || b.video_url)} />
+                        <ShortLinkBadge url={b.tiktok_url || b.video_url} />
                       </div>
                     ) : '—'}
                   </td>
                   <td className="px-4 py-3">
                     <ValidityCell
                       isValid={b.is_valid}
-                      onSet={(v) => startTransition(async () => {
-                        const r = await setBoostValidity(b.id, v)
-                        if (r.error) fb(`Error: ${r.error}`); else fb(v ? '✓ Marcado válido' : '✓ Marcado inválido')
+                      onMarkValid={() => startTransition(async () => {
+                        const r = await setBoostValidity(b.id, true)
+                        if (r.error) fb(`Error: ${r.error}`); else fb('✓ Marcado válido')
                       })}
+                      onMarkInvalid={() => setInvalidatingId(b.id)}
                     />
                   </td>
                   <td className="px-4 py-3">
@@ -1109,6 +1178,18 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
 
       {/* TikTok preview modal */}
       <TikTokPreviewModal url={previewUrl} onClose={() => setPreviewUrl(null)} />
+
+      {/* Invalid-reason modal */}
+      {invalidatingId && (
+        <InvalidReasonModal
+          onClose={() => setInvalidatingId(null)}
+          onConfirm={(reason) => startTransition(async () => {
+            const r = await setBoostValidity(invalidatingId, false, reason)
+            if (r.error) fb(`Error: ${r.error}`)
+            else { fb('✓ Marcado inválido'); setInvalidatingId(null) }
+          })}
+        />
+      )}
 
       {/* Edit modal */}
       {editing && (
@@ -3536,6 +3617,7 @@ function VideoTrackerSection({
   const [rejectReason, setRejectReason] = useState('')
   const [editing, setEditing] = useState<{ id: string; url: string; type: 'ACC' | 'TTD' } | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [invalidatingId, setInvalidatingId] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
   function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 4000) }
 
@@ -3654,14 +3736,16 @@ function VideoTrackerSection({
                                       {req.tiktok_url || req.video_url || '(sin URL)'}
                                     </a>
                                     <PreviewButton url={req.tiktok_url || req.video_url} onOpen={() => setPreviewUrl(req.tiktok_url || req.video_url)} />
+                                    <ShortLinkBadge url={req.tiktok_url || req.video_url} />
                                   </div>
                                   <div className="flex flex-wrap items-center gap-3">
                                     <ValidityCell
                                       isValid={req.is_valid}
-                                      onSet={(v) => startTransition(async () => {
-                                        const r = await setBoostValidity(req.id, v)
-                                        if (r.error) fb(`Error: ${r.error}`); else fb(v ? '✓ Marcado válido' : '✓ Marcado inválido')
+                                      onMarkValid={() => startTransition(async () => {
+                                        const r = await setBoostValidity(req.id, true)
+                                        if (r.error) fb(`Error: ${r.error}`); else fb('✓ Marcado válido')
                                       })}
+                                      onMarkInvalid={() => setInvalidatingId(req.id)}
                                     />
                                     {rejectingId === req.id ? (
                                       <div className="flex gap-1 items-center">
@@ -3727,6 +3811,18 @@ function VideoTrackerSection({
 
       {/* TikTok preview modal */}
       <TikTokPreviewModal url={previewUrl} onClose={() => setPreviewUrl(null)} />
+
+      {/* Invalid-reason modal */}
+      {invalidatingId && (
+        <InvalidReasonModal
+          onClose={() => setInvalidatingId(null)}
+          onConfirm={(reason) => startTransition(async () => {
+            const r = await setBoostValidity(invalidatingId, false, reason)
+            if (r.error) fb(`Error: ${r.error}`)
+            else { fb('✓ Marcado inválido'); setInvalidatingId(null) }
+          })}
+        />
+      )}
 
       {/* Edit modal — same pattern as BoostsTab */}
       {editing && (

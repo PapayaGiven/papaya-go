@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { submitBoostBatch } from './actions'
 import type { BoostRequest } from '@/lib/types'
 
@@ -42,6 +43,7 @@ function truncateUrl(url: string, max = 40) {
 }
 
 export default function BoostClient({ creatorId, creatorName, tiktokHandle, pastRequests }: BoostClientProps) {
+  const router = useRouter()
   const [rows, setRows] = useState<Row[]>([newRow()])
   const [submittedCount, setSubmittedCount] = useState<number | null>(null)
   const [topError, setTopError] = useState('')
@@ -105,6 +107,9 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
 
     setSubmittedCount(result.inserted ?? 0)
     setRows([newRow()])
+    // Pull fresh server data so the "this month" counter reflects the
+    // newly submitted rows on the next render.
+    router.refresh()
   }
 
   return (
@@ -121,6 +126,20 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
       <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5 shadow-sm">
         <h2 className="font-syne font-bold text-lg text-go-dark mb-1">🎬 Sube tus videos</h2>
         <p className="font-dm text-xs text-gray-400 mb-4">Agrega uno o más links de TikTok. Cada video cuenta cuando tu equipo lo aprueba.</p>
+
+        {/* Short-link warning */}
+        <div className="bg-yellow-50 border border-yellow-300 rounded-xl px-4 py-3 mb-4">
+          <p className="font-dm text-sm text-yellow-900 leading-snug">
+            ⚠️ <strong>Importante:</strong> Para asegurarte de que tu link funcione correctamente, usa el link <strong>completo</strong> de tu video (no el link corto).
+          </p>
+          <p className="font-dm text-xs text-yellow-800/80 mt-2">
+            En TikTok ve a tu video → compartir → copiar link → pega el link completo.
+          </p>
+          <ul className="mt-2 space-y-0.5 text-xs font-mono text-yellow-900">
+            <li><span className="font-sans">✅ Correcto:</span> https://www.tiktok.com/@tuusuario/video/1234567890</li>
+            <li><span className="font-sans">❌ Evita:</span> https://www.tiktok.com/t/xxxxx</li>
+          </ul>
+        </div>
 
         {submittedCount != null ? (
           <div className="text-center py-8">

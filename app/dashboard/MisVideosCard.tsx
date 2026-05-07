@@ -102,7 +102,13 @@ export default function MisVideosCard({ videos, approved, pending }: { videos: V
                 {validBadge(v.is_valid)}
                 {boostBadge(v.boost_status)}
               </div>
-              {v.boost_status === 'rechazado' && v.rejection_reason && (
+              {/* If video was marked invalid AND we have a reason, show it
+                  inline so the creator knows what to fix. The reason column
+                  is shared with boost-rejection so we surface it for both. */}
+              {v.is_valid === false && v.rejection_reason && (
+                <p className="font-dm text-[11px] text-red-600 mt-1">❌ Inválido — {v.rejection_reason}</p>
+              )}
+              {v.is_valid !== false && v.boost_status === 'rechazado' && v.rejection_reason && (
                 <p className="font-dm text-[11px] text-red-600 mt-1">Razón: {v.rejection_reason}</p>
               )}
             </li>

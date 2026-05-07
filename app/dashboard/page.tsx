@@ -8,6 +8,7 @@ import DashboardHashtags from './DashboardHashtags'
 import ProgressRings from './ProgressRings'
 import MisVideosCard from './MisVideosCard'
 import LevelUpPopup from './LevelUpPopup'
+import RefreshButton from './RefreshButton'
 import type { LevelUpEvent } from '@/lib/types'
 import { Creator, NivelRequirement, Announcement, Challenge, NIVEL_NAMES, NIVEL_COLORS } from '@/lib/types'
 
@@ -147,9 +148,10 @@ export default async function DashboardPage() {
                 {creator.nivel === 3 && 'Eres Partner de Papaya GO. ¡El mundo te está viendo! ⭐'}
                 {creator.nivel >= 4 && 'Elite. La mejor de las mejores. Tú inspiras a todas. 👑'}
               </p>
-              <div className="flex items-center gap-3 mt-4">
+              <div className="flex items-center gap-3 mt-4 flex-wrap">
                 <span className={`font-dm text-xs font-bold px-3 py-1 rounded-full ${nivelColor.bg} ${nivelColor.text}`}>Nivel {creator.nivel} · {NIVEL_NAMES[creator.nivel]}</span>
                 <span className="font-dm text-xs text-[#1a0800]/50">{liveVideosThisMonth} aprobados / {submittedVideosThisMonth} enviados este mes</span>
+                <RefreshButton />
               </div>
             </div>
           </div>
