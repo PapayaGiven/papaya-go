@@ -1801,7 +1801,9 @@ function parseCsv(text: string): string[][] {
   return cleaned.split('\n').filter(l => l.trim().length > 0).map(parseCsvRow)
 }
 
-export async function syncTopPois(poiType: 'ACC' | 'TTD'): Promise<{ error?: string; count?: number }> {
+export async function syncTopPois(
+  poiType: 'ACC' | 'TTD',
+): Promise<{ error?: string; count?: number; removedDuplicates?: number; duplicateIds?: string[] }> {
   const rawUrl = poiType === 'ACC' ? process.env.TOP_ACC_SHEET_URL : process.env.TOP_TTD_SHEET_URL
   if (!rawUrl) return { error: `${poiType === 'ACC' ? 'TOP_ACC_SHEET_URL' : 'TOP_TTD_SHEET_URL'} no está configurado en Vercel` }
 
@@ -1839,42 +1841,77 @@ export async function syncTopPois(poiType: 'ACC' | 'TTD'): Promise<{ error?: str
 
   const supabase = createAdminClient()
   const dataRows = rows.slice(1)
-  const upserts = dataRows
-    .map((cells, i) => {
-      const name = (cells[nameIdx] ?? '').trim()
-      const county = (cells[countyIdx] ?? '').trim() || null
-      const poi_id = (cells[poiIdIdx] ?? '').trim() || null
-      if (!name) return null
-      return {
-        name,
-        county,
-        poi_id,
-        poi_type: poiType,
-        rank: i + 1,
-        is_active: true,
-        synced_at: new Date().toISOString(),
-      }
-    })
-    .filter((row): row is NonNullable<typeof row> => row !== null)
+  const now = new Date().toISOString()
 
-  if (upserts.length === 0) return { error: 'No se encontraron filas válidas en el Sheet' }
-
-  // Upsert by (poi_id, poi_type). Rows without poi_id are appended as new.
-  const withId = upserts.filter(r => r.poi_id)
-  const withoutId = upserts.filter(r => !r.poi_id)
-
-  if (withId.length > 0) {
-    const { error } = await supabase.from('go_top_pois').upsert(withId, { onConflict: 'poi_id,poi_type' })
-    if (error) return { error: error.message }
+  // Pass 1: shape rows, drop the truly empty ones. Empty poi_id stays as NULL
+  // — Postgres treats NULL as distinct in UNIQUE(poi_id, poi_type) so multiple
+  // un-IDed rows coexist fine after we re-insert.
+  type SyncRow = {
+    name: string
+    county: string | null
+    poi_id: string | null
+    poi_type: 'ACC' | 'TTD'
+    rank: number
+    is_active: true
+    synced_at: string
   }
-  if (withoutId.length > 0) {
-    const { error } = await supabase.from('go_top_pois').insert(withoutId)
-    if (error) return { error: error.message }
+  const shaped: SyncRow[] = []
+  let missingIdCount = 0
+  for (let i = 0; i < dataRows.length; i++) {
+    const cells = dataRows[i]
+    const name = (cells[nameIdx] ?? '').trim()
+    const county = (cells[countyIdx] ?? '').trim() || null
+    const poi_id = (cells[poiIdIdx] ?? '').trim() || null
+    if (!name) continue
+    if (!poi_id) missingIdCount++
+    shaped.push({ name, county, poi_id, poi_type: poiType, rank: shaped.length + 1, is_active: true, synced_at: now })
+  }
+  if (missingIdCount > 0) console.log(`[syncTopPois] ${poiType}: ${missingIdCount} fila(s) sin POI ID (se conservan con poi_id=NULL)`)
+  if (shaped.length === 0) return { error: 'No se encontraron filas válidas en el Sheet' }
+
+  // Pass 2: first-occurrence-wins dedupe by poi_id. NULL poi_ids are not
+  // deduped against each other (different unnamed rows shouldn't collide).
+  const seen = new Map<string, SyncRow>()
+  const duplicateIds: string[] = []
+  const final: SyncRow[] = []
+  for (const row of shaped) {
+    if (row.poi_id == null) { final.push(row); continue }
+    if (seen.has(row.poi_id)) {
+      duplicateIds.push(row.poi_id)
+      continue
+    }
+    seen.set(row.poi_id, row)
+    final.push(row)
+  }
+  const removed = duplicateIds.length
+  console.log(`Removed ${removed} duplicate POI IDs from sheet`)
+  if (removed > 0) {
+    console.log(`[syncTopPois] ${poiType} duplicate poi_ids dropped (first-occurrence kept):`, duplicateIds)
+  }
+
+  // Re-rank after dedupe so ranks stay 1..N contiguous.
+  final.forEach((r, i) => { r.rank = i + 1 })
+
+  // Delete-then-insert per poi_type. Sidesteps the ON CONFLICT DO UPDATE
+  // race that fires when the sheet has dupes — every sync is a full
+  // replacement of that type's rows. Other types are untouched.
+  const { error: delErr } = await supabase.from('go_top_pois').delete().eq('poi_type', poiType)
+  if (delErr) return { error: `Error al limpiar lugares previos: ${delErr.message}` }
+
+  const { error: insErr } = await supabase.from('go_top_pois').insert(final)
+  if (insErr) {
+    if (insErr.code === '23505') {
+      return {
+        error: `El sheet tiene IDs duplicados que ya están en la base. Revisa las filas: ${duplicateIds.slice(0, 10).join(', ')}`,
+        duplicateIds,
+      }
+    }
+    return { error: `Error al insertar lugares: ${insErr.message}`, duplicateIds }
   }
 
   revalidatePath('/admin')
   revalidatePath('/inspiracion')
-  return { count: upserts.length }
+  return { count: final.length, removedDuplicates: removed, duplicateIds: removed > 0 ? duplicateIds : undefined }
 }
 
 export async function updateTopPoi(id: string, data: Partial<{ name: string; county: string | null; poi_id: string | null; rank: number | null; is_active: boolean }>): Promise<{ error?: string }> {

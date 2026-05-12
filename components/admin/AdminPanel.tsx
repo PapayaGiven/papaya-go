@@ -2332,8 +2332,14 @@ function TopPoisTab({
     startTransition(async () => {
       const r = await syncTopPois(type)
       setSyncingType(null)
-      if (r.error) fb(`Error: ${r.error}`)
-      else fb(`✅ ${r.count} lugares ${type} sincronizados`)
+      if (r.error) {
+        fb(`Error: ${r.error}`)
+        return
+      }
+      const dupeNote = r.removedDuplicates && r.removedDuplicates > 0
+        ? ` · ${r.removedDuplicates} duplicado${r.removedDuplicates === 1 ? '' : 's'} ignorado${r.removedDuplicates === 1 ? '' : 's'}`
+        : ''
+      fb(`✅ ${r.count} lugares ${type} sincronizados (reemplazó datos anteriores)${dupeNote}`)
     })
   }
 
