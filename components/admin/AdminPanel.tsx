@@ -3536,16 +3536,17 @@ const MONTH_NAMES_ES = [
 const RING_CIRC = 2 * Math.PI * 60 // r=60
 
 function DashboardRing({
-  current, goal, label, color, pendingCount,
-}: { current: number; goal: number; label: string; color: string; pendingCount: number }) {
+  current, goal, remaining, label, color, pendingCount,
+}: { current: number; goal: number; remaining: number; label: string; color: string; pendingCount: number }) {
   const safeGoal = Math.max(goal, 1)
   const pct = Math.min(current / safeGoal, 1)
   const offset = RING_CIRC - pct * RING_CIRC
   const complete = goal > 0 && current >= goal
   const ringColor = complete ? '#2a9d4a' : color
-  // Spec separates "progress toward goal" (colored, primary) from "admin
-  // to-do queue" (gray, secondary). Goal number is colored by completion;
-  // pending is always muted so it can't be confused with progress.
+  // Two lines under the ring, by design:
+  //   1. Progress toward goal — colored (green when met, neutral else).
+  //   2. Admin to-do queue   — always muted gray, so it can't read as
+  //                            progress toward the goal.
   const progressTone = complete ? 'text-emerald-700' : 'text-go-dark'
   const fmt = (n: number) => n.toLocaleString('en-US')
   return (
@@ -3569,7 +3570,9 @@ function DashboardRing({
       </div>
       <p className="mt-3 font-syne font-bold text-base text-go-dark">{label}</p>
       <p className={`mt-1 font-dm text-sm font-semibold ${progressTone}`}>
-        {fmt(current)} aprobados de {fmt(goal)}
+        {complete
+          ? `${fmt(current)} aprobados · Meta alcanzada 🎉`
+          : `${fmt(current)} aprobados · Faltan ${fmt(remaining)} para la meta`}
       </p>
       <p className="mt-0.5 font-dm text-[11px] text-go-dark/45">
         ⏳ {fmt(pendingCount)} videos esperando revisión
@@ -4294,100 +4297,110 @@ function AdminDashboardTab({
   currentYear: number
   startTransition: (cb: () => void) => void
 }) {
-  const accGoal = monthlyGoal?.acc_goal ?? 300
-  const ttdGoal = monthlyGoal?.ttd_goal ?? 300
+  // ── Single source of truth for the entire Dashboard tab ──────────────
+  // Every section below (rings, quick stats, breakdown cards, combined
+  // bar, top lists) reads from the variables computed here. No parallel
+  // filtering elsewhere — that's how we ended up with the rings, the
+  // QuickStat, and the Creadoras card disagreeing on the same number.
+  //
+  // Month window: [startOfMonth, endOfMonth] inclusive. endOfMonth lands
+  // on the 0th of next month at 23:59:59.999 so a row saved at the very
+  // last second still counts. ISO strings compare lexicographically — no
+  // Date() coercions per row.
+  const startOfMonth = new Date(currentYear, currentMonth - 1, 1).toISOString()
+  const endOfMonth = new Date(currentYear, currentMonth, 0, 23, 59, 59, 999).toISOString()
 
-  // Active creators only
+  // Active creators (used only for "Creadoras activas / Internas activas"
+  // quick-stat counts — we do NOT filter video aggregates by active
+  // status, since a video posted last week still counts even if the
+  // creator was just paused).
   const active = creators.filter(c => c.status === 'active')
   const regular = active.filter(c => !c.is_internal)
   const internal = active.filter(c => c.is_internal)
 
-  // Source-of-truth video counts come from go_boost_requests this month,
-  // restricted to VALID rows (is_valid=true). Pending-review submissions
-  // don't count toward team totals; boost_status is independent.
-  const startOfMonth = new Date(currentYear, currentMonth - 1, 1).toISOString()
-  const regularIds = new Set(regular.map(c => c.id))
-  const regularBoostsThisMonth = boostRequests.filter(b =>
-    b.creator_id && regularIds.has(b.creator_id) && b.created_at >= startOfMonth,
-  )
-  const regularValid = regularBoostsThisMonth.filter(b => b.is_valid === true)
-  const regAcc = regularValid.filter(b => b.video_type === 'ACC').length
-  const regTtd = regularValid.filter(b => b.video_type === 'TTD').length
-  const regSubmitted = regularBoostsThisMonth.length
-  const regValid = regularValid.length
-  const regPendingReview = regularBoostsThisMonth.filter(b => b.is_valid == null).length
-  const regBoosted = regularBoostsThisMonth.filter(b => b.boost_status === 'boosteado').length
+  // 1. All boost requests this month (regular pipeline).
+  const regularBoosts = boostRequests.filter(b => b.created_at >= startOfMonth && b.created_at <= endOfMonth)
+  // 2. All internal videos this month.
+  const internalVideosThisMonth = internalVideos.filter(v => v.submitted_at >= startOfMonth && v.submitted_at <= endOfMonth)
 
-  // Internal team aggregates — count approved videos by submitted_at so
-  // late-approved videos still credit the month they were posted in.
-  const internalApprovedThisMonth = internalVideos.filter(v =>
-    v.status === 'approved' && v.submitted_at >= startOfMonth,
-  )
-  const intAcc = internalApprovedThisMonth.filter(v => v.video_type === 'ACC').length
-  const intTtd = internalApprovedThisMonth.filter(v => v.video_type === 'TTD').length
-  const intPending = internalVideos.filter(v => v.status === 'pending').length
+  // Regular creators
+  const regularAccApproved = regularBoosts.filter(b => b.video_type === 'ACC' && b.is_valid === true).length
+  const regularTtdApproved = regularBoosts.filter(b => b.video_type === 'TTD' && b.is_valid === true).length
+  const regularPendingAcc = regularBoosts.filter(b => (b.is_valid === null || b.is_valid === undefined) && b.video_type === 'ACC').length
+  const regularPendingTtd = regularBoosts.filter(b => (b.is_valid === null || b.is_valid === undefined) && b.video_type === 'TTD').length
+  const regularPending = regularBoosts.filter(b => b.is_valid === null || b.is_valid === undefined).length
+  const regularSubmitted = regularBoosts.length
+  const regularValidTotal = regularAccApproved + regularTtdApproved
+  const regularBoosted = regularBoosts.filter(b => b.boost_status === 'boosteado').length
 
-  // Combined
-  const totalAcc = regAcc + intAcc
-  const totalTtd = regTtd + intTtd
+  // Internal team
+  const internalAccApproved = internalVideosThisMonth.filter(v => v.video_type === 'ACC' && v.status === 'approved').length
+  const internalTtdApproved = internalVideosThisMonth.filter(v => v.video_type === 'TTD' && v.status === 'approved').length
+  // Pending internal verifications — not month-scoped, this is admin queue.
+  const internalPending = internalVideos.filter(v => v.status === 'pending').length
 
+  // Totals
+  const totalAccApproved = regularAccApproved + internalAccApproved
+  const totalTtdApproved = regularTtdApproved + internalTtdApproved
+  const totalApproved = totalAccApproved + totalTtdApproved
+
+  // Goals (fallback 300/300 if no monthly_goal row yet)
+  const accGoal = monthlyGoal?.acc_goal ?? 300
+  const ttdGoal = monthlyGoal?.ttd_goal ?? 300
+
+  // Remaining
+  const accRemaining = Math.max(0, accGoal - totalAccApproved)
+  const ttdRemaining = Math.max(0, ttdGoal - totalTtdApproved)
+
+  // Bars (capped at 100%)
   const safe = (n: number, d: number) => d > 0 ? Math.min((n / d) * 100, 100) : 0
+  const accBarPct = safe(totalAccApproved, accGoal)
+  const ttdBarPct = safe(totalTtdApproved, ttdGoal)
+  // Per-subgroup bars on the BreakdownCards — fraction of the COMBINED
+  // total, not the goal. Reading "Creadoras Regulares ACC: 55% of total"
+  // is more honest than "55% of goal" when the goal is far off.
+  const regAccShareBar = safe(regularAccApproved, totalAccApproved)
+  const regTtdShareBar = safe(regularTtdApproved, totalTtdApproved)
+  const intAccShareBar = safe(internalAccApproved, totalAccApproved)
+  const intTtdShareBar = safe(internalTtdApproved, totalTtdApproved)
   const pctOfTotal = (part: number, total: number) => total > 0 ? Math.round((part / total) * 100) : 0
 
-  const regAccBar = safe(regAcc, accGoal)
-  const regTtdBar = safe(regTtd, ttdGoal)
-  const intAccBar = safe(intAcc, accGoal)
-  const intTtdBar = safe(intTtd, ttdGoal)
-  const totalAccBar = safe(totalAcc, accGoal)
-  const totalTtdBar = safe(totalTtd, ttdGoal)
-
-  // Top contributors — count only APPROVED boosts so the leaderboard
-  // matches the BreakdownCard numbers above.
+  // Top contributors — derive from the same regularBoosts (approved only).
   const accByCreator = new Map<string, number>()
   const ttdByCreator = new Map<string, number>()
-  for (const b of regularValid) {
-    if (!b.creator_id) continue
+  for (const b of regularBoosts) {
+    if (!b.creator_id || b.is_valid !== true) continue
     if (b.video_type === 'ACC') accByCreator.set(b.creator_id, (accByCreator.get(b.creator_id) ?? 0) + 1)
-    if (b.video_type === 'TTD') ttdByCreator.set(b.creator_id, (ttdByCreator.get(b.creator_id) ?? 0) + 1)
+    else if (b.video_type === 'TTD') ttdByCreator.set(b.creator_id, (ttdByCreator.get(b.creator_id) ?? 0) + 1)
   }
-  const topRegularAcc = [...regular]
-    .map(c => ({ ...c, _acc: accByCreator.get(c.id) ?? 0 }))
-    .filter(c => c._acc > 0)
+  const creatorsById = new Map(creators.map(c => [c.id, c]))
+  const topRegularAcc = Array.from(accByCreator.entries())
+    .map(([id, _acc]) => ({ creator: creatorsById.get(id), _acc }))
+    .filter(x => x.creator)
     .sort((a, b) => b._acc - a._acc)
     .slice(0, 5)
-  const topRegularTtd = [...regular]
-    .map(c => ({ ...c, _ttd: ttdByCreator.get(c.id) ?? 0 }))
-    .filter(c => c._ttd > 0)
+    .map(x => ({ ...(x.creator as Creator), _acc: x._acc }))
+  const topRegularTtd = Array.from(ttdByCreator.entries())
+    .map(([id, _ttd]) => ({ creator: creatorsById.get(id), _ttd }))
+    .filter(x => x.creator)
     .sort((a, b) => b._ttd - a._ttd)
     .slice(0, 5)
+    .map(x => ({ ...(x.creator as Creator), _ttd: x._ttd }))
 
-  // Top internal: group approved-this-month videos by creator_id
+  // Top internal — same source of truth.
   const intByCreator = new Map<string, { acc: number; ttd: number }>()
-  for (const v of internalApprovedThisMonth) {
-    if (!v.creator_id) continue
+  for (const v of internalVideosThisMonth) {
+    if (!v.creator_id || v.status !== 'approved') continue
     const cur = intByCreator.get(v.creator_id) ?? { acc: 0, ttd: 0 }
     if (v.video_type === 'ACC') cur.acc++
     else if (v.video_type === 'TTD') cur.ttd++
     intByCreator.set(v.creator_id, cur)
   }
-  // Don't gate on is_internal — if a creator has go_internal_videos rows,
-  // surface them even if their flag was later flipped off (data drift
-  // shouldn't blank out the leaderboard).
-  const creatorsById = new Map(creators.map(c => [c.id, c]))
   const topInternal = Array.from(intByCreator.entries())
     .map(([id, counts]) => ({ creator: creatorsById.get(id), acc: counts.acc, ttd: counts.ttd, total: counts.acc + counts.ttd }))
     .filter(x => x.creator)
     .sort((a, b) => b.total - a.total)
     .slice(0, 5)
-
-  // Pending review = is_valid IS NULL (admin hasn't graded yet). Legacy
-  // status='pending' rows leaked into this count before and read 0 in
-  // production even when the queue was 85 deep — switching to is_valid IS
-  // NULL matches the source of truth used elsewhere in this tab.
-  const pendingReview = boostRequests.filter(b => b.is_valid == null)
-  const pendingAcc = pendingReview.filter(b => b.video_type === 'ACC').length
-  const pendingTtd = pendingReview.filter(b => b.video_type === 'TTD').length
-  const pendingAll = pendingReview.length
 
   // Activity alerts — derive from boost requests + creator snapshots
   const fourteenDaysAgo = new Date(Date.now() - 14 * 86400000).toISOString()
@@ -4502,17 +4515,31 @@ function AdminDashboardTab({
       <SectionCard>
         <div className="p-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-            <DashboardRing current={totalAcc} goal={accGoal} label="ACC Videos" color="#ff7700" pendingCount={pendingAcc} />
-            <DashboardRing current={totalTtd} goal={ttdGoal} label="TTD Videos" color="#ec4899" pendingCount={pendingTtd} />
+            <DashboardRing
+              current={totalAccApproved}
+              goal={accGoal}
+              remaining={accRemaining}
+              label="ACC Videos"
+              color="#ff7700"
+              pendingCount={regularPendingAcc}
+            />
+            <DashboardRing
+              current={totalTtdApproved}
+              goal={ttdGoal}
+              remaining={ttdRemaining}
+              label="TTD Videos"
+              color="#ec4899"
+              pendingCount={regularPendingTtd}
+            />
           </div>
         </div>
       </SectionCard>
 
-      {/* Quick stats — counts use is_valid as the source of truth so they
-          stay aligned with the rings and Videos por Creadora table. */}
+      {/* Quick stats — every number sources from the centralized block
+          above so the rings, cards, and stat tiles cannot drift. */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <QuickStat label="Total videos aprobados" value={totalAcc + totalTtd} accent="dark" />
-        <QuickStat label="Pendientes de revisión" value={pendingAll} accent="pink" />
+        <QuickStat label="Total videos aprobados" value={totalApproved} accent="dark" />
+        <QuickStat label="Pendientes de revisión" value={regularPending} accent="pink" />
         <QuickStat label="Creadoras activas" value={regular.length} accent="orange" />
         <QuickStat label="Internas activas" value={internal.length} accent="green" />
       </div>
@@ -4523,26 +4550,26 @@ function AdminDashboardTab({
           title="👥 Creadoras Regulares"
           subtitle="Videos reportados por la comunidad"
           accent="orange"
-          accNumber={regAcc}
-          ttdNumber={regTtd}
-          accBar={regAccBar}
-          ttdBar={regTtdBar}
-          accPctOfTotal={pctOfTotal(regAcc, totalAcc)}
-          ttdPctOfTotal={pctOfTotal(regTtd, totalTtd)}
-          footer={`${regular.length} creadoras activas · ${regSubmitted} enviados · ${regValid} válidos · ${regPendingReview} sin revisar · ${regBoosted} boosteados`}
+          accNumber={regularAccApproved}
+          ttdNumber={regularTtdApproved}
+          accBar={regAccShareBar}
+          ttdBar={regTtdShareBar}
+          accPctOfTotal={pctOfTotal(regularAccApproved, totalAccApproved)}
+          ttdPctOfTotal={pctOfTotal(regularTtdApproved, totalTtdApproved)}
+          footer={`${regular.length} creadoras activas · ${regularSubmitted} enviados · ${regularValidTotal} válidos · ${regularPending} sin revisar · ${regularBoosted} boosteados`}
         />
         <BreakdownCard
           title="🏢 Equipo Interno"
           subtitle="Videos verificados del equipo interno"
           accent="green"
-          accNumber={intAcc}
-          ttdNumber={intTtd}
-          accBar={intAccBar}
-          ttdBar={intTtdBar}
-          accPctOfTotal={pctOfTotal(intAcc, totalAcc)}
-          ttdPctOfTotal={pctOfTotal(intTtd, totalTtd)}
+          accNumber={internalAccApproved}
+          ttdNumber={internalTtdApproved}
+          accBar={intAccShareBar}
+          ttdBar={intTtdShareBar}
+          accPctOfTotal={pctOfTotal(internalAccApproved, totalAccApproved)}
+          ttdPctOfTotal={pctOfTotal(internalTtdApproved, totalTtdApproved)}
           footer={`${internal.length} creadoras internas activas`}
-          warning={intPending > 0 ? `${intPending} videos pendientes de verificar` : null}
+          warning={internalPending > 0 ? `${internalPending} videos pendientes de verificar` : null}
         />
       </div>
 
@@ -4553,20 +4580,20 @@ function AdminDashboardTab({
 
           <CombinedBar
             label="ACC"
-            current={totalAcc}
+            current={totalAccApproved}
             goal={accGoal}
-            barPct={totalAccBar}
-            complete={accGoal > 0 && totalAcc >= accGoal}
+            barPct={accBarPct}
+            complete={accGoal > 0 && totalAccApproved >= accGoal}
           />
 
           <div className="h-4" />
 
           <CombinedBar
             label="TTD"
-            current={totalTtd}
+            current={totalTtdApproved}
             goal={ttdGoal}
-            barPct={totalTtdBar}
-            complete={ttdGoal > 0 && totalTtd >= ttdGoal}
+            barPct={ttdBarPct}
+            complete={ttdGoal > 0 && totalTtdApproved >= ttdGoal}
           />
         </div>
       </SectionCard>
