@@ -3536,19 +3536,19 @@ const MONTH_NAMES_ES = [
 const RING_CIRC = 2 * Math.PI * 60 // r=60
 
 function DashboardRing({
-  current, goal, remaining, label, color, pendingCount,
-}: { current: number; goal: number; remaining: number; label: string; color: string; pendingCount: number }) {
+  current, goal, remaining, label, color,
+}: { current: number; goal: number; remaining: number; label: string; color: string }) {
   const safeGoal = Math.max(goal, 1)
   const pct = Math.min(current / safeGoal, 1)
   const offset = RING_CIRC - pct * RING_CIRC
   const complete = goal > 0 && current >= goal
   const ringColor = complete ? '#2a9d4a' : color
-  // Two lines under the ring, by design:
-  //   1. Progress toward goal — colored (green when met, neutral else).
-  //   2. Admin to-do queue   — always muted gray, so it can't read as
-  //                            progress toward the goal.
-  const progressTone = complete ? 'text-emerald-700' : 'text-go-dark'
   const fmt = (n: number) => n.toLocaleString('en-US')
+  // Two lines under the ring:
+  //   1. Progress (always bold, neutral). "X aprobados de Y".
+  //   2. Remaining-to-goal — orange while we're short, green once met.
+  // The "esperando revisión" hint moved out to the QuickStat card so the
+  // ring stays focused on goal progress.
   return (
     <div className="flex flex-col items-center text-center">
       <div className="relative" style={{ width: 150, height: 150 }}>
@@ -3569,13 +3569,11 @@ function DashboardRing({
         </div>
       </div>
       <p className="mt-3 font-syne font-bold text-base text-go-dark">{label}</p>
-      <p className={`mt-1 font-dm text-sm font-semibold ${progressTone}`}>
-        {complete
-          ? `${fmt(current)} aprobados · Meta alcanzada 🎉`
-          : `${fmt(current)} aprobados · Faltan ${fmt(remaining)} para la meta`}
+      <p className="mt-1 font-dm text-sm font-bold text-go-dark">
+        {fmt(current)} aprobados de {fmt(goal)}
       </p>
-      <p className="mt-0.5 font-dm text-[11px] text-go-dark/45">
-        ⏳ {fmt(pendingCount)} videos esperando revisión
+      <p className={`mt-0.5 font-dm text-sm font-semibold ${complete ? 'text-emerald-700' : 'text-[#ff7700]'}`}>
+        {complete ? '✅ Meta cumplida' : `Faltan ${fmt(remaining)} para la meta`}
       </p>
     </div>
   )
@@ -4345,8 +4343,6 @@ function AdminDashboardTab({
   // Regular creators
   const regularAccApproved = regularBoosts.filter(b => b.video_type === 'ACC' && b.is_valid === true).length
   const regularTtdApproved = regularBoosts.filter(b => b.video_type === 'TTD' && b.is_valid === true).length
-  const regularPendingAcc = regularBoosts.filter(b => (b.is_valid === null || b.is_valid === undefined) && b.video_type === 'ACC').length
-  const regularPendingTtd = regularBoosts.filter(b => (b.is_valid === null || b.is_valid === undefined) && b.video_type === 'TTD').length
   const regularPending = regularBoosts.filter(b => b.is_valid === null || b.is_valid === undefined).length
   const regularSubmitted = regularBoosts.length
   const regularValidTotal = regularAccApproved + regularTtdApproved
@@ -4371,10 +4367,10 @@ function AdminDashboardTab({
   const accRemaining = Math.max(0, accGoal - totalAccApproved)
   const ttdRemaining = Math.max(0, ttdGoal - totalTtdApproved)
 
-  // Bars (capped at 100%)
+  // Bars (capped at 100%). The combined-total bars were removed; the
+  // remaining "share of total" bars on the BreakdownCards still need this
+  // helper.
   const safe = (n: number, d: number) => d > 0 ? Math.min((n / d) * 100, 100) : 0
-  const accBarPct = safe(totalAccApproved, accGoal)
-  const ttdBarPct = safe(totalTtdApproved, ttdGoal)
   // Per-subgroup bars on the BreakdownCards — fraction of the COMBINED
   // total, not the goal. Reading "Creadoras Regulares ACC: 55% of total"
   // is more honest than "55% of goal" when the goal is far off.
@@ -4540,7 +4536,6 @@ function AdminDashboardTab({
               remaining={accRemaining}
               label="ACC Videos"
               color="#ff7700"
-              pendingCount={regularPendingAcc}
             />
             <DashboardRing
               current={totalTtdApproved}
@@ -4548,7 +4543,6 @@ function AdminDashboardTab({
               remaining={ttdRemaining}
               label="TTD Videos"
               color="#ec4899"
-              pendingCount={regularPendingTtd}
             />
           </div>
         </div>
@@ -4592,30 +4586,8 @@ function AdminDashboardTab({
         />
       </div>
 
-      {/* Combined total bar */}
-      <SectionCard>
-        <div className="p-6">
-          <h3 className="font-syne font-bold text-base text-go-dark mb-4">Total combinado este mes</h3>
-
-          <CombinedBar
-            label="ACC"
-            current={totalAccApproved}
-            goal={accGoal}
-            barPct={accBarPct}
-            complete={accGoal > 0 && totalAccApproved >= accGoal}
-          />
-
-          <div className="h-4" />
-
-          <CombinedBar
-            label="TTD"
-            current={totalTtdApproved}
-            goal={ttdGoal}
-            barPct={ttdBarPct}
-            complete={ttdGoal > 0 && totalTtdApproved >= ttdGoal}
-          />
-        </div>
-      </SectionCard>
+      {/* Combined total bars removed — the two rings already convey the
+          same totals, so the duplicate row was visual noise. */}
 
       {/* Section 3 — Top contributors */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
