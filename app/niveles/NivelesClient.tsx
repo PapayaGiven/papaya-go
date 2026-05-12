@@ -11,9 +11,13 @@ interface Props {
   requirements: NivelRequirement[]
   rewards: NivelReward[]
   myRequests: RewardRequest[]
+  // Live this-month is_valid=true total. Replaces creator.videos_this_month
+  // for display so progress reflects the source of truth, not the stored
+  // leaderboard counter.
+  liveTotalThisMonth: number
 }
 
-export default function NivelesClient({ creator, requirements, rewards, myRequests }: Props) {
+export default function NivelesClient({ creator, requirements, rewards, myRequests, liveTotalThisMonth }: Props) {
   const [modalReward, setModalReward] = useState<NivelReward | null>(null)
   const [notes, setNotes] = useState('')
   const [isPending, startTransition] = useTransition()
@@ -363,14 +367,14 @@ export default function NivelesClient({ creator, requirements, rewards, myReques
           const name = NIVEL_NAMES[nivel] ?? `Nivel ${nivel}`
 
           const videosProgress = isCurrent
-            ? Math.min(100, req.total_videos_required > 0 ? (creator.videos_this_month / req.total_videos_required) * 100 : 100)
+            ? Math.min(100, req.total_videos_required > 0 ? (liveTotalThisMonth / req.total_videos_required) * 100 : 100)
             : 0
           const gmvProgress = isCurrent
             ? Math.min(100, req.gmv_required > 0 ? (creator.gmv_this_month / req.gmv_required) * 100 : 100)
             : 0
 
           // For future levels, calculate what's missing
-          const videosMissing = isFuture ? Math.max(0, req.total_videos_required - creator.videos_this_month) : 0
+          const videosMissing = isFuture ? Math.max(0, req.total_videos_required - liveTotalThisMonth) : 0
           const gmvMissing = isFuture ? Math.max(0, req.gmv_required - creator.gmv_this_month) : 0
 
           return (
@@ -451,7 +455,7 @@ export default function NivelesClient({ creator, requirements, rewards, myReques
                       <div>
                         <div className="flex justify-between items-center mb-1">
                           <span className="font-dm text-xs text-gray-500">
-                            Videos: {creator.videos_this_month} / {req.total_videos_required}
+                            Videos: {liveTotalThisMonth} / {req.total_videos_required}
                           </span>
                           <span className="font-dm text-xs font-semibold text-go-orange">
                             {Math.round(videosProgress)}%

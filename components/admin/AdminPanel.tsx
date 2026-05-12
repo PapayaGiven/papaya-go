@@ -1852,12 +1852,19 @@ function CreatorsTab({
     const last14 = mine.filter((b) => b.created_at >= fourteenDaysAgo).length
     const week1 = mine.filter((b) => b.created_at >= fourteenDaysAgo && b.created_at < sevenDaysAgo).length
     const week2 = mine.filter((b) => b.created_at >= sevenDaysAgo).length
-    const thisMonth = mine.filter((b) => b.created_at >= startOfMonth).length
+    const thisMonthRows = mine.filter((b) => b.created_at >= startOfMonth)
+    const thisMonth = thisMonthRows.length
+    // Live counts — go_creators.acc_this_month / ttd_this_month / videos_this_month
+    // are leaderboard-only. The columns here read from boost_requests so they
+    // can't drift if a counter bump fails.
+    const accLive = thisMonthRows.filter(b => b.video_type === 'ACC' && b.is_valid === true).length
+    const ttdLive = thisMonthRows.filter(b => b.video_type === 'TTD' && b.is_valid === true).length
+    const pendingLive = thisMonthRows.filter(b => b.is_valid == null).length
     const status = classifyCreatorActivity(c, last14, week1, week2)
     const snap = lastSnapshotByCreator.get(c.id)
     const lastTotal = snap ? snap.total_videos : null
     const monthDelta = lastTotal == null ? null : thisMonth - lastTotal
-    return { creator: c, status, thisMonth, monthDelta }
+    return { creator: c, status, thisMonth, monthDelta, accLive, ttdLive, pendingLive }
   })
 
   const visibleCreators = activityFilter === 'all' ? derived : derived.filter((d) => d.status === activityFilter)
@@ -1983,7 +1990,8 @@ function CreatorsTab({
                 <th className="text-right px-4 py-3 font-medium text-go-dark/60">GMV</th>
                 <th className="text-right px-4 py-3 font-medium text-go-dark/60">ACC</th>
                 <th className="text-right px-4 py-3 font-medium text-go-dark/60">TTD</th>
-                <th className="text-right px-4 py-3 font-medium text-go-dark/60">Videos</th>
+                <th className="text-right px-4 py-3 font-medium text-go-dark/60">Total</th>
+                <th className="text-right px-4 py-3 font-medium text-go-dark/60">Pend.</th>
                 <th className="text-left px-4 py-3 font-medium text-go-dark/60">Actividad</th>
                 <th className="text-left px-4 py-3 font-medium text-go-dark/60">vs mes pasado</th>
                 <th className="text-left px-4 py-3 font-medium text-go-dark/60">Status</th>
@@ -1992,7 +2000,7 @@ function CreatorsTab({
               </tr>
             </thead>
             <tbody>
-              {visibleCreators.map(({ creator: c, status: activity, monthDelta }) => (
+              {visibleCreators.map(({ creator: c, status: activity, monthDelta, accLive, ttdLive, pendingLive }) => (
                 <tr key={c.id} className="border-b border-go-border/50 hover:bg-go-light/30">
                   <td className="px-4 py-3 font-medium text-go-dark">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -2049,7 +2057,7 @@ function CreatorsTab({
                           className="w-16 px-1 py-1 text-xs rounded border border-go-border text-right"
                         />
                       </td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="px-4 py-3 text-right" title="Stored leaderboard counter for the Total column — edit to fix drift">
                         <input
                           type="number"
                           value={editData.videos_this_month}
@@ -2057,6 +2065,8 @@ function CreatorsTab({
                           className="w-16 px-1 py-1 text-xs rounded border border-go-border text-right"
                         />
                       </td>
+                      {/* Pend / Activity / vs mes pasado / Código — read-only when editing. */}
+                      <td className="px-4 py-3 text-xs text-gray-300 text-right">—</td>
                       <td className="px-4 py-3 text-xs text-gray-300">—</td>
                       <td className="px-4 py-3 text-xs text-gray-300">—</td>
                       <td className="px-4 py-3">
@@ -2070,6 +2080,7 @@ function CreatorsTab({
                           <option value="suspended">suspended</option>
                         </select>
                       </td>
+                      <td className="px-4 py-3 text-xs text-gray-300">—</td>
                       <td className="px-4 py-3 text-right space-x-1">
                         <ActionButton onClick={() => saveEdit(c.id)}>Guardar</ActionButton>
                         <ActionButton variant="ghost" onClick={() => setEditId(null)}>
@@ -2087,14 +2098,17 @@ function CreatorsTab({
                       <td className="px-4 py-3 text-right font-mono text-go-dark/70">
                         ${c.gmv_total.toLocaleString()}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono text-go-dark/70">
-                        {c.acc_this_month}
+                      <td className="px-4 py-3 text-right font-mono text-go-dark/70" title="Aprobados este mes (live)">
+                        {accLive}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono text-go-dark/70">
-                        {c.ttd_this_month}
+                      <td className="px-4 py-3 text-right font-mono text-go-dark/70" title="Aprobados este mes (live)">
+                        {ttdLive}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono text-go-dark/70">
-                        {c.videos_this_month}
+                      <td className="px-4 py-3 text-right font-mono font-semibold text-go-dark" title="ACC + TTD aprobados (live)">
+                        {accLive + ttdLive}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-amber-700/80" title="Sin revisar (is_valid IS NULL)">
+                        {pendingLive || ''}
                       </td>
                       <td className="px-4 py-3">
                         {activity === 'inactive' && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">⚠️ Inactiva</span>}

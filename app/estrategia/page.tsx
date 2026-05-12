@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import Sidebar from '@/components/Sidebar'
 import { Creator, NivelRequirement, POI, NIVEL_NAMES, POI_TYPE_LABELS } from '@/lib/types'
+import { getCreatorMonthlyStats } from '@/lib/videoStats'
 import MediaKitCTA from './MediaKitCTA'
 import HashtagsCard from './HashtagsCard'
 
@@ -34,8 +35,13 @@ export default async function EstrategiaPage() {
 
   const admin = createAdminClient()
 
-  // Fetch nivel requirements, suggested POIs, and weekly plan in parallel
-  const [nivelResult, poisResult, weeklyPlanResult] = await Promise.all([
+  // Fetch nivel requirements, suggested POIs, weekly plan, and live this-
+  // month video counts in parallel. Stored counters on go_creators stay
+  // for leaderboards only — the tracker reads from go_boost_requests.
+  const now = new Date()
+  const currentMonth = now.getMonth() + 1
+  const currentYear = now.getFullYear()
+  const [nivelResult, poisResult, weeklyPlanResult, monthly] = await Promise.all([
     supabase
       .from('go_nivel_requirements')
       .select('*')
@@ -53,13 +59,13 @@ export default async function EstrategiaPage() {
       .select('*')
       .eq('is_active', true)
       .order('sort_order'),
+    getCreatorMonthlyStats(admin, creator.id, currentMonth, currentYear),
   ])
 
   const nivelReq = nivelResult.data
   const suggestedPois = poisResult.data ?? []
 
   // Days remaining in month
-  const now = new Date()
   const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
   const daysRemaining = lastDay - now.getDate()
 
@@ -81,10 +87,14 @@ export default async function EstrategiaPage() {
     return { border: 'border-b-[3px] border-b-red-400', text: 'text-red-500' }
   }
 
+  // Live counts (is_valid=true this month) — not the stored counters.
+  const liveAcc = monthly.accApproved
+  const liveTtd = monthly.ttdApproved
+  const liveTotal = monthly.totalApproved
   const trackers = [
-    { label: 'ACC', current: creator.acc_this_month, required: accGoal, ...trackerColor(creator.acc_this_month, accGoal) },
-    { label: 'TTD', current: creator.ttd_this_month, required: ttdGoal, ...trackerColor(creator.ttd_this_month, ttdGoal) },
-    { label: 'Total', current: creator.videos_this_month, required: totalGoal, ...trackerColor(creator.videos_this_month, totalGoal) },
+    { label: 'ACC', current: liveAcc, required: accGoal, ...trackerColor(liveAcc, accGoal) },
+    { label: 'TTD', current: liveTtd, required: ttdGoal, ...trackerColor(liveTtd, ttdGoal) },
+    { label: 'Total', current: liveTotal, required: totalGoal, ...trackerColor(liveTotal, totalGoal) },
   ]
 
   // Weekly plan from database (fallback to defaults if empty)

@@ -13,7 +13,7 @@ interface Video {
   created_at: string
 }
 
-type Filter = 'all' | 'ACC' | 'TTD' | 'approved' | 'pending'
+type Filter = 'all' | 'ACC' | 'TTD' | 'approved' | 'pending' | 'invalid'
 
 function truncate(url: string, max = 36) {
   return url.length > max ? url.slice(0, max) + '...' : url
@@ -45,14 +45,21 @@ export default function MisVideosCard({ videos, approved, pending }: { videos: V
     if (filter === 'ACC' || filter === 'TTD') return v.video_type === filter
     if (filter === 'approved') return v.is_valid === true
     if (filter === 'pending') return v.is_valid == null
+    if (filter === 'invalid') return v.is_valid === false
     return true
   })
+
+  // Header breakdown — counts derived from the same `videos` array the
+  // filter operates on, so the math always matches what's visible below.
+  const invalidCount = videos.filter((v) => v.is_valid === false).length
 
   return (
     <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5">
       <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
         <h2 className="font-syne font-bold text-base text-[#1a0800]">🎬 Mis Videos este mes</h2>
-        <p className="font-dm text-xs text-gray-500">{videos.length} videos ({approved} aprobados · {pending} pendientes)</p>
+        <p className="font-dm text-xs text-gray-500">
+          {videos.length} videos ({approved} aprobados · {pending} pendientes · {invalidCount} inválidos)
+        </p>
       </div>
 
       <div className="flex gap-1.5 mt-3 mb-4 flex-wrap">
@@ -62,6 +69,7 @@ export default function MisVideosCard({ videos, approved, pending }: { videos: V
           ['TTD', 'TTD'],
           ['approved', 'Aprobados'],
           ['pending', 'Pendientes'],
+          ['invalid', 'Inválidos'],
         ] as const).map(([key, label]) => (
           <button
             key={key}

@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import Sidebar from '@/components/Sidebar'
 import NivelesClient from './NivelesClient'
 import type { Creator, NivelRequirement, NivelReward, RewardRequest } from '@/lib/types'
+import { getCreatorMonthlyStats } from '@/lib/videoStats'
 
 export default async function NivelesPage() {
   const supabase = await createClient()
@@ -14,10 +15,14 @@ export default async function NivelesPage() {
   if (!creator) redirect('/')
 
   const admin = createAdminClient()
-  const [reqsRes, rewardsRes, myRequestsRes] = await Promise.all([
+  const now = new Date()
+  const currentMonth = now.getMonth() + 1
+  const currentYear = now.getFullYear()
+  const [reqsRes, rewardsRes, myRequestsRes, monthly] = await Promise.all([
     admin.from('go_nivel_requirements').select('*').order('nivel'),
     admin.from('go_nivel_rewards').select('*').eq('is_active', true).order('nivel'),
     supabase.from('go_reward_requests').select('*').eq('creator_id', creator.id),
+    getCreatorMonthlyStats(admin, creator.id, currentMonth, currentYear),
   ])
 
   return (
@@ -35,6 +40,7 @@ export default async function NivelesPage() {
             requirements={(reqsRes.data ?? []) as NivelRequirement[]}
             rewards={(rewardsRes.data ?? []) as NivelReward[]}
             myRequests={(myRequestsRes.data ?? []) as RewardRequest[]}
+            liveTotalThisMonth={monthly.totalApproved}
           />
         </div>
       </main>

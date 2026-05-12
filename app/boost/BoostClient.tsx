@@ -57,11 +57,13 @@ export default function BoostClient({ creatorId, creatorName, tiktokHandle, past
   const [topError, setTopError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  // Running totals from past submissions (this month)
+  // Running totals from past submissions (this month). Per the source-of-
+  // truth rule, only is_valid=true rows count toward the monthly tally —
+  // pending/invalid submissions don't yet credit her.
   const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
   const thisMonth = pastRequests.filter((r) => r.created_at >= monthStart)
-  const accCount = thisMonth.filter((r) => r.video_type === 'ACC').length
-  const ttdCount = thisMonth.filter((r) => r.video_type === 'TTD').length
+  const accCount = thisMonth.filter((r) => r.video_type === 'ACC' && r.is_valid === true).length
+  const ttdCount = thisMonth.filter((r) => r.video_type === 'TTD' && r.is_valid === true).length
 
   function updateRow(id: number, patch: Partial<Row>) {
     setRows((prev) => prev.map((r) => r.id === id ? { ...r, ...patch, error: undefined } : r))
