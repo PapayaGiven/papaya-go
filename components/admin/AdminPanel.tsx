@@ -3543,6 +3543,11 @@ function DashboardRing({
   const offset = RING_CIRC - pct * RING_CIRC
   const complete = goal > 0 && current >= goal
   const ringColor = complete ? '#2a9d4a' : color
+  // Spec separates "progress toward goal" (colored, primary) from "admin
+  // to-do queue" (gray, secondary). Goal number is colored by completion;
+  // pending is always muted so it can't be confused with progress.
+  const progressTone = complete ? 'text-emerald-700' : 'text-go-dark'
+  const fmt = (n: number) => n.toLocaleString('en-US')
   return (
     <div className="flex flex-col items-center text-center">
       <div className="relative" style={{ width: 150, height: 150 }}>
@@ -3559,20 +3564,16 @@ function DashboardRing({
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <span className="font-syne font-bold text-3xl text-go-dark leading-none">{current}</span>
-          <span className="font-dm text-xs text-go-dark/40 mt-1">de {goal}</span>
+          <span className="font-dm text-xs text-go-dark/40 mt-1">de {fmt(goal)}</span>
         </div>
       </div>
       <p className="mt-3 font-syne font-bold text-base text-go-dark">{label}</p>
-      <div className="flex gap-2 mt-2">
-        <span className="font-dm text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
-          {current} aprobados
-        </span>
-        {pendingCount > 0 && (
-          <span className="font-dm text-[10px] font-semibold px-2 py-0.5 rounded-full bg-orange-50 text-orange-700">
-            {pendingCount} pendientes
-          </span>
-        )}
-      </div>
+      <p className={`mt-1 font-dm text-sm font-semibold ${progressTone}`}>
+        {fmt(current)} aprobados de {fmt(goal)}
+      </p>
+      <p className="mt-0.5 font-dm text-[11px] text-go-dark/45">
+        ⏳ {fmt(pendingCount)} videos esperando revisión
+      </p>
     </div>
   )
 }
@@ -4379,10 +4380,14 @@ function AdminDashboardTab({
     .sort((a, b) => b.total - a.total)
     .slice(0, 5)
 
-  // Pending boost requests grouped by type for the ring pills
-  const pendingByType = boostRequests.filter(b => b.status === 'pending')
-  const pendingAcc = pendingByType.filter(b => b.video_type === 'ACC').length
-  const pendingTtd = pendingByType.filter(b => b.video_type === 'TTD').length
+  // Pending review = is_valid IS NULL (admin hasn't graded yet). Legacy
+  // status='pending' rows leaked into this count before and read 0 in
+  // production even when the queue was 85 deep — switching to is_valid IS
+  // NULL matches the source of truth used elsewhere in this tab.
+  const pendingReview = boostRequests.filter(b => b.is_valid == null)
+  const pendingAcc = pendingReview.filter(b => b.video_type === 'ACC').length
+  const pendingTtd = pendingReview.filter(b => b.video_type === 'TTD').length
+  const pendingAll = pendingReview.length
 
   // Activity alerts — derive from boost requests + creator snapshots
   const fourteenDaysAgo = new Date(Date.now() - 14 * 86400000).toISOString()
@@ -4507,7 +4512,7 @@ function AdminDashboardTab({
           stay aligned with the rings and Videos por Creadora table. */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <QuickStat label="Total videos aprobados" value={totalAcc + totalTtd} accent="dark" />
-        <QuickStat label="Pendientes de revisión" value={regPendingReview + intPending} accent="pink" />
+        <QuickStat label="Pendientes de revisión" value={pendingAll} accent="pink" />
         <QuickStat label="Creadoras activas" value={regular.length} accent="orange" />
         <QuickStat label="Internas activas" value={internal.length} accent="green" />
       </div>
