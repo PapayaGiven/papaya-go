@@ -4323,6 +4323,25 @@ function AdminDashboardTab({
   // 2. All internal videos this month.
   const internalVideosThisMonth = internalVideos.filter(v => v.submitted_at >= startOfMonth && v.submitted_at <= endOfMonth)
 
+  // Diagnostic — surfaces is_valid distribution so "pending=0 but I see
+  // pending videos" reports can be triaged from logs (SSR render fires
+  // on the server; subsequent renders log to the browser console).
+  // If the `invalid` bucket is unexpectedly large, the live DB likely
+  // still carries the legacy DEFAULT false, and new inserts should be
+  // picking up the explicit `is_valid: null` we now pass in
+  // submitBoostBatch — old rows would need a one-time UPDATE.
+  const isValidDist = regularBoosts.reduce(
+    (acc, b) => {
+      if (b.is_valid === true) acc.valid++
+      else if (b.is_valid === false) acc.invalid++
+      else if (b.is_valid === null || b.is_valid === undefined) acc.pending++
+      else acc.unknown++
+      return acc
+    },
+    { valid: 0, invalid: 0, pending: 0, unknown: 0 },
+  )
+  console.log(`[AdminDashboard] regularBoosts=${regularBoosts.length} window=[${startOfMonth}, ${endOfMonth}] is_valid dist=`, isValidDist)
+
   // Regular creators
   const regularAccApproved = regularBoosts.filter(b => b.video_type === 'ACC' && b.is_valid === true).length
   const regularTtdApproved = regularBoosts.filter(b => b.video_type === 'TTD' && b.is_valid === true).length

@@ -117,6 +117,13 @@ export async function submitBoostBatch(data: BatchInput): Promise<BoostBatchResu
 
     // All rows clean — insert as a batch. Counters do NOT get bumped here;
     // they're bumped on setBoostValidity(true) so only valid videos count.
+    //
+    // is_valid: null is set EXPLICITLY (rather than relying on the column
+    // default) because the live DB may still carry the legacy
+    // `DEFAULT false` from before the tri-state migration. If that
+    // default is still active, new submissions would silently come in as
+    // is_valid=false and never show in the admin pending queue
+    // (filter: is_valid === null || undefined).
     const rows = normalized.map((v) => ({
       creator_id: data.creator_id,
       creator_name: data.creator_name,
@@ -126,6 +133,7 @@ export async function submitBoostBatch(data: BatchInput): Promise<BoostBatchResu
       notes: data.notes ?? null,
       boost_reason: null,
       boost_requested: !!v.boost_requested,
+      is_valid: null,
     }))
     console.log(`[submitBoostBatch] inserting ${rows.length} rows:`, rows.map(r => ({ url: r.tiktok_url, type: r.video_type, boost: r.boost_requested })))
 
