@@ -3340,12 +3340,14 @@ function InternalVideosTab({ videos, creators, startTransition }: { videos: Inte
     })
   }
 
-  // Stats
+  // Stats — anchored on submitted_at (when the creator posted) per spec.
+  // Using approved_at would skew "Aprobados hoy" toward the moment the
+  // admin clicked Aprobar, not when the video actually went up.
   const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
   const weekStart = new Date(todayStart); const dow = todayStart.getDay(); weekStart.setDate(todayStart.getDate() + (dow === 0 ? -6 : 1 - dow))
   const totalPending = videos.filter(v => v.status === 'pending').length
-  const totalApprovedToday = videos.filter(v => v.status === 'approved' && v.approved_at && new Date(v.approved_at) >= todayStart).length
-  const totalApprovedWeek = videos.filter(v => v.status === 'approved' && v.approved_at && new Date(v.approved_at) >= weekStart).length
+  const totalApprovedToday = videos.filter(v => v.status === 'approved' && new Date(v.submitted_at) >= todayStart).length
+  const totalApprovedWeek = videos.filter(v => v.status === 'approved' && new Date(v.submitted_at) >= weekStart).length
 
   return (
     <div className="space-y-4">
@@ -4048,9 +4050,13 @@ function CrecimientoTab({
     else if (v.video_type === 'TTD') cur.ttd++
     intByCreator.set(v.creator_id, cur)
   }
-  const internalById = new Map(internal.map(c => [c.id, c]))
+  // Match any creator that has go_internal_videos rows, not just those
+  // currently flagged is_internal. Otherwise a row authored when the
+  // flag was on disappears from Top Equipo Interno after the flag flips,
+  // which makes the list look empty even when videos exist.
+  const creatorsById = new Map(creators.map(c => [c.id, c]))
   const topInt = Array.from(intByCreator.entries())
-    .map(([id, c]) => ({ creator: internalById.get(id), acc: c.acc, ttd: c.ttd, total: c.acc + c.ttd }))
+    .map(([id, c]) => ({ creator: creatorsById.get(id), acc: c.acc, ttd: c.ttd, total: c.acc + c.ttd }))
     .filter(x => x.creator)
     .sort((a, b) => b.total - a.total)
     .slice(0, 5)
@@ -4357,9 +4363,12 @@ function AdminDashboardTab({
     else if (v.video_type === 'TTD') cur.ttd++
     intByCreator.set(v.creator_id, cur)
   }
-  const internalById = new Map(internal.map(c => [c.id, c]))
+  // Don't gate on is_internal — if a creator has go_internal_videos rows,
+  // surface them even if their flag was later flipped off (data drift
+  // shouldn't blank out the leaderboard).
+  const creatorsById = new Map(creators.map(c => [c.id, c]))
   const topInternal = Array.from(intByCreator.entries())
-    .map(([id, counts]) => ({ creator: internalById.get(id), acc: counts.acc, ttd: counts.ttd, total: counts.acc + counts.ttd }))
+    .map(([id, counts]) => ({ creator: creatorsById.get(id), acc: counts.acc, ttd: counts.ttd, total: counts.acc + counts.ttd }))
     .filter(x => x.creator)
     .sort((a, b) => b.total - a.total)
     .slice(0, 5)

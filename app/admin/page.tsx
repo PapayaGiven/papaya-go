@@ -51,7 +51,7 @@ export default async function AdminPage() {
     { data: rewardRequests },
     { data: challenges },
     { data: tiktokAccounts },
-    { data: internalVideos },
+    internalVideosRes,
     { data: monthlyGoal },
     { data: monthlySnapshots },
     { data: creatorSnapshots },
@@ -120,6 +120,13 @@ export default async function AdminPage() {
       .select('*')
       .order('rank', { ascending: true }),
   ])
+
+  // Visibility into the internal-videos pipeline. If the count is 0 in
+  // production but the table actually has rows, the error/sample lines
+  // tell us whether it's RLS, a join issue, or something else.
+  const internalVideos = internalVideosRes.data
+  console.log('Internal videos fetched:', internalVideos?.length, 'error:', internalVideosRes.error)
+  console.log('Sample row:', internalVideos?.[0])
 
   return (
     <AdminPanel
