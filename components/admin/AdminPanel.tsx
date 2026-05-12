@@ -3981,7 +3981,9 @@ function CrecimientoTab({
   const regValid = regularValid.length
   const regPendingReview = regularBoostsThisMonth.filter(b => b.is_valid == null).length
   const regBoosted = regularBoostsThisMonth.filter(b => b.boost_status === 'boosteado').length
-  const internalApprovedThisMonth = internalVideos.filter(v => v.status === 'approved' && v.approved_at && v.approved_at >= startOfMonth)
+  // Internal videos: anchor "this month" on submitted_at so an approval
+  // that lands in the next calendar month doesn't pull the row forward.
+  const internalApprovedThisMonth = internalVideos.filter(v => v.status === 'approved' && v.submitted_at >= startOfMonth)
   const intAcc = internalApprovedThisMonth.filter(v => v.video_type === 'ACC').length
   const intTtd = internalApprovedThisMonth.filter(v => v.video_type === 'TTD').length
   const intPending = internalVideos.filter(v => v.status === 'pending').length
@@ -4303,9 +4305,10 @@ function AdminDashboardTab({
   const regPendingReview = regularBoostsThisMonth.filter(b => b.is_valid == null).length
   const regBoosted = regularBoostsThisMonth.filter(b => b.boost_status === 'boosteado').length
 
-  // Internal team aggregates — count approved videos this month by type
+  // Internal team aggregates — count approved videos by submitted_at so
+  // late-approved videos still credit the month they were posted in.
   const internalApprovedThisMonth = internalVideos.filter(v =>
-    v.status === 'approved' && v.approved_at && v.approved_at >= startOfMonth,
+    v.status === 'approved' && v.submitted_at >= startOfMonth,
   )
   const intAcc = internalApprovedThisMonth.filter(v => v.video_type === 'ACC').length
   const intTtd = internalApprovedThisMonth.filter(v => v.video_type === 'TTD').length

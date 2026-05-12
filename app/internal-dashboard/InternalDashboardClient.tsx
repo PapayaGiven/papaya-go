@@ -13,11 +13,12 @@ interface Props {
   stats: { today: number; week: number; month: number }
 }
 
+// Green if met, red if zero, orange while in progress. Spec is strict:
+// half-way is still "progress", not "behind" — only an empty bucket is red.
 function quotaState(count: number, quota: number): 'met' | 'progress' | 'behind' {
-  if (quota <= 0) return 'progress'
-  if (count >= quota) return 'met'
-  if (count >= Math.ceil(quota / 2)) return 'progress'
-  return 'behind'
+  if (count === 0) return 'behind'
+  if (quota > 0 && count >= quota) return 'met'
+  return 'progress'
 }
 
 function StatCard({ label, count, quota }: { label: string; count: number; quota: number }) {

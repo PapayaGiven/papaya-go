@@ -44,10 +44,14 @@ export default async function InternalDashboardPage() {
   const accounts = (accountsRes.data ?? []) as TikTokAccount[]
   const videos = (videosRes.data ?? []) as InternalVideo[]
 
-  const approved = videos.filter(v => v.status === 'approved' && v.approved_at)
-  const todayCount = approved.filter(v => new Date(v.approved_at!) >= startOfDay).length
-  const weekCount = approved.filter(v => new Date(v.approved_at!) >= startOfWeek).length
-  const monthCount = approved.filter(v => new Date(v.approved_at!) >= startOfMonth).length
+  // Quota progress is counted by submitted_at — the creator-facing meaning
+  // of "she did 3 videos today" is anchored to when she posted, not when
+  // admin happened to approve. status='approved' still gates inclusion so
+  // pending/rejected rows never count.
+  const approved = videos.filter(v => v.status === 'approved')
+  const todayCount = approved.filter(v => new Date(v.submitted_at) >= startOfDay).length
+  const weekCount = approved.filter(v => new Date(v.submitted_at) >= startOfWeek).length
+  const monthCount = approved.filter(v => new Date(v.submitted_at) >= startOfMonth).length
 
   return (
     <InternalDashboardClient

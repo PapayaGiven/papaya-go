@@ -370,41 +370,112 @@ export async function deleteTikTokAccount(id: string): Promise<{ error?: string 
 }
 
 // ── Internal Videos ───────────────────────────────────
+//
+// Internal creators live in their own pipeline (go_internal_videos). For a
+// long time the approval flow only flipped status without touching the
+// monthly counters on go_creators, so internal videos never counted toward
+// the team total or the creator's level-up. Approve/reject/bulk-approve
+// now mirror the boost-request flow:
+//
+//   pending → approved   +1   if submitted_at falls in current month
+//   approved → rejected  -1
+//   pending → rejected   0
+//   approved → approved  0    (idempotent)
+//
+// Level-up check runs after any increment.
 
-export async function approveInternalVideo(id: string): Promise<{ error?: string }> {
-  const supabase = createAdminClient()
+async function approveSingleInternalVideo(
+  supabase: ReturnType<typeof createAdminClient>,
+  id: string,
+): Promise<{ error?: string }> {
+  const { data: row, error: readErr } = await supabase
+    .from('go_internal_videos')
+    .select('creator_id, video_type, status, submitted_at')
+    .eq('id', id)
+    .maybeSingle()
+  if (readErr) return { error: readErr.message }
+  if (!row) return { error: 'Video no encontrado' }
+  console.log(`[approveInternalVideo] id=${id} before: status=${row.status} type=${row.video_type} submitted_at=${row.submitted_at}`)
+
+  if (row.status === 'approved') return {}
+
   const { error } = await supabase
     .from('go_internal_videos')
     .update({ status: 'approved', approved_at: new Date().toISOString(), rejected_at: null, rejection_reason: null })
     .eq('id', id)
   if (error) return { error: error.message }
+
+  if (row.creator_id && isThisMonthIso(row.submitted_at)) {
+    await adjustCreatorCounters(supabase, row.creator_id, row.video_type as 'ACC' | 'TTD', 1)
+    console.log(`[approveInternalVideo] running level-up check for creator=${row.creator_id}`)
+    await checkAndApplyLevelUps(row.creator_id)
+  } else {
+    console.log(`[approveInternalVideo] no counter bump (creator_id=${row.creator_id}, thisMonth=${isThisMonthIso(row.submitted_at)})`)
+  }
+  return {}
+}
+
+export async function approveInternalVideo(id: string): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const r = await approveSingleInternalVideo(supabase, id)
   revalidatePath('/admin')
   revalidatePath('/internal-dashboard')
-  return {}
+  revalidatePath('/dashboard')
+  return r
 }
 
 export async function bulkApproveInternalVideos(ids: string[]): Promise<{ error?: string; count?: number }> {
   if (ids.length === 0) return { count: 0 }
   const supabase = createAdminClient()
-  const { error } = await supabase
-    .from('go_internal_videos')
-    .update({ status: 'approved', approved_at: new Date().toISOString(), rejected_at: null, rejection_reason: null })
-    .in('id', ids)
-  if (error) return { error: error.message }
+  // Iterate so each row's counter bump runs through the same helper. The
+  // alternative (single UPDATE … WHERE id IN (…)) would skip counters
+  // entirely, which is exactly the bug we're fixing.
+  let approved = 0
+  for (const id of ids) {
+    const r = await approveSingleInternalVideo(supabase, id)
+    if (r.error) {
+      revalidatePath('/admin')
+      revalidatePath('/internal-dashboard')
+      revalidatePath('/dashboard')
+      return { error: r.error, count: approved }
+    }
+    approved++
+  }
   revalidatePath('/admin')
   revalidatePath('/internal-dashboard')
-  return { count: ids.length }
+  revalidatePath('/dashboard')
+  return { count: approved }
 }
 
 export async function rejectInternalVideo(id: string, reason: string): Promise<{ error?: string }> {
   const supabase = createAdminClient()
+  const { data: row, error: readErr } = await supabase
+    .from('go_internal_videos')
+    .select('creator_id, video_type, status, submitted_at')
+    .eq('id', id)
+    .maybeSingle()
+  if (readErr) return { error: readErr.message }
+  if (!row) return { error: 'Video no encontrado' }
+  console.log(`[rejectInternalVideo] id=${id} before: status=${row.status} type=${row.video_type} submitted_at=${row.submitted_at}`)
+
+  if (row.status === 'rejected') return {}
+  const wasApproved = row.status === 'approved'
+
   const { error } = await supabase
     .from('go_internal_videos')
     .update({ status: 'rejected', rejected_at: new Date().toISOString(), approved_at: null, rejection_reason: reason })
     .eq('id', id)
   if (error) return { error: error.message }
+
+  if (wasApproved && row.creator_id && isThisMonthIso(row.submitted_at)) {
+    await adjustCreatorCounters(supabase, row.creator_id, row.video_type as 'ACC' | 'TTD', -1)
+  } else {
+    console.log(`[rejectInternalVideo] no counter reversal (wasApproved=${wasApproved}, thisMonth=${isThisMonthIso(row.submitted_at)})`)
+  }
+
   revalidatePath('/admin')
   revalidatePath('/internal-dashboard')
+  revalidatePath('/dashboard')
   return {}
 }
 
@@ -1560,7 +1631,7 @@ export async function adminSubmitVideosForCreator(data: {
   const supabase = createAdminClient()
   const { data: creator, error: creatorErr } = await supabase
     .from('go_creators')
-    .select('id, full_name, email, tiktok_handle')
+    .select('id, full_name, email, tiktok_handle, is_internal')
     .eq('id', data.creator_id)
     .maybeSingle()
   if (creatorErr) return { error: creatorErr.message }
@@ -1583,9 +1654,11 @@ export async function adminSubmitVideosForCreator(data: {
     else seen.set(v.tiktok_url, i)
   })
 
-  // DB dedupe.
+  // DB dedupe — check the correct table based on creator type. Internal
+  // creators live in go_internal_videos; everyone else in go_boost_requests.
+  const dedupeTable = creator.is_internal ? 'go_internal_videos' : 'go_boost_requests'
   const { data: existing } = await supabase
-    .from('go_boost_requests')
+    .from(dedupeTable)
     .select('tiktok_url')
     .eq('creator_id', data.creator_id)
   const existingSet = new Set((existing ?? []).map((r) => (r.tiktok_url ?? '').trim().toLowerCase().replace(/\/+$/, '')))
@@ -1598,6 +1671,56 @@ export async function adminSubmitVideosForCreator(data: {
   // Insert with the chosen date. Use noon UTC so timezone shifts don't push
   // it into a different day for any reasonable region.
   const createdIso = new Date(`${data.date}T12:00:00Z`).toISOString()
+  const dateObj = new Date(createdIso)
+  const now = new Date()
+  const sameMonth = dateObj.getUTCFullYear() === now.getUTCFullYear() && dateObj.getUTCMonth() === now.getUTCMonth()
+
+  if (creator.is_internal) {
+    // Internal pipeline: insert into go_internal_videos as approved so the
+    // counter bump fires immediately. submitted_at carries the chosen date.
+    const rows = normalized.map((v) => ({
+      creator_id: data.creator_id,
+      tiktok_account_id: null,
+      tiktok_url: v.tiktok_url,
+      video_type: v.video_type,
+      status: 'approved' as const,
+      submitted_at: createdIso,
+      approved_at: createdIso,
+    }))
+    const { error: insErr } = await supabase.from('go_internal_videos').insert(rows)
+    if (insErr) {
+      if (insErr.code === '23505') return { error: 'Una de las URLs ya existe (constraint UNIQUE)' }
+      return { error: insErr.message }
+    }
+
+    if (sameMonth) {
+      const accAdd = rows.filter(r => r.video_type === 'ACC').length
+      const ttdAdd = rows.filter(r => r.video_type === 'TTD').length
+      const { data: c } = await supabase
+        .from('go_creators')
+        .select('acc_this_month, ttd_this_month, videos_this_month')
+        .eq('id', data.creator_id)
+        .maybeSingle()
+      if (c) {
+        const before = { ...c }
+        const next = {
+          acc_this_month: (c.acc_this_month ?? 0) + accAdd,
+          ttd_this_month: (c.ttd_this_month ?? 0) + ttdAdd,
+          videos_this_month: (c.videos_this_month ?? 0) + rows.length,
+        }
+        console.log(`[adminSubmitVideosForCreator/internal] creator=${data.creator_id} before=`, before, ' next=', next)
+        await supabase.from('go_creators').update(next).eq('id', data.creator_id)
+      }
+      await checkAndApplyLevelUps(data.creator_id)
+    }
+
+    revalidatePath('/admin')
+    revalidatePath('/internal-dashboard')
+    revalidatePath('/dashboard')
+    return { inserted: rows.length }
+  }
+
+  // Regular (non-internal) creator: keep the existing boost-request path.
   const rows = normalized.map((v) => ({
     creator_id: data.creator_id,
     creator_name: creator.full_name ?? null,
@@ -1620,10 +1743,6 @@ export async function adminSubmitVideosForCreator(data: {
     return { error: insErr.message }
   }
 
-  // Counter bump only if the submission date lands in the current calendar month.
-  const dateObj = new Date(createdIso)
-  const now = new Date()
-  const sameMonth = dateObj.getUTCFullYear() === now.getUTCFullYear() && dateObj.getUTCMonth() === now.getUTCMonth()
   if (sameMonth) {
     const accAdd = rows.filter(r => r.video_type === 'ACC').length
     const ttdAdd = rows.filter(r => r.video_type === 'TTD').length
