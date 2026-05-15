@@ -1789,10 +1789,30 @@ export default function AdminPanel({
 
 type ActivityStatus = 'inactive' | 'risk' | 'active' | 'no_quota'
 
-function classifyCreatorActivity(c: Creator, boostsLast14d: number, boostsWeek1: number, boostsWeek2: number): ActivityStatus {
-  if (!c.weekly_quota || c.weekly_quota <= 0) return 'no_quota'
-  if (boostsLast14d === 0) return 'inactive'
-  if (boostsWeek1 < c.weekly_quota && boostsWeek2 < c.weekly_quota) return 'risk'
+// Anchored on real video activity, not on weekly_quota. The previous version
+// returned 'no_quota' for every creator without a quota set, which made the
+// Activa / En riesgo / Inactiva buckets read 0 even when creators were
+// posting. Quota only decides Sin cuota vs Inactiva when there's nothing
+// this month to look at.
+//
+// Rules:
+//   Activa     — status='active' AND ≥1 video this month
+//                (En riesgo overrides when 0 in the last 7 days)
+//   En riesgo  — status='active' AND ≥1 video this month AND 0 last 7 days
+//   Inactiva   — status='active' AND 0 this month AND weekly_quota > 0
+//   Sin cuota  — fallback: 0 this month AND no weekly_quota,
+//                or status != 'active' (pending/suspended)
+function classifyCreatorActivity(
+  c: Creator,
+  thisMonth: number,
+  last7Days: number,
+): ActivityStatus {
+  if (c.status !== 'active') return 'no_quota'
+  if (thisMonth === 0) {
+    if (!c.weekly_quota || c.weekly_quota <= 0) return 'no_quota'
+    return 'inactive'
+  }
+  if (last7Days === 0) return 'risk'
   return 'active'
 }
 
@@ -1835,7 +1855,6 @@ function CreatorsTab({
 
   // Per-creator boost-request derivations
   const now = new Date()
-  const fourteenDaysAgo = new Date(now.getTime() - 14 * 86400000).toISOString()
   const sevenDaysAgo = new Date(now.getTime() - 7 * 86400000).toISOString()
   const startOfMonth = new Date(currentYear, currentMonth - 1, 1).toISOString()
 
@@ -1849,9 +1868,7 @@ function CreatorsTab({
 
   const derived = creators.map((c) => {
     const mine = boostRequests.filter((b) => b.creator_id === c.id)
-    const last14 = mine.filter((b) => b.created_at >= fourteenDaysAgo).length
-    const week1 = mine.filter((b) => b.created_at >= fourteenDaysAgo && b.created_at < sevenDaysAgo).length
-    const week2 = mine.filter((b) => b.created_at >= sevenDaysAgo).length
+    const last7 = mine.filter((b) => b.created_at >= sevenDaysAgo).length
     const thisMonthRows = mine.filter((b) => b.created_at >= startOfMonth)
     const thisMonth = thisMonthRows.length
     // Live counts — go_creators.acc_this_month / ttd_this_month / videos_this_month
@@ -1860,7 +1877,7 @@ function CreatorsTab({
     const accLive = thisMonthRows.filter(b => b.video_type === 'ACC' && b.is_valid === true).length
     const ttdLive = thisMonthRows.filter(b => b.video_type === 'TTD' && b.is_valid === true).length
     const pendingLive = thisMonthRows.filter(b => b.is_valid == null).length
-    const status = classifyCreatorActivity(c, last14, week1, week2)
+    const status = classifyCreatorActivity(c, thisMonth, last7)
     const snap = lastSnapshotByCreator.get(c.id)
     const lastTotal = snap ? snap.total_videos : null
     const monthDelta = lastTotal == null ? null : thisMonth - lastTotal
@@ -4431,8 +4448,9 @@ function AdminDashboardTab({
     .sort((a, b) => b.total - a.total)
     .slice(0, 5)
 
-  // Activity alerts — derive from boost requests + creator snapshots
-  const fourteenDaysAgo = new Date(Date.now() - 14 * 86400000).toISOString()
+  // Activity alerts — derive from boost requests + creator snapshots.
+  // classifyCreatorActivity now takes (thisMonth, last7Days), so we compute
+  // the two windows we actually use and drop the unused 14d split.
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString()
   const prevD = new Date(currentYear, currentMonth - 2, 1)
   const prevM = prevD.getMonth() + 1
@@ -4446,17 +4464,13 @@ function AdminDashboardTab({
   let droppedCount = 0
   for (const c of regular) {
     const mine = boostRequests.filter(b => b.creator_id === c.id)
-    const last14 = mine.filter(b => b.created_at >= fourteenDaysAgo).length
-    const week1 = mine.filter(b => b.created_at >= fourteenDaysAgo && b.created_at < sevenDaysAgo).length
-    const week2 = mine.filter(b => b.created_at >= sevenDaysAgo).length
-    const status = classifyCreatorActivity(c, last14, week1, week2)
+    const last7 = mine.filter(b => b.created_at >= sevenDaysAgo).length
+    const thisMonth = mine.filter(b => b.created_at >= startOfMonth).length
+    const status = classifyCreatorActivity(c, thisMonth, last7)
     if (status === 'inactive') inactiveCount++
     else if (status === 'risk') riskCount++
     const snap = lastMonthByCreator.get(c.id)
-    if (snap) {
-      const thisMonth = mine.filter(b => b.created_at >= startOfMonth).length
-      if (thisMonth < snap.total_videos) droppedCount++
-    }
+    if (snap && thisMonth < snap.total_videos) droppedCount++
   }
   const hasAlerts = inactiveCount > 0 || riskCount > 0 || droppedCount > 0
 
