@@ -47,11 +47,11 @@ export async function approveCreator(id: string) {
 export async function deleteCreator(id: string) {
   const supabase = createAdminClient()
 
-  // Try to delete auth user if one exists
+  // Try to delete auth user if one exists. Paginated lookup so creators
+  // past listUsers page 1 don't leave orphan auth rows behind.
   const { data: creator } = await supabase.from('go_creators').select('email').eq('id', id).single()
   if (creator?.email) {
-    const { data: { users } } = await supabase.auth.admin.listUsers()
-    const authUser = users.find((u) => u.email === creator.email)
+    const authUser = await findAuthUserByEmail(supabase, creator.email)
     if (authUser) {
       await supabase.auth.admin.deleteUser(authUser.id)
     }
@@ -117,13 +117,36 @@ export async function checkEmail(email: string): Promise<{ error?: string; hasAu
   const { data: creator } = await supabase.from('go_creators').select('id, status').eq('email', email.toLowerCase().trim()).single()
   if (!creator) return { error: 'Este email no está registrado. Contacta a tu admin.' }
   if (creator.status === 'suspended') return { error: 'Tu cuenta está suspendida. Contacta a tu agencia.' }
-  // Check if Supabase auth user exists (returning creator)
-  const { data: { users } } = await supabase.auth.admin.listUsers()
-  const hasAuth = users.some(u => u.email === email.toLowerCase().trim())
-  return { hasAuth }
+  // Check if Supabase auth user exists (returning creator) — paginated.
+  const authUser = await findAuthUserByEmail(supabase, email)
+  return { hasAuth: !!authUser }
 }
 
 // ── Access Code Auth ─────────────────────────────────
+
+// Supabase's auth.admin.listUsers() defaults to page=1, perPage~50. Calling
+// it without pagination silently misses users past the first page — which
+// is exactly the bug that caused the forgot-password flow to fall through
+// to createUser and report "email already in use". This helper paginates
+// until found or exhausted so lookups stay correct as the creator base grows.
+async function findAuthUserByEmail(
+  supabase: ReturnType<typeof createAdminClient>,
+  email: string,
+) {
+  const target = email.toLowerCase().trim()
+  const perPage = 1000
+  for (let page = 1; page <= 50; page++) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage })
+    if (error) {
+      console.log(`[findAuthUserByEmail] listUsers page=${page} error:`, error.message)
+      return null
+    }
+    const hit = data.users.find(u => (u.email ?? '').toLowerCase() === target)
+    if (hit) return hit
+    if (data.users.length < perPage) return null // last page
+  }
+  return null
+}
 
 export async function verifyAccessCode(email: string, code: string): Promise<{ error?: string; hasAuthAccount?: boolean }> {
   const supabase = createAdminClient()
@@ -141,9 +164,8 @@ export async function verifyAccessCode(email: string, code: string): Promise<{ e
     return { error: 'Tu cuenta está suspendida. Contacta a tu agencia.' }
   }
 
-  // Check if auth user exists
-  const { data: { users } } = await supabase.auth.admin.listUsers()
-  const authUser = users.find(u => u.email === email.toLowerCase().trim())
+  // Check if auth user exists — paginated lookup, not just first page.
+  const authUser = await findAuthUserByEmail(supabase, email)
 
   return { hasAuthAccount: !!authUser }
 }
@@ -152,13 +174,22 @@ export async function createAuthAndLogin(email: string, password: string): Promi
   const supabase = createAdminClient()
   const emailNorm = email.toLowerCase().trim()
 
-  // Create Supabase auth user
-  const { error: createError } = await supabase.auth.admin.createUser({
-    email: emailNorm,
-    password,
-    email_confirm: true,
-  })
-  if (createError) return { error: createError.message }
+  // If they already have an auth account (e.g. a partial signup or a
+  // returning creator who got routed here by mistake), update their
+  // password instead of creating a duplicate — createUser would otherwise
+  // throw "email already in use".
+  const existing = await findAuthUserByEmail(supabase, emailNorm)
+  if (existing) {
+    const { error } = await supabase.auth.admin.updateUserById(existing.id, { password })
+    if (error) return { error: error.message }
+  } else {
+    const { error } = await supabase.auth.admin.createUser({
+      email: emailNorm,
+      password,
+      email_confirm: true,
+    })
+    if (error) return { error: error.message }
+  }
 
   // Activate creator
   await supabase.from('go_creators').update({
@@ -187,14 +218,17 @@ export async function resetPasswordWithCode(email: string, code: string, newPass
     return { error: 'Tu cuenta está suspendida. Contacta a tu agencia.' }
   }
 
-  // Update or create the auth user
-  const { data: { users } } = await supabase.auth.admin.listUsers()
-  const authUser = users.find(u => u.email === emailNorm)
+  // Update or create the auth user. Lookup is paginated so a creator
+  // sitting on listUsers page 2+ no longer falls through to createUser
+  // (which would error with "email already in use").
+  const authUser = await findAuthUserByEmail(supabase, emailNorm)
 
   if (authUser) {
+    console.log(`[resetPasswordWithCode] updating existing auth user id=${authUser.id} email=${emailNorm}`)
     const { error } = await supabase.auth.admin.updateUserById(authUser.id, { password: newPassword })
     if (error) return { error: error.message }
   } else {
+    console.log(`[resetPasswordWithCode] no auth user found, creating fresh for ${emailNorm}`)
     const { error } = await supabase.auth.admin.createUser({
       email: emailNorm,
       password: newPassword,
