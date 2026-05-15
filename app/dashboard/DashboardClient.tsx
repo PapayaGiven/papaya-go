@@ -26,10 +26,11 @@ export default function DashboardClient({ creatorId, creatorName, tiktokHandle }
   return (
     <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5">
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-lg">🚀</span>
-        <h2 className="font-syne font-bold text-base text-[#1a0800]">Boost rápido</h2>
+        <h2 className="font-syne font-bold text-base text-[#1a0800]">📹 Subir mis videos</h2>
       </div>
-      <p className="font-dm text-xs text-gray-400 mb-3">¿Tienes un video listo? Mándanoslo para boostearlo</p>
+      <p className="font-dm text-xs text-gray-400 mb-3">
+        Sube el link de tus videos de TikTok GO para que cuenten en tu meta mensual.
+      </p>
       {sent ? (
         <p className="font-dm text-sm text-[#ff7700] font-semibold">¡Video enviado! Te avisamos pronto 🧡</p>
       ) : (
@@ -51,12 +52,15 @@ export default function DashboardClient({ creatorId, creatorName, tiktokHandle }
               </button>
             ))}
             <button onClick={handleSubmit} disabled={isPending || !url.trim() || !videoType} className="font-dm text-xs font-semibold text-white bg-[#ff7700] hover:bg-[#ff7700]/90 px-4 py-2 rounded-xl transition disabled:opacity-50">
-              {isPending ? '...' : 'Enviar 🚀'}
+              {isPending ? '...' : 'Subir video'}
             </button>
           </div>
           {error && <p className="font-dm text-xs text-red-500">{error}</p>}
         </div>
       )}
+      <p className="font-dm text-[11px] text-gray-400 mt-3 leading-relaxed">
+        💡 Una vez que subas tu video, el equipo de Papaya lo revisará. Si quieres que lo boosteemos, marca la casilla de boost al subir.
+      </p>
     </div>
   )
 }

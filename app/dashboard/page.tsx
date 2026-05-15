@@ -167,10 +167,6 @@ export default async function DashboardPage() {
             <span className="mx-2 text-go-dark/30">·</span>
             <span className="font-semibold text-amber-700">{pendingThisMonth} pendientes de revisión</span>
           </p>
-          {/* TODO: remove once counts are confirmed in production. */}
-          <p className="text-center font-dm text-[11px] text-go-dark/40 -mt-2">
-            [Debug] Aprobados en BD: {liveAccThisMonth} ACC · {liveTtdThisMonth} TTD · {liveVideosThisMonth} total este mes
-          </p>
 
           {/* CARD 3: Challenge */}
           {challenge && (
@@ -203,7 +199,7 @@ export default async function DashboardPage() {
             </div>
           )}
 
-          {/* CARD 4: Boost rápido */}
+          {/* CARD 4: Subir mis videos */}
           <DashboardClient creatorId={creator.id} creatorName={creator.full_name} tiktokHandle={creator.tiktok_handle} />
 
           {/* CARD 5a: Mis Videos */}
