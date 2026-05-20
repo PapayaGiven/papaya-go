@@ -13,10 +13,15 @@ const MASTER_SHEET_ID = process.env.MASTER_SHEET_ID ?? '15yy5K7V1wqgQSkbpp4XMABW
 export function masterSheetUrl(): string {
   return `https://docs.google.com/spreadsheets/d/${MASTER_SHEET_ID}/edit`
 }
-const CREATORS_TAB = 'CREATORS'
-const DASHBOARD_TAB = 'DASHBOARD MAYO'
-const DASHBOARD_ANUAL_TAB = 'DASHBOARD ANUAL'
-const CONTENT_TAB = 'CONTENT'
+// Tab names in the master sheet use emoji prefixes. The API treats
+// the tab title as an opaque string — the literal must match exactly
+// or Sheets returns "Unable to parse range" / "operation not
+// supported for this document". The trailing space after the emoji
+// is part of the actual title.
+const CREATORS_TAB = '📌 CREATORS'
+const DASHBOARD_TAB = '📊 DASHBOARD MAYO'
+const DASHBOARD_ANUAL_TAB = '📅 DASHBOARD ANUAL'
+const CONTENT_TAB = '🎬 CONTENT'
 
 const SPANISH_MONTHS = [
   'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
@@ -150,8 +155,113 @@ export type SyncSummary = {
 
 // ── Sync orchestrator ──────────────────────────────────────
 
+// ── Logged Sheets API wrappers ─────────────────────────────
+//
+// Every Sheets API failure surfaces here, prefixed with which tab +
+// which exact A1 range tripped it. Without these wrappers a single
+// "Unable to parse range" buried inside a batchUpdate gives no clue
+// which cell is bad; here you can grep [sheets-sync:📌 CREATORS] and
+// see the exact A1 + the upstream message in one line.
+
+async function safeGet(
+  sheets: sheets_v4.Sheets,
+  tabLabel: string,
+  range: string,
+): Promise<string[][]> {
+  try {
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: MASTER_SHEET_ID, range })
+    return (res.data.values ?? []) as string[][]
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error(`[sheets-sync:${tabLabel}] read failed range=${range}: ${msg}`)
+    throw new Error(`${tabLabel} read ${range}: ${msg}`)
+  }
+}
+
+async function safeBatchUpdate(
+  sheets: sheets_v4.Sheets,
+  tabLabel: string,
+  data: sheets_v4.Schema$ValueRange[],
+): Promise<void> {
+  if (data.length === 0) return
+  try {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: MASTER_SHEET_ID,
+      requestBody: { valueInputOption: 'USER_ENTERED', data },
+    })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    const ranges = data.map((d) => d.range).join(', ')
+    console.error(`[sheets-sync:${tabLabel}] batchUpdate failed (${data.length} ranges): ${msg}`)
+    console.error(`[sheets-sync:${tabLabel}] failing ranges: ${ranges}`)
+    throw new Error(`${tabLabel} batchUpdate (${data.length} ranges): ${msg}`)
+  }
+}
+
+async function safeAppend(
+  sheets: sheets_v4.Sheets,
+  tabLabel: string,
+  range: string,
+  values: (string | number)[][],
+): Promise<void> {
+  try {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: MASTER_SHEET_ID,
+      range,
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values },
+    })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error(`[sheets-sync:${tabLabel}] append failed range=${range}: ${msg}`)
+    throw new Error(`${tabLabel} append ${range}: ${msg}`)
+  }
+}
+
+/**
+ * Preflight — fetch sheet metadata, log every tab title, return the
+ * set of titles. Each per-tab writer consults this set before
+ * attempting a values.get so we surface a useful "tab not found"
+ * error instead of letting Google return the inscrutable "Unable to
+ * parse range" / "This operation is not supported for this document".
+ */
+async function preflight(sheets: sheets_v4.Sheets): Promise<Set<string>> {
+  try {
+    const meta = await sheets.spreadsheets.get({ spreadsheetId: MASTER_SHEET_ID })
+    const titles = (meta.data.sheets ?? [])
+      .map((s) => s.properties?.title ?? '')
+      .filter(Boolean)
+    console.log(`[sheets-sync:preflight] master=${MASTER_SHEET_ID} tabs=${JSON.stringify(titles)}`)
+    return new Set(titles)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error(`[sheets-sync:preflight] failed to read metadata: ${msg}`)
+    throw new Error(
+      `No pude leer el sheet ${MASTER_SHEET_ID}. Verifica que esté compartido como Editor con la service account. (${msg})`,
+    )
+  }
+}
+
+/** Returned by the orchestrator when a tab the user asked us to update
+ *  doesn't actually exist in the spreadsheet — we keep going (the
+ *  other tabs are independent) and surface the miss in the response. */
+function skipTab(name: string, tabSet: Set<string>): { updatedLabels: string[] } {
+  console.warn(
+    `[sheets-sync] tab "${name}" not found, skipping. Available: ${Array.from(tabSet).join(', ')}`,
+  )
+  return { updatedLabels: [] }
+}
+function skipTabAnual(name: string, tabSet: Set<string>): { updatedLabels: string[]; monthColumn: string | null } {
+  console.warn(
+    `[sheets-sync] tab "${name}" not found, skipping. Available: ${Array.from(tabSet).join(', ')}`,
+  )
+  return { updatedLabels: [], monthColumn: null }
+}
+
 export async function syncSheets(admin: SupabaseClient): Promise<SyncSummary> {
   const sheets = await getSheetsClient()
+  const tabSet = await preflight(sheets)
   const now = new Date()
   const currentWeek = weekOfMonth(now)
   const startIso = monthStartIso(now)
@@ -221,6 +331,12 @@ export async function syncSheets(admin: SupabaseClient): Promise<SyncSummary> {
     }
   })
 
+  if (!tabSet.has(CREATORS_TAB)) {
+    throw new Error(
+      `Tab "${CREATORS_TAB}" no existe en el sheet. Tabs disponibles: ${Array.from(tabSet).join(', ')}`,
+    )
+  }
+
   const creatorsTabSummary = await syncToCreatorsTab(
     sheets,
     creators,
@@ -229,15 +345,21 @@ export async function syncSheets(admin: SupabaseClient): Promise<SyncSummary> {
     activeCreatorsByWeek,
     creatorsWithGmvCount,
   )
-  const dashboardTabSummary = await syncToDashboardTab(sheets, creators, byCreator, currentWeek, startIso, endIso)
-  const contentTabSummary = await syncToContentTab(sheets, accByWeek, ttdByWeek)
-  const dashboardAnualTabSummary = await syncToDashboardAnualTab(sheets, now, {
-    nuevasCriadoras: newCreatorsThisMonth,
-    totalActivas: activeCreatorsCount,
-    accPosts: accThisMonth,
-    ttdPosts: ttdThisMonth,
-    gmvTotal: gmvThisMonthSum,
-  })
+  const dashboardTabSummary = tabSet.has(DASHBOARD_TAB)
+    ? await syncToDashboardTab(sheets, creators, byCreator, currentWeek, startIso, endIso)
+    : skipTab(DASHBOARD_TAB, tabSet)
+  const contentTabSummary = tabSet.has(CONTENT_TAB)
+    ? await syncToContentTab(sheets, accByWeek, ttdByWeek)
+    : skipTab(CONTENT_TAB, tabSet)
+  const dashboardAnualTabSummary = tabSet.has(DASHBOARD_ANUAL_TAB)
+    ? await syncToDashboardAnualTab(sheets, now, {
+        nuevasCriadoras: newCreatorsThisMonth,
+        totalActivas: activeCreatorsCount,
+        accPosts: accThisMonth,
+        ttdPosts: ttdThisMonth,
+        gmvTotal: gmvThisMonthSum,
+      })
+    : skipTabAnual(DASHBOARD_ANUAL_TAB, tabSet)
 
   return {
     syncedAt: now.toISOString(),
@@ -272,11 +394,7 @@ async function syncToCreatorsTab(
   // sheet sizes. Empty trailing rows are returned as undefined which
   // we coerce to "" — Google trims trailing blanks in the response.
   const range = `${quoteTab(CREATORS_TAB)}!A1:AZ5000`
-  const read = await sheets.spreadsheets.values.get({
-    spreadsheetId: MASTER_SHEET_ID,
-    range,
-  })
-  const allRows = (read.data.values ?? []) as string[][]
+  const allRows = await safeGet(sheets, CREATORS_TAB, range)
   if (allRows.length === 0) {
     throw new Error(`Tab "${CREATORS_TAB}" está vacío o no existe.`)
   }
@@ -411,23 +529,9 @@ async function syncToCreatorsTab(
     teamTotalsUpdated.push('🌟 Creadoras con GMV>0')
   }
 
-  if (updateRequests.length > 0) {
-    await sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId: MASTER_SHEET_ID,
-      requestBody: {
-        valueInputOption: 'RAW',
-        data: updateRequests,
-      },
-    })
-  }
+  await safeBatchUpdate(sheets, CREATORS_TAB, updateRequests)
   if (appendRows.length > 0) {
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: MASTER_SHEET_ID,
-      range: `${quoteTab(CREATORS_TAB)}!A:A`,
-      valueInputOption: 'RAW',
-      insertDataOption: 'INSERT_ROWS',
-      requestBody: { values: appendRows },
-    })
+    await safeAppend(sheets, CREATORS_TAB, `${quoteTab(CREATORS_TAB)}!A:A`, appendRows)
   }
 
   return { updated, appended, total: updated + appended, teamTotalsUpdated }
@@ -488,18 +592,7 @@ async function syncToDashboardTab(
   monthEndIsoStr: string,
 ): Promise<{ updatedLabels: string[] }> {
   const range = `${quoteTab(DASHBOARD_TAB)}!A1:AZ100`
-  let read
-  try {
-    read = await sheets.spreadsheets.values.get({ spreadsheetId: MASTER_SHEET_ID, range })
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    // The tab name is month-specific (e.g. DASHBOARD MAYO) and may
-    // not exist for every month — skip rather than fail the whole
-    // sync since the CREATORS tab is the authoritative one.
-    console.warn(`[sheets-sync] DASHBOARD tab read failed (skipping): ${msg}`)
-    return { updatedLabels: [] }
-  }
-  const allRows = (read.data.values ?? []) as string[][]
+  const allRows = await safeGet(sheets, DASHBOARD_TAB, range)
   if (allRows.length === 0) return { updatedLabels: [] }
 
   // Look for a row containing S1..S4 headers so we know which columns
@@ -586,12 +679,7 @@ async function syncToDashboardTab(
     }
   }
 
-  if (updates.length > 0) {
-    await sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId: MASTER_SHEET_ID,
-      requestBody: { valueInputOption: 'RAW', data: updates },
-    })
-  }
+  await safeBatchUpdate(sheets, DASHBOARD_TAB, updates)
   return { updatedLabels }
 }
 
@@ -612,14 +700,7 @@ async function syncToContentTab(
   ttdByWeek: [number, number, number, number],
 ): Promise<{ updatedLabels: string[] }> {
   const range = `${quoteTab(CONTENT_TAB)}!A1:AZ100`
-  let read
-  try {
-    read = await sheets.spreadsheets.values.get({ spreadsheetId: MASTER_SHEET_ID, range })
-  } catch (e) {
-    console.warn(`[sheets-sync] CONTENT tab read failed (skipping): ${e instanceof Error ? e.message : String(e)}`)
-    return { updatedLabels: [] }
-  }
-  const allRows = (read.data.values ?? []) as string[][]
+  const allRows = await safeGet(sheets, CONTENT_TAB, range)
   if (allRows.length === 0) return { updatedLabels: [] }
 
   const weekCols = findWeekColumns(allRows) ?? [1, 2, 3, 4]
@@ -651,12 +732,7 @@ async function syncToContentTab(
   writeWeekly('TTD Posts', ttdByWeek)
   writeWeekly('Total Videos', totalsByWeek)
 
-  if (updates.length > 0) {
-    await sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId: MASTER_SHEET_ID,
-      requestBody: { valueInputOption: 'RAW', data: updates },
-    })
-  }
+  await safeBatchUpdate(sheets, CONTENT_TAB, updates)
   return { updatedLabels }
 }
 
@@ -718,14 +794,7 @@ async function syncToDashboardAnualTab(
   },
 ): Promise<{ updatedLabels: string[]; monthColumn: string | null }> {
   const range = `${quoteTab(DASHBOARD_ANUAL_TAB)}!A1:AZ200`
-  let read
-  try {
-    read = await sheets.spreadsheets.values.get({ spreadsheetId: MASTER_SHEET_ID, range })
-  } catch (e) {
-    console.warn(`[sheets-sync] DASHBOARD ANUAL tab read failed (skipping): ${e instanceof Error ? e.message : String(e)}`)
-    return { updatedLabels: [], monthColumn: null }
-  }
-  const allRows = (read.data.values ?? []) as string[][]
+  const allRows = await safeGet(sheets, DASHBOARD_ANUAL_TAB, range)
   if (allRows.length === 0) return { updatedLabels: [], monthColumn: null }
 
   const monthIdx0 = now.getUTCMonth() // 0..11
@@ -769,11 +838,6 @@ async function syncToDashboardAnualTab(
   writeCell('TTD Posts', data.ttdPosts)
   writeCell('GMV Total ($)', data.gmvTotal)
 
-  if (updates.length > 0) {
-    await sheets.spreadsheets.values.batchUpdate({
-      spreadsheetId: MASTER_SHEET_ID,
-      requestBody: { valueInputOption: 'RAW', data: updates },
-    })
-  }
+  await safeBatchUpdate(sheets, DASHBOARD_ANUAL_TAB, updates)
   return { updatedLabels, monthColumn: colLetter(monthCol) }
 }
