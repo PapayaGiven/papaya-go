@@ -28,6 +28,54 @@ const SPANISH_MONTHS = [
   'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
 ]
 
+// ── CREATORS tab fixed layout ──────────────────────────────
+//
+// The tab has multiple sections in fixed positions; we don't search
+// for column headers because the real sheet has merged headers
+// spanning multiple rows. All indices below are 0-based for columns
+// and 1-based for sheet rows (matching A1 notation).
+//
+// Rows 1-2: titles
+// Row 3: section header "📅 TOTALES DEL EQUIPO POR SEMANA"
+// Rows 4-9: team totals (one per metric, S1..S4 in cols B..E)
+// Row 10: section header "📋 REGISTRO POR CREADORA"
+// Row 11: super-headers (INFO | MES ANTERIOR | S1 | S2 | S3 | S4 | RESUMEN)
+// Row 12: column headers (Nombre, @Handle, Nicho, …)
+// Row 13+: per-creator data
+
+const CREATORS_DATA_START_ROW = 13
+
+/** 0-based column indices for the per-creator data rows. */
+const CREATORS_COL = {
+  nombre: 0,        // A
+  handle: 1,        // B
+  nicho: 2,         // C
+  tier: 3,          // D
+  fechaLinkeo: 4,   // E
+  accLast: 5,       // F  (ACC mes ant.)
+  ttdLast: 6,       // G  (TTD mes ant.)
+  // Per-week ACC / TTD / GMV cluster, 3 cols per week
+  accS: [7, 10, 13, 16] as const,   // H, K, N, Q
+  ttdS: [8, 11, 14, 17] as const,   // I, L, O, R
+  gmvS: [9, 12, 15, 18] as const,   // J, M, P, S
+  totalPosts: 19,   // T
+  totalGmv: 20,     // U
+  // Fidelidad % (col V) is admin-maintained — we don't touch it.
+} as const
+
+/** Team totals — 1-based sheet rows. Cols B/C/D/E = S1/S2/S3/S4. */
+const TEAM_TOTALS_ROW = {
+  nuevas: 4,
+  accPosts: 5,
+  ttdPosts: 6,
+  gmvSemana: 7,
+  activas: 8,
+  conGmv: 9,
+} as const
+
+/** 0-based column indices for team totals — B..E. */
+const TEAM_TOTALS_COLS = [1, 2, 3, 4] as const
+
 /**
  * Map day-of-month → week-of-month bucket (1..4). Used by the cron
  * column dispatch — videos with created_at in day 1..7 land in S1,
@@ -90,11 +138,6 @@ function quoteTab(name: string): string {
 /** Normalize a header cell for tolerant matching. */
 function normHeader(s: unknown): string {
   return String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
-}
-
-function findColumn(header: string[], wanted: string): number {
-  const target = normHeader(wanted)
-  return header.findIndex((h) => normHeader(h) === target)
 }
 
 function findRow(rows: string[][], label: string): number {
@@ -195,27 +238,6 @@ async function safeBatchUpdate(
     console.error(`[sheets-sync:${tabLabel}] batchUpdate failed (${data.length} ranges): ${msg}`)
     console.error(`[sheets-sync:${tabLabel}] failing ranges: ${ranges}`)
     throw new Error(`${tabLabel} batchUpdate (${data.length} ranges): ${msg}`)
-  }
-}
-
-async function safeAppend(
-  sheets: sheets_v4.Sheets,
-  tabLabel: string,
-  range: string,
-  values: (string | number)[][],
-): Promise<void> {
-  try {
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: MASTER_SHEET_ID,
-      range,
-      valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
-      requestBody: { values },
-    })
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    console.error(`[sheets-sync:${tabLabel}] append failed range=${range}: ${msg}`)
-    throw new Error(`${tabLabel} append ${range}: ${msg}`)
   }
 }
 
@@ -331,6 +353,17 @@ export async function syncSheets(admin: SupabaseClient): Promise<SyncSummary> {
     }
   })
 
+  // Per-week count of NEW creators incorporated this month, bucketed
+  // by the week-of-month of their approved_at. Used by the CREATORS
+  // tab "Nuevas Incorporadas" team-totals row.
+  const newCreatorsByWeek: [number, number, number, number] = [0, 0, 0, 0]
+  for (const c of creators) {
+    if (!c.approved_at) continue
+    if (c.approved_at < startIso || c.approved_at > endIso) continue
+    const w = weekOfMonth(new Date(c.approved_at)) - 1
+    newCreatorsByWeek[w] += 1
+  }
+
   if (!tabSet.has(CREATORS_TAB)) {
     throw new Error(
       `Tab "${CREATORS_TAB}" no existe en el sheet. Tabs disponibles: ${Array.from(tabSet).join(', ')}`,
@@ -342,8 +375,14 @@ export async function syncSheets(admin: SupabaseClient): Promise<SyncSummary> {
     creators,
     byCreator,
     currentWeek,
-    activeCreatorsByWeek,
-    creatorsWithGmvCount,
+    {
+      accByWeek,
+      ttdByWeek,
+      activeCreatorsByWeek,
+      newCreatorsByWeek,
+      creatorsWithGmvCount,
+      gmvThisMonthSum,
+    },
   )
   const dashboardTabSummary = tabSet.has(DASHBOARD_TAB)
     ? await syncToDashboardTab(sheets, creators, byCreator, currentWeek, startIso, endIso)
@@ -382,203 +421,162 @@ export async function syncSheets(admin: SupabaseClient): Promise<SyncSummary> {
 
 // ── CREATORS tab ───────────────────────────────────────────
 
+type CreatorsTotals = {
+  /** Per-week ACC across all non-internal creators. */
+  accByWeek: [number, number, number, number]
+  /** Per-week TTD across all non-internal creators. */
+  ttdByWeek: [number, number, number, number]
+  /** Per-week count of creators with at least one approved video. */
+  activeCreatorsByWeek: [number, number, number, number]
+  /** Per-week count of creators incorporated in that week of this month. */
+  newCreatorsByWeek: [number, number, number, number]
+  /** Right-now count of creators with gmv_this_month > 0. */
+  creatorsWithGmvCount: number
+  /** Sum of gmv_this_month across active creators. */
+  gmvThisMonthSum: number
+}
+
+/**
+ * Sync the 📌 CREATORS tab — fixed-layout writer.
+ *
+ * The tab is a custom-designed report (not a generic table) so we
+ * don't header-detect. Two distinct sections, both at known
+ * coordinates:
+ *
+ *   Rows 4-9 — team totals (cols B..E = S1..S4)
+ *   Rows 13+ — per-creator data (cols A..V per CREATORS_COL)
+ *
+ * Per-creator lookup reads column B from row 13 down and matches by
+ * normalized @handle. Creators not in the sheet get appended after
+ * the last filled row. Untouched columns (Nicho, Tier, Fecha Linkeo,
+ * ACC/TTD mes ant., Fidelidad %) are preserved because we write each
+ * managed cell individually.
+ */
 async function syncToCreatorsTab(
   sheets: sheets_v4.Sheets,
   creators: CreatorRow[],
   byCreator: Map<string, { acc: number[]; ttd: number[] }>,
   currentWeek: 1 | 2 | 3 | 4,
-  activeCreatorsByWeek: [number, number, number, number],
-  creatorsWithGmvCount: number,
+  totals: CreatorsTotals,
 ): Promise<{ updated: number; appended: number; total: number; teamTotalsUpdated: string[] }> {
-  // Pull header row + a wide enough body to cover most realistic
-  // sheet sizes. Empty trailing rows are returned as undefined which
-  // we coerce to "" — Google trims trailing blanks in the response.
-  const range = `${quoteTab(CREATORS_TAB)}!A1:AZ5000`
-  const allRows = await safeGet(sheets, CREATORS_TAB, range)
-  if (allRows.length === 0) {
-    throw new Error(`Tab "${CREATORS_TAB}" está vacío o no existe.`)
-  }
-  const header = allRows[0].map((h) => String(h ?? ''))
+  // 1) Read column B starting at row 13 to find which @handles
+  // already have rows. Range goes wide (200 rows) and we use the
+  // length of the response to know where to append new rows.
+  const handleRange = `${quoteTab(CREATORS_TAB)}!B${CREATORS_DATA_START_ROW}:B500`
+  const handleRows = await safeGet(sheets, CREATORS_TAB, handleRange)
+  console.log(
+    `[sheets-sync:${CREATORS_TAB}] data-rows scanned=${handleRows.length} starting=row ${CREATORS_DATA_START_ROW}`,
+  )
 
-  // Resolve the columns we need. If any is missing we still try the
-  // ones we have — the response includes a `missing` field the route
-  // logs for diagnosis.
-  const cols = {
-    handle: findColumn(header, '@Handle'),
-    name: findColumn(header, 'Nombre'),
-    nivel: findColumn(header, 'Tier'),
-    fechaLinkeo: findColumn(header, 'Fecha Linkeo'),
-    accS1: findColumn(header, 'ACC S1'),
-    ttdS1: findColumn(header, 'TTD S1'),
-    gmvS1: findColumn(header, 'GMV S1'),
-    accS2: findColumn(header, 'ACC S2'),
-    ttdS2: findColumn(header, 'TTD S2'),
-    gmvS2: findColumn(header, 'GMV S2'),
-    accS3: findColumn(header, 'ACC S3'),
-    ttdS3: findColumn(header, 'TTD S3'),
-    gmvS3: findColumn(header, 'GMV S3'),
-    accS4: findColumn(header, 'ACC S4'),
-    ttdS4: findColumn(header, 'TTD S4'),
-    gmvS4: findColumn(header, 'GMV S4'),
-    totalPosts: findColumn(header, 'Total Posts'),
-    totalGmv: findColumn(header, 'Total GMV'),
-  }
-  if (cols.handle < 0) {
-    throw new Error('Columna "@Handle" no encontrada en CREATORS — verifica el header.')
-  }
-
-  // Build a handle → rowIndex map (1-based sheet row, so data rows
-  // start at 2). Normalize handles by lowercasing + stripping "@".
+  // Map normalized handle → 1-based sheet row (so first data row = 13).
   const handleToRow = new Map<string, number>()
-  for (let i = 1; i < allRows.length; i++) {
-    const raw = allRows[i][cols.handle] ?? ''
+  // Track the last row that had a handle so we know where to append.
+  let lastDataRow = CREATORS_DATA_START_ROW - 1
+  for (let i = 0; i < handleRows.length; i++) {
+    const raw = handleRows[i]?.[0]
     const key = normalizeHandle(raw)
-    if (key) handleToRow.set(key, i + 1)
+    const sheetRow = CREATORS_DATA_START_ROW + i
+    if (key) {
+      handleToRow.set(key, sheetRow)
+      lastDataRow = sheetRow
+    }
   }
-
-  const accWeekCols = [cols.accS1, cols.accS2, cols.accS3, cols.accS4]
-  const ttdWeekCols = [cols.ttdS1, cols.ttdS2, cols.ttdS3, cols.ttdS4]
-  const gmvWeekCols = [cols.gmvS1, cols.gmvS2, cols.gmvS3, cols.gmvS4]
 
   const updateRequests: sheets_v4.Schema$ValueRange[] = []
   const appendRows: (string | number)[][] = []
   let updated = 0
   let appended = 0
-  let nextRowForNewRows = allRows.length + 1
 
+  // Reusable helper: stage a single-cell write for the per-creator
+  // section. Targets a specific (row, col) by name — keeps the
+  // column → field mapping in one place.
+  const pushCell = (row: number, col: number, value: string | number) => {
+    updateRequests.push({
+      range: `${quoteTab(CREATORS_TAB)}!${colLetter(col)}${row}`,
+      values: [[value]],
+    })
+  }
+
+  // 2) For every active creator with a handle, either patch the
+  // tracked cells in their row or compose a brand-new row to append.
   for (const c of creators) {
     if (!c.tiktok_handle) continue
     const key = normalizeHandle(c.tiktok_handle)
     const buckets = byCreator.get(c.id) ?? { acc: [0, 0, 0, 0], ttd: [0, 0, 0, 0] }
-    const totalPosts = buckets.acc.reduce((s, n) => s + n, 0) + buckets.ttd.reduce((s, n) => s + n, 0)
-    const gmvTotal = Number(c.gmv_this_month ?? 0)
+    const totalPostsThisCreator =
+      buckets.acc.reduce((s, n) => s + n, 0) + buckets.ttd.reduce((s, n) => s + n, 0)
+    const gmvTotalThisCreator = Number(c.gmv_this_month ?? 0)
 
-    const rowIndex = handleToRow.get(key) ?? null
-
-    if (rowIndex == null) {
-      // New creator — append at the end. We fill what we know;
-      // Nicho / ACC (mes ant.) / TTD (mes ant.) / Fidelidad % are
-      // left blank for the admin to fill in.
-      const row = new Array<string | number>(header.length).fill('')
-      if (cols.name >= 0) row[cols.name] = c.full_name ?? ''
-      if (cols.handle >= 0) row[cols.handle] = c.tiktok_handle ?? ''
-      if (cols.nivel >= 0) row[cols.nivel] = c.nivel
-      if (cols.fechaLinkeo >= 0 && c.created_at) row[cols.fechaLinkeo] = c.created_at.slice(0, 10)
-      writeWeeklyCells(row, accWeekCols, ttdWeekCols, gmvWeekCols, buckets, gmvTotal, currentWeek)
-      if (cols.totalPosts >= 0) row[cols.totalPosts] = totalPosts
-      if (cols.totalGmv >= 0) row[cols.totalGmv] = gmvTotal
-      appendRows.push(row)
-      handleToRow.set(key, nextRowForNewRows)
-      nextRowForNewRows++
-      appended++
+    const existingRow = handleToRow.get(key)
+    if (existingRow != null) {
+      // ACC + TTD recomputed for ALL 4 weeks (idempotent — a late
+      // validation lands in its true week column on the next sync).
+      for (let w = 0; w < 4; w++) {
+        pushCell(existingRow, CREATORS_COL.accS[w], buckets.acc[w])
+        pushCell(existingRow, CREATORS_COL.ttdS[w], buckets.ttd[w])
+      }
+      // GMV is per-month — stamp the running total into the current
+      // week's GMV cell only. Past weeks keep their historic snapshot.
+      pushCell(existingRow, CREATORS_COL.gmvS[currentWeek - 1], gmvTotalThisCreator)
+      pushCell(existingRow, CREATORS_COL.totalPosts, totalPostsThisCreator)
+      pushCell(existingRow, CREATORS_COL.totalGmv, gmvTotalThisCreator)
+      updated++
       continue
     }
 
-    // Existing creator — batch a row update. We update only the cells
-    // we track (ACC/TTD/GMV per week + totals) so manually maintained
-    // columns like Nicho, Tier, Fidelidad % stay intact.
-    const partial = new Array<string | number | null>(header.length).fill(null)
-    writeWeeklyCells(partial, accWeekCols, ttdWeekCols, gmvWeekCols, buckets, gmvTotal, currentWeek)
-    if (cols.totalPosts >= 0) partial[cols.totalPosts] = totalPosts
-    if (cols.totalGmv >= 0) partial[cols.totalGmv] = gmvTotal
-
-    // Splice into ranges of contiguous non-null cells so we don't
-    // overwrite the entire row (which would blank out untracked cols).
-    const ranges = compactRanges(partial, rowIndex)
-    updateRequests.push(...ranges)
-    updated++
-  }
-
-  // ── Team totals ─────────────────────────────────────────
-  //
-  // Two summary rows at the bottom of the CREATORS tab:
-  //
-  //   "✅ Creadoras Activas"  → per-week count of creators who had
-  //       at least one approved video that week. One value per
-  //       S1/S2/S3/S4.
-  //   "🌟 Creadoras con GMV>0" → current count of creators whose
-  //       gmv_this_month > 0. Stamped only into the current week's
-  //       column (the metric is per-month, not per-week — matches
-  //       the GMV-stamp pattern used for the per-creator rows).
-  //
-  // We write into the ACC S{w} column for each week. This assumes
-  // the totals rows reuse the same column layout as the per-creator
-  // rows above them, which is the common case for these "totals at
-  // the bottom of a creator-keyed table" sheets. If the admin's
-  // sheet actually uses GMV S{w} or TTD S{w} for the totals, the
-  // value still lands at the right horizontal position — they can
-  // move the cell display to whichever column they prefer.
-  const teamTotalsUpdated: string[] = []
-  const writeTeamTotalsCell = (rowIdx1Based: number, col: number, value: number) => {
-    if (col < 0) return
-    updateRequests.push({
-      range: `${quoteTab(CREATORS_TAB)}!${colLetter(col)}${rowIdx1Based}`,
-      values: [[value]],
-    })
-  }
-  const activasIdx = findRow(allRows, '✅ Creadoras Activas')
-  if (activasIdx >= 0) {
+    // New row — fill what we know, leave admin-maintained columns
+    // (Nicho, ACC/TTD mes ant., Fidelidad %) blank. Length matches
+    // the schema (22 columns A..V).
+    const row = new Array<string | number>(22).fill('')
+    row[CREATORS_COL.nombre] = c.full_name ?? ''
+    row[CREATORS_COL.handle] = c.tiktok_handle ?? ''
+    row[CREATORS_COL.tier] = c.nivel
+    if (c.created_at) row[CREATORS_COL.fechaLinkeo] = c.created_at.slice(0, 10)
     for (let w = 0; w < 4; w++) {
-      writeTeamTotalsCell(activasIdx + 1, accWeekCols[w], activeCreatorsByWeek[w])
+      row[CREATORS_COL.accS[w]] = buckets.acc[w]
+      row[CREATORS_COL.ttdS[w]] = buckets.ttd[w]
     }
-    teamTotalsUpdated.push('✅ Creadoras Activas')
-  }
-  const conGmvIdx = findRow(allRows, '🌟 Creadoras con GMV>0')
-  if (conGmvIdx >= 0) {
-    writeTeamTotalsCell(conGmvIdx + 1, accWeekCols[currentWeek - 1], creatorsWithGmvCount)
-    teamTotalsUpdated.push('🌟 Creadoras con GMV>0')
+    row[CREATORS_COL.gmvS[currentWeek - 1]] = gmvTotalThisCreator
+    row[CREATORS_COL.totalPosts] = totalPostsThisCreator
+    row[CREATORS_COL.totalGmv] = gmvTotalThisCreator
+    appendRows.push(row)
+    appended++
   }
 
+  // 3) Team totals at fixed sheet rows. Cols B..E (TEAM_TOTALS_COLS)
+  // for the S1..S4 metrics; for per-month metrics (GMV semana, GMV>0)
+  // we stamp the current week's column only.
+  const teamTotalsUpdated: string[] = []
+  const writeTeamRow = (label: string, sheetRow: number, perWeek: readonly number[]) => {
+    for (let w = 0; w < 4; w++) {
+      pushCell(sheetRow, TEAM_TOTALS_COLS[w], perWeek[w])
+    }
+    teamTotalsUpdated.push(label)
+  }
+  const writeTeamCurrentWeekCell = (label: string, sheetRow: number, value: number) => {
+    pushCell(sheetRow, TEAM_TOTALS_COLS[currentWeek - 1], value)
+    teamTotalsUpdated.push(label)
+  }
+  writeTeamRow('Nuevas Incorporadas', TEAM_TOTALS_ROW.nuevas, totals.newCreatorsByWeek)
+  writeTeamRow('ACC Posts (semana)', TEAM_TOTALS_ROW.accPosts, totals.accByWeek)
+  writeTeamRow('TTD Posts (semana)', TEAM_TOTALS_ROW.ttdPosts, totals.ttdByWeek)
+  writeTeamCurrentWeekCell('GMV Semana', TEAM_TOTALS_ROW.gmvSemana, totals.gmvThisMonthSum)
+  writeTeamRow('Creadoras Activas', TEAM_TOTALS_ROW.activas, totals.activeCreatorsByWeek)
+  writeTeamCurrentWeekCell('Creadoras con GMV>0', TEAM_TOTALS_ROW.conGmv, totals.creatorsWithGmvCount)
+
+  // 4) Flush — batch update first, then append. Append inserts
+  // after the last filled row in the data range so it doesn't
+  // collide with the team-totals section above.
   await safeBatchUpdate(sheets, CREATORS_TAB, updateRequests)
   if (appendRows.length > 0) {
-    await safeAppend(sheets, CREATORS_TAB, `${quoteTab(CREATORS_TAB)}!A:A`, appendRows)
+    const appendStart = lastDataRow + 1
+    const appendRange = `${quoteTab(CREATORS_TAB)}!A${appendStart}:V${appendStart + appendRows.length - 1}`
+    await safeBatchUpdate(sheets, CREATORS_TAB, [
+      { range: appendRange, values: appendRows },
+    ])
   }
 
   return { updated, appended, total: updated + appended, teamTotalsUpdated }
-}
-
-function writeWeeklyCells(
-  row: (string | number | null)[],
-  accCols: number[],
-  ttdCols: number[],
-  gmvCols: number[],
-  buckets: { acc: number[]; ttd: number[] },
-  gmvTotal: number,
-  currentWeek: 1 | 2 | 3 | 4,
-): void {
-  // ACC and TTD recomputed for ALL 4 weeks (idempotent — late
-  // validations show up retroactively).
-  for (let w = 0; w < 4; w++) {
-    if (accCols[w] >= 0) row[accCols[w]] = buckets.acc[w]
-    if (ttdCols[w] >= 0) row[ttdCols[w]] = buckets.ttd[w]
-  }
-  // GMV is per-month, not per-week — stamp the running total into
-  // the current week's column only.
-  const gmvCol = gmvCols[currentWeek - 1]
-  if (gmvCol >= 0) row[gmvCol] = gmvTotal
-}
-
-/**
- * Convert a sparse row (with nulls for "don't touch") into the
- * smallest set of contiguous ValueRanges. This keeps the batchUpdate
- * payload tight and never writes to columns we didn't intend to.
- */
-function compactRanges(partial: (string | number | null)[], rowIndex1Based: number): sheets_v4.Schema$ValueRange[] {
-  const out: sheets_v4.Schema$ValueRange[] = []
-  let i = 0
-  while (i < partial.length) {
-    if (partial[i] === null) { i++; continue }
-    const start = i
-    const values: (string | number)[] = []
-    while (i < partial.length && partial[i] !== null) {
-      values.push(partial[i] as string | number)
-      i++
-    }
-    const end = start + values.length - 1
-    const a1 = `${quoteTab(CREATORS_TAB)}!${colLetter(start)}${rowIndex1Based}:${colLetter(end)}${rowIndex1Based}`
-    out.push({ range: a1, values: [values] })
-  }
-  return out
 }
 
 // ── DASHBOARD MAYO tab ─────────────────────────────────────
