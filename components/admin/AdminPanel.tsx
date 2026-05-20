@@ -4721,6 +4721,7 @@ function WeeklyReportSection() {
           ok: boolean
           error?: string
           syncedAt?: string
+          sheetUrl?: string
           currentWeek?: number
           creatorsTab?: { updated: number; appended: number; total: number; teamTotalsUpdated?: string[] }
           dashboardTab?: { updatedLabels: string[] }
@@ -4733,10 +4734,9 @@ function WeeklyReportSection() {
         }
         const date = new Date(data.syncedAt ?? Date.now())
         const dateStr = date.toLocaleString('es', { dateStyle: 'medium', timeStyle: 'short' })
-        setSyncResult({
-          ...data,
-          sheetUrl: 'https://docs.google.com/spreadsheets/d/1a_WJ5LYw21JwN61K2z1VkJrVvpxvfVCH/edit',
-        })
+        // Use the URL the API returned so the sheet ID lives in
+        // exactly one place (lib/sheets-sync.ts).
+        setSyncResult(data)
         fb(`✅ Datos sincronizados a Google Sheets — ${dateStr}`)
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)

@@ -6,7 +6,13 @@ import type { SupabaseClient } from '@supabase/supabase-js'
  * the service account). Allow override via env so we can point at a
  * staging sheet during local development without code changes.
  */
-const MASTER_SHEET_ID = process.env.PAPAYA_GO_SHEET_ID ?? '1a_WJ5LYw21JwN61K2z1VkJrVvpxvfVCH'
+const MASTER_SHEET_ID = process.env.MASTER_SHEET_ID ?? '15yy5K7V1wqgQSkbpp4XMABWk2wpjrSJ5wG_UZBC_ZxY'
+
+/** Public link to the master sheet — surfaced in API responses so
+ *  client UIs don't have to re-encode the ID. */
+export function masterSheetUrl(): string {
+  return `https://docs.google.com/spreadsheets/d/${MASTER_SHEET_ID}/edit`
+}
 const CREATORS_TAB = 'CREATORS'
 const DASHBOARD_TAB = 'DASHBOARD MAYO'
 const DASHBOARD_ANUAL_TAB = 'DASHBOARD ANUAL'
@@ -120,6 +126,8 @@ type CreatorRow = {
 
 export type SyncSummary = {
   syncedAt: string
+  /** Convenience URL for the admin UI to deep-link into the sheet. */
+  sheetUrl: string
   currentWeek: 1 | 2 | 3 | 4
   creatorsTab: {
     updated: number
@@ -233,6 +241,7 @@ export async function syncSheets(admin: SupabaseClient): Promise<SyncSummary> {
 
   return {
     syncedAt: now.toISOString(),
+    sheetUrl: masterSheetUrl(),
     currentWeek,
     creatorsTab: creatorsTabSummary,
     dashboardTab: dashboardTabSummary,
