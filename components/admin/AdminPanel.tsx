@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition, useRef, useEffect } from 'react'
+import { useState, useTransition, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import type {
   Creator,
@@ -84,8 +84,6 @@ import {
   deleteTopPoi,
   resetCalendarMonth,
   adminSubmitVideosForCreator,
-  getSetting,
-  setSetting,
   exportWeeklyReport,
 } from '@/app/admin/actions'
 import TikTokPreviewModal, { PreviewButton } from './TikTokPreviewModal'
@@ -4685,97 +4683,110 @@ function AdminDashboardTab({
 }
 
 /**
- * Weekly manager report — manual export button + the Sheet ID
- * setting that drives the Monday-8am cron. The cron lives at
- * /api/cron/weekly-report; this UI is the only place to configure
- * it from inside the app.
+ * Weekly manager report — two actions:
  *
- * The manual export hits the same code path as the cron via the
- * exportWeeklyReport server action; falls back to a CSV download
- * when no Sheet ID is configured so the admin can use it before
- * setting up Sheets at all.
+ *  1. 📊 Sync a Google Sheets — POSTs /api/sheets/sync which writes
+ *     to the hard-coded master sheet via googleapis + the service
+ *     account in GOOGLE_SERVICE_ACCOUNT_JSON. Updates CREATORS and
+ *     DASHBOARD MAYO tabs in place (find-row-by-handle + update
+ *     specific S{week} columns). Same code path as the Monday-9am
+ *     cron at /api/cron/weekly-sheets-sync, so an admin can preview
+ *     this week's numbers without waiting for the schedule.
+ *
+ *  2. 📥 Descargar CSV — always-available backup that downloads a
+ *     weekly summary CSV. Useful when Sheets is misconfigured or
+ *     the admin just wants a spreadsheet they can paste into a Slack
+ *     thread or email.
  */
 function WeeklyReportSection() {
   const [isPending, startTransition] = useTransition()
-  const [sheetId, setSheetId] = useState('')
-  const [loadedSheetId, setLoadedSheetId] = useState<string | null>(null)
+  const [syncResult, setSyncResult] = useState<{
+    syncedAt?: string
+    currentWeek?: number
+    creatorsTab?: { updated: number; appended: number; total: number }
+    dashboardTab?: { updatedLabels: string[] }
+    sheetUrl?: string
+  } | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
-  const [exportResult, setExportResult] = useState<{ sheetUrl?: string; csv?: string; filename?: string } | null>(null)
-  const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
+  const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 6000) }
 
-  useEffect(() => {
-    let cancelled = false
+  function handleSync() {
+    setSyncResult(null)
     startTransition(async () => {
-      const r = await getSetting('weekly_report_sheet_id')
-      if (cancelled) return
-      const v = r.value ?? ''
-      setLoadedSheetId(v)
-      setSheetId(v)
-    })
-    return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  function handleSaveSheetId() {
-    const trimmed = sheetId.trim()
-    startTransition(async () => {
-      const r = await setSetting('weekly_report_sheet_id', trimmed)
-      if (r.error) fb(`Error: ${r.error}`)
-      else {
-        setLoadedSheetId(trimmed)
-        fb('✅ Sheet ID guardado')
+      try {
+        const res = await fetch('/api/sheets/sync', { method: 'POST' })
+        const data = (await res.json()) as {
+          ok: boolean
+          error?: string
+          syncedAt?: string
+          currentWeek?: number
+          creatorsTab?: { updated: number; appended: number; total: number }
+          dashboardTab?: { updatedLabels: string[] }
+        }
+        if (!res.ok || !data.ok) {
+          fb(`Error: ${data.error ?? `HTTP ${res.status}`}`)
+          return
+        }
+        const date = new Date(data.syncedAt ?? Date.now())
+        const dateStr = date.toLocaleString('es', { dateStyle: 'medium', timeStyle: 'short' })
+        setSyncResult({
+          ...data,
+          sheetUrl: 'https://docs.google.com/spreadsheets/d/1a_WJ5LYw21JwN61K2z1VkJrVvpxvfVCH/edit',
+        })
+        fb(`✅ Datos sincronizados a Google Sheets — ${dateStr}`)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        fb(`Error: ${msg}`)
       }
     })
   }
 
-  function handleExport() {
-    setExportResult(null)
+  function handleCsv() {
     startTransition(async () => {
       const r = await exportWeeklyReport()
-      if (r.error) { fb(`Error: ${r.error}`); return }
-      if (r.csv && r.filename) {
-        // Browser download
-        const blob = new Blob([r.csv], { type: 'text/csv;charset=utf-8' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = r.filename
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        URL.revokeObjectURL(url)
-        setExportResult({ csv: r.csv, filename: r.filename })
-        fb('✅ Reporte descargado como CSV')
+      if (r.error || !r.csv || !r.filename) {
+        fb(`Error: ${r.error ?? 'CSV vacío'}`)
         return
       }
-      if (r.sheetUrl) {
-        setExportResult({ sheetUrl: r.sheetUrl })
-        fb('✅ Reporte exportado a Google Sheets')
-        return
-      }
-      fb('Reporte generado pero sin destino')
+      const blob = new Blob([r.csv], { type: 'text/csv;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = r.filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      fb('✅ CSV descargado')
     })
   }
-
-  const dirty = sheetId.trim() !== (loadedSheetId ?? '')
 
   return (
     <SectionCard>
       <div className="p-6 space-y-4">
-        <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-start justify-between flex-wrap gap-3">
           <div>
             <h3 className="font-syne font-bold text-base text-go-dark">📊 Reporte Semanal</h3>
             <p className="font-dm text-xs text-go-dark/50 mt-0.5">
-              Cron automático cada lunes 8:00 UTC + exportación manual on-demand.
+              Sync automático a Google Sheets cada lunes 9:00 UTC, o forzá uno manual.
             </p>
           </div>
-          <button
-            onClick={handleExport}
-            disabled={isPending}
-            className="font-dm text-sm font-semibold bg-go-orange text-white px-4 py-2 rounded-xl hover:bg-go-orange/90 transition disabled:opacity-50"
-          >
-            {isPending ? 'Generando…' : '📊 Exportar reporte esta semana'}
-          </button>
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={handleSync}
+              disabled={isPending}
+              className="font-dm text-sm font-semibold bg-go-orange text-white px-4 py-2 rounded-xl hover:bg-go-orange/90 transition disabled:opacity-50"
+            >
+              {isPending ? 'Sincronizando…' : '📊 Sync a Google Sheets'}
+            </button>
+            <button
+              onClick={handleCsv}
+              disabled={isPending}
+              className="font-dm text-sm font-semibold bg-go-dark text-white px-4 py-2 rounded-xl hover:bg-go-dark/80 transition disabled:opacity-50"
+            >
+              📥 Descargar CSV
+            </button>
+          </div>
         </div>
 
         {feedback && (
@@ -4784,63 +4795,27 @@ function WeeklyReportSection() {
           </p>
         )}
 
-        {exportResult?.sheetUrl && (
-          <a
-            href={exportResult.sheetUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm text-go-orange hover:underline font-dm"
-          >
-            Abrir Google Sheet →
-          </a>
-        )}
-
-        <div className="border-t border-go-dark/5 pt-4">
-          <h4 className="font-syne font-bold text-sm text-go-dark mb-1">⚙️ Configuración</h4>
-          <p className="font-dm text-xs text-go-dark/50 mb-3">
-            Pega el ID del Google Sheet donde quieres que se publique el reporte. Abre tu sheet → File → Share → Anyone with link (Editor) → copia el ID de la URL.
-          </p>
-          <div className="flex gap-2 items-center flex-wrap">
-            <input
-              type="text"
-              value={sheetId}
-              onChange={(e) => setSheetId(e.target.value)}
-              placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms"
-              className="flex-1 min-w-[280px] px-3 py-2 text-sm font-mono rounded-lg border border-go-dark/10 focus:outline-none focus:ring-2 focus:ring-go-orange/30"
-            />
-            <button
-              onClick={handleSaveSheetId}
-              disabled={isPending || !dirty}
-              className="font-dm text-sm font-semibold bg-go-dark text-white px-4 py-2 rounded-xl hover:bg-go-dark/80 transition disabled:opacity-40"
-            >
-              {dirty ? 'Guardar' : 'Guardado'}
-            </button>
-          </div>
-          {loadedSheetId && (
-            <p className="font-dm text-[11px] text-go-dark/40 mt-2">
-              Configurado: <a
-                href={`https://docs.google.com/spreadsheets/d/${loadedSheetId}/edit`}
-                target="_blank" rel="noopener noreferrer"
-                className="text-go-orange hover:underline"
-              >
-                docs.google.com/.../{loadedSheetId.slice(0, 20)}…
-              </a>
+        {syncResult?.creatorsTab && (
+          <div className="text-xs font-dm text-go-dark/60 bg-go-light/30 rounded-xl p-3 space-y-1">
+            <p>
+              <span className="font-semibold text-go-dark">Semana S{syncResult.currentWeek}</span>
+              {' · '}
+              CREATORS: {syncResult.creatorsTab.updated} actualizadas, {syncResult.creatorsTab.appended} nuevas
+              {syncResult.dashboardTab && syncResult.dashboardTab.updatedLabels.length > 0 && (
+                <> · DASHBOARD: {syncResult.dashboardTab.updatedLabels.join(', ')}</>
+              )}
             </p>
-          )}
-          <details className="mt-3">
-            <summary className="font-dm text-xs text-go-dark/50 cursor-pointer hover:text-go-dark">
-              Requiere también GOOGLE_SERVICE_ACCOUNT_JSON en Vercel →
-            </summary>
-            <div className="font-dm text-xs text-go-dark/60 mt-2 space-y-1 pl-4">
-              <p>1. Crea una service account en Google Cloud Console → APIs & Services → Credentials.</p>
-              <p>2. Habilita la Google Sheets API en ese proyecto.</p>
-              <p>3. Descarga la JSON key.</p>
-              <p>4. Pega el JSON completo en Vercel → Settings → Environment Variables → <code className="font-mono bg-go-dark/[0.04] px-1 rounded">GOOGLE_SERVICE_ACCOUNT_JSON</code>.</p>
-              <p>5. Comparte tu Google Sheet con el email <code className="font-mono bg-go-dark/[0.04] px-1 rounded">client_email</code> del JSON (con permiso Editor).</p>
-              <p>Si todavía no configuras esto: el botón &quot;Exportar&quot; descarga un CSV en lugar de escribir al sheet.</p>
-            </div>
-          </details>
-        </div>
+            {syncResult.sheetUrl && (
+              <a
+                href={syncResult.sheetUrl}
+                target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-go-orange hover:underline"
+              >
+                Abrir Google Sheet →
+              </a>
+            )}
+          </div>
+        )}
       </div>
     </SectionCard>
   )

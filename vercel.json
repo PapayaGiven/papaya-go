@@ -2,6 +2,6 @@
   "framework": "nextjs",
   "crons": [
     { "path": "/api/cron/monthly-snapshot", "schedule": "1 0 1 * *" },
-    { "path": "/api/cron/weekly-report", "schedule": "0 8 * * 1" }
+    { "path": "/api/cron/weekly-sheets-sync", "schedule": "0 9 * * 1" }
   ]
 }

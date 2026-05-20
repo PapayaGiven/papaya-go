@@ -2019,41 +2019,29 @@ export async function setSetting(key: string, value: string): Promise<{ error?: 
   return { success: true }
 }
 
-// ── Weekly report manual export ─────────────────────────────
+// ── Weekly report CSV download ──────────────────────────────
 
 /**
- * Manual export of the current week's manager report. The cron at
- * /api/cron/weekly-report does the same thing on Mondays at 8am; this
- * action wraps the same computation so admins can trigger it on demand.
- *
- * Returns `{ csv }` when no sheet ID is configured (admin downloads it
- * client-side) or `{ sheetUrl }` when the data was appended to the
- * configured Google Sheet.
+ * Build the weekly CSV the admin downloads via the 📥 button. Google
+ * Sheets sync moved to /api/sheets/sync (uses googleapis + the
+ * hard-coded master sheet ID); this action only ever returns CSV
+ * now, so the admin always has a manual backup channel even if the
+ * service account is misconfigured.
  */
 export async function exportWeeklyReport(): Promise<{
   csv?: string
   filename?: string
-  sheetUrl?: string
   error?: string
 }> {
   const { computeWeeklyReport, formatReportAsCsv } = await import('@/lib/weekly-report')
   const supabase = createAdminClient()
-  const report = await computeWeeklyReport(supabase)
-
-  const { value: sheetId } = await getSetting('weekly_report_sheet_id')
-
-  if (!sheetId) {
+  try {
+    const report = await computeWeeklyReport(supabase)
     const csv = formatReportAsCsv(report)
     const filename = `papaya-go-reporte-${report.weekStartIso.slice(0, 10)}.csv`
     return { csv, filename }
-  }
-
-  try {
-    const { writeWeeklyReportToSheet } = await import('@/lib/google-sheets')
-    await writeWeeklyReportToSheet(sheetId, report)
-    return { sheetUrl: `https://docs.google.com/spreadsheets/d/${sheetId}/edit` }
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Error desconocido'
-    return { error: `Sheets API: ${msg}` }
+    return { error: msg }
   }
 }

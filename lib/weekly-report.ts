@@ -188,11 +188,11 @@ function csvRow(fields: (string | number | null | undefined)[]): string {
 
 export function formatReportAsCsv(report: WeeklyReport): string {
   const lines: string[] = []
-  lines.push(csvRow([report.weekLabel]))
+  lines.push(csvRow([`Reporte Semanal Papaya GO — ${report.weekLabel}`]))
   lines.push('')
   lines.push(csvRow(['RESUMEN']))
-  lines.push(csvRow(['ACC totales', report.totalAcc]))
-  lines.push(csvRow(['TTD totales', report.totalTtd]))
+  lines.push(csvRow(['ACC esta semana', report.totalAcc]))
+  lines.push(csvRow(['TTD esta semana', report.totalTtd]))
   lines.push(csvRow(['Videos totales', report.totalVideos]))
   lines.push(csvRow(['Creadoras nuevas', report.newCreators]))
   lines.push(csvRow(['Level ups', report.levelUps]))
@@ -205,8 +205,9 @@ export function formatReportAsCsv(report: WeeklyReport): string {
   if (report.top5.length === 0) lines.push(csvRow(['(sin actividad esta semana)']))
   lines.push('')
   lines.push(csvRow(['DETALLE POR CREADORA']))
-  lines.push(csvRow(['Nombre', '@Handle', 'Nivel', 'ACC esta semana', 'TTD esta semana', 'GMV mes', 'Total videos mes']))
+  lines.push(csvRow(['Nombre', '@Handle', 'Nivel', 'ACC semana', 'TTD semana', 'GMV mes', 'Total mes', 'Activa']))
   for (const c of report.perCreator) {
+    const activa = c.accThisWeek + c.ttdThisWeek > 0 ? 'Sí' : 'No'
     lines.push(csvRow([
       c.name,
       c.tiktokHandle ?? '',
@@ -215,60 +216,9 @@ export function formatReportAsCsv(report: WeeklyReport): string {
       c.ttdThisWeek,
       c.gmvThisMonth,
       c.totalVideosMonth,
+      activa,
     ]))
   }
   return lines.join('\n')
 }
 
-/**
- * The "Summary" first tab — single 2D values block that the writer
- * range-clears + sets in one batchUpdate. Keeping it as a single
- * matrix simplifies the API call (one values.update, no per-row
- * appends).
- */
-export function formatReportAsSummaryGrid(report: WeeklyReport): (string | number)[][] {
-  const grid: (string | number)[][] = [
-    [report.weekLabel],
-    [],
-    ['RESUMEN'],
-    ['ACC totales', report.totalAcc],
-    ['TTD totales', report.totalTtd],
-    ['Videos totales', report.totalVideos],
-    ['Creadoras nuevas', report.newCreators],
-    ['Level ups', report.levelUps],
-    [],
-    ['TOP 5 ESTA SEMANA'],
-    ['Nombre', '@Handle', 'ACC', 'TTD', 'Total'],
-  ]
-  if (report.top5.length === 0) {
-    grid.push(['(sin actividad esta semana)'])
-  } else {
-    for (const t of report.top5) {
-      grid.push([t.name, t.tiktokHandle ?? '', t.acc, t.ttd, t.total])
-    }
-  }
-  return grid
-}
-
-export function formatReportAsDetailGrid(report: WeeklyReport): (string | number)[][] {
-  const grid: (string | number)[][] = [
-    ['Nombre', '@Handle', 'Nivel', 'ACC esta semana', 'TTD esta semana', 'GMV mes', 'Total videos mes'],
-  ]
-  for (const c of report.perCreator) {
-    grid.push([
-      c.name,
-      c.tiktokHandle ?? '',
-      c.nivel,
-      c.accThisWeek,
-      c.ttdThisWeek,
-      c.gmvThisMonth,
-      c.totalVideosMonth,
-    ])
-  }
-  return grid
-}
-
-/** Sheet tab name for the weekly snapshot — "Semana 2026-05-13". */
-export function weeklyTabTitle(report: WeeklyReport): string {
-  return `Semana ${report.weekStartIso.slice(0, 10)}`
-}
