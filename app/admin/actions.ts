@@ -78,6 +78,36 @@ export async function updateCreator(
   const { error } = await supabase.from('go_creators').update(data).eq('id', id)
   if (error) return { error: error.message }
   revalidatePath('/admin')
+  // The creator dashboard renders monthly counters from this row, so
+  // revalidate it too — without this, a creator on /dashboard would
+  // still see the cached pre-edit values until they hit the next
+  // dynamic-rendering window.
+  revalidatePath('/dashboard')
+  return { success: true }
+}
+
+/**
+ * Inline-edit GMV for a single creator (Admin Dashboard + Creators
+ * tab). Scoped to gmv_this_month — kept separate from updateCreator
+ * so callers don't need to read the row first, and so the cell can
+ * render an obvious-intent action button.
+ */
+export async function updateCreatorGmv(
+  id: string,
+  gmv: number,
+): Promise<{ error?: string; success?: true }> {
+  if (!Number.isFinite(gmv) || gmv < 0) {
+    return { error: 'GMV inválido — debe ser un número >= 0.' }
+  }
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('go_creators')
+    .update({ gmv_this_month: gmv })
+    .eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  // Creator dashboard reads gmv_this_month directly off this row.
+  revalidatePath('/dashboard')
   return { success: true }
 }
 
@@ -1964,4 +1994,66 @@ export async function deleteTopPoi(id: string): Promise<{ error?: string }> {
   revalidatePath('/admin')
   revalidatePath('/inspiracion')
   return {}
+}
+
+// ── Settings (key/value store on go_settings) ───────────────
+
+export async function getSetting(key: string): Promise<{ value?: string | null; error?: string }> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('go_settings')
+    .select('value')
+    .eq('key', key)
+    .maybeSingle()
+  if (error) return { error: error.message }
+  return { value: data?.value ?? null }
+}
+
+export async function setSetting(key: string, value: string): Promise<{ error?: string; success?: true }> {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('go_settings')
+    .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
+  return { success: true }
+}
+
+// ── Weekly report manual export ─────────────────────────────
+
+/**
+ * Manual export of the current week's manager report. The cron at
+ * /api/cron/weekly-report does the same thing on Mondays at 8am; this
+ * action wraps the same computation so admins can trigger it on demand.
+ *
+ * Returns `{ csv }` when no sheet ID is configured (admin downloads it
+ * client-side) or `{ sheetUrl }` when the data was appended to the
+ * configured Google Sheet.
+ */
+export async function exportWeeklyReport(): Promise<{
+  csv?: string
+  filename?: string
+  sheetUrl?: string
+  error?: string
+}> {
+  const { computeWeeklyReport, formatReportAsCsv } = await import('@/lib/weekly-report')
+  const supabase = createAdminClient()
+  const report = await computeWeeklyReport(supabase)
+
+  const { value: sheetId } = await getSetting('weekly_report_sheet_id')
+
+  if (!sheetId) {
+    const csv = formatReportAsCsv(report)
+    const filename = `papaya-go-reporte-${report.weekStartIso.slice(0, 10)}.csv`
+    return { csv, filename }
+  }
+
+  try {
+    const { writeWeeklyReportToSheet } = await import('@/lib/google-sheets')
+    await writeWeeklyReportToSheet(sheetId, report)
+    return { sheetUrl: `https://docs.google.com/spreadsheets/d/${sheetId}/edit` }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Error desconocido'
+    return { error: `Sheets API: ${msg}` }
+  }
 }

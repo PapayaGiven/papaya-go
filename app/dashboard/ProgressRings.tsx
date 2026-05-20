@@ -72,13 +72,20 @@ export default function ProgressRings({
     return () => cancelAnimationFrame(t)
   }, [])
 
+  // Explorer (nivel 1) has no GMV goal — gmvRequired comes back as 0
+  // from go_nivel_requirements. We skip the GMV ring entirely in that
+  // case so the layout doesn't show an empty/100% ring that would be
+  // misleading, and we don't factor a non-existent goal into the
+  // motivational line / "both complete" check.
+  const hasGmvGoal = gmvRequired > 0
+
   const videosTarget = Math.max(videosRequired, 1)
   const gmvTarget = Math.max(gmvRequired, 1)
   const videosPct = Math.min(videosThisMonth / videosTarget, 1)
   const gmvPct = Math.min(gmvThisMonth / gmvTarget, 1)
   const videosComplete = videosPct >= 1
   const gmvComplete = gmvPct >= 1
-  const bothComplete = videosComplete && gmvComplete
+  const bothComplete = hasGmvGoal ? videosComplete && gmvComplete : videosComplete
 
   // Animated values: 0 until mounted, then real values
   const animatedVideosPct = mounted ? videosPct : 0
@@ -87,7 +94,7 @@ export default function ProgressRings({
   const videosRemaining = Math.max(videosRequired - videosThisMonth, 0)
   const gmvRemaining = Math.max(gmvRequired - gmvThisMonth, 0)
 
-  const lowerPct = Math.min(videosPct, gmvPct)
+  const lowerPct = hasGmvGoal ? Math.min(videosPct, gmvPct) : videosPct
   let motivationLine = ''
   let motivationGreen = false
   if (bothComplete) {
@@ -119,8 +126,8 @@ export default function ProgressRings({
         📊 Tu meta de {monthName}
       </h2>
 
-      {/* Two rings */}
-      <div className="grid grid-cols-2 gap-4">
+      {/* Rings — two when there's a GMV goal, single (Explorer) when not. */}
+      <div className={hasGmvGoal ? 'grid grid-cols-2 gap-4' : 'flex justify-center'}>
         {/* Videos */}
         <div className="flex flex-col items-center text-center">
           <div className="relative" style={{ width: 110, height: 110 }}>
@@ -148,33 +155,40 @@ export default function ProgressRings({
           )}
         </div>
 
-        {/* GMV */}
-        <div className="flex flex-col items-center text-center">
-          <div className="relative" style={{ width: 110, height: 110 }}>
-            <Ring pct={animatedGmvPct} color={gmvColor} />
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span style={{ fontSize: 18, fontWeight: 500 }} className="text-[#1a0800] font-syne leading-none">
-                {formatMoney(gmvThisMonth)}
-              </span>
-              <span style={{ fontSize: 11 }} className="text-[#1a0800]/40 font-dm mt-1">
-                de {formatMoney(gmvRequired)}
-              </span>
+        {/* GMV — only when the creator's nivel has a GMV goal. */}
+        {hasGmvGoal && (
+          <div className="flex flex-col items-center text-center">
+            <div className="relative" style={{ width: 110, height: 110 }}>
+              <Ring pct={animatedGmvPct} color={gmvColor} />
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span style={{ fontSize: 18, fontWeight: 500 }} className="text-[#1a0800] font-syne leading-none">
+                  {formatMoney(gmvThisMonth)}
+                </span>
+                <span style={{ fontSize: 11 }} className="text-[#1a0800]/40 font-dm mt-1">
+                  de {formatMoney(gmvRequired)}
+                </span>
+              </div>
             </div>
+            <p className="mt-2 font-dm text-[#1a0800]" style={{ fontSize: 13, fontWeight: 500 }}>
+              GMV
+            </p>
+            {gmvComplete ? (
+              <p className="font-dm text-xs mt-1" style={{ color: '#2a9d4a' }}>
+                ✅ Meta cumplida!
+              </p>
+            ) : (
+              <p className="font-dm text-xs text-[#1a0800]/50 mt-1">
+                Te faltan {formatMoney(gmvRemaining)}
+              </p>
+            )}
           </div>
-          <p className="mt-2 font-dm text-[#1a0800]" style={{ fontSize: 13, fontWeight: 500 }}>
-            GMV
-          </p>
-          {gmvComplete ? (
-            <p className="font-dm text-xs mt-1" style={{ color: '#2a9d4a' }}>
-              ✅ Meta cumplida!
-            </p>
-          ) : (
-            <p className="font-dm text-xs text-[#1a0800]/50 mt-1">
-              Te faltan {formatMoney(gmvRemaining)}
-            </p>
-          )}
-        </div>
+        )}
       </div>
+      {!hasGmvGoal && (
+        <p className="font-dm text-xs text-[#1a0800]/40 text-center mt-3">
+          Sin meta de GMV en este nivel — concéntrate en los videos 🎬
+        </p>
+      )}
 
       {/* Pills row */}
       <div className="flex flex-wrap gap-2 mt-5 justify-center">

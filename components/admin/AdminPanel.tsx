@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition, useRef } from 'react'
+import { useState, useTransition, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import type {
   Creator,
@@ -84,8 +84,12 @@ import {
   deleteTopPoi,
   resetCalendarMonth,
   adminSubmitVideosForCreator,
+  getSetting,
+  setSetting,
+  exportWeeklyReport,
 } from '@/app/admin/actions'
 import TikTokPreviewModal, { PreviewButton } from './TikTokPreviewModal'
+import { GmvCell } from './GmvCell'
 
 // ── Types ─────────────────────────────────────────────
 
@@ -2004,7 +2008,8 @@ function CreatorsTab({
                 <th className="text-left px-4 py-3 font-medium text-go-dark/60">Email</th>
                 <th className="text-left px-4 py-3 font-medium text-go-dark/60">TikTok</th>
                 <th className="text-left px-4 py-3 font-medium text-go-dark/60">Nivel</th>
-                <th className="text-right px-4 py-3 font-medium text-go-dark/60">GMV</th>
+                <th className="text-right px-4 py-3 font-medium text-go-dark/60" title="GMV acumulado (lifetime)">GMV total</th>
+                <th className="text-right px-4 py-3 font-medium text-go-dark/60" title="GMV de este mes — click para editar inline">GMV mes</th>
                 <th className="text-right px-4 py-3 font-medium text-go-dark/60">ACC</th>
                 <th className="text-right px-4 py-3 font-medium text-go-dark/60">TTD</th>
                 <th className="text-right px-4 py-3 font-medium text-go-dark/60">Total</th>
@@ -2057,6 +2062,12 @@ function CreatorsTab({
                           onChange={(e) => setEditData({ ...editData, gmv_total: e.target.value })}
                           className="w-20 px-1 py-1 text-xs rounded border border-go-border text-right"
                         />
+                      </td>
+                      {/* GMV mes — also inline-editable in this row; the
+                          row-edit modal doesn't touch gmv_this_month so
+                          we keep the cell live during edit too. */}
+                      <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                        <GmvCell creatorId={c.id} value={c.gmv_this_month} onFeedback={fb} align="right" />
                       </td>
                       <td className="px-4 py-3 text-right">
                         <input
@@ -2114,6 +2125,9 @@ function CreatorsTab({
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-go-dark/70">
                         ${c.gmv_total.toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <GmvCell creatorId={c.id} value={c.gmv_this_month} onFeedback={fb} align="right" />
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-go-dark/70" title="Aprobados este mes (live)">
                         {accLive}
@@ -3781,14 +3795,14 @@ function VideoTrackerSection({
           <table className="w-full text-sm font-dm">
             <thead className="bg-go-dark/[0.03]">
               <tr>
-                {['Creadora', '@handle', 'Nivel', 'ACC', 'TTD', 'Total', 'Pendientes', 'Última subida', ''].map(h => (
+                {['Creadora', '@handle', 'Nivel', 'ACC', 'TTD', 'Total', 'GMV', 'Pendientes', 'Última subida', ''].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs text-go-dark/50 font-semibold uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-go-dark/5">
               {rows.length === 0 && (
-                <tr><td colSpan={9} className="px-4 py-8 text-center text-go-dark/40">No hay creadoras regulares activas.</td></tr>
+                <tr><td colSpan={10} className="px-4 py-8 text-center text-go-dark/40">No hay creadoras regulares activas.</td></tr>
               )}
               {rows.map(row => {
                 const isOpen = expanded === row.creator.id
@@ -3806,13 +3820,16 @@ function VideoTrackerSection({
                       <td className="px-4 py-3"><span className="text-xs font-bold text-orange-700">{row.acc}</span></td>
                       <td className="px-4 py-3"><span className="text-xs font-bold text-pink-700">{row.ttd}</span></td>
                       <td className="px-4 py-3 font-syne font-bold text-go-dark">{row.total}</td>
+                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                        <GmvCell creatorId={row.creator.id} value={row.creator.gmv_this_month} onFeedback={fb} />
+                      </td>
                       <td className="px-4 py-3">{row.pending > 0 ? <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">{row.pending}</span> : <span className="text-xs text-go-dark/30">—</span>}</td>
                       <td className="px-4 py-3 text-xs text-go-dark/40">{row.lastUpload ? new Date(row.lastUpload).toLocaleDateString('es') : '—'}</td>
                       <td className="px-4 py-3 text-go-dark/40">{isOpen ? '▾' : '▸'}</td>
                     </tr>
                     {isOpen && (
                       <tr key={`${row.creator.id}-detail`} className="bg-go-light/30">
-                        <td colSpan={9} className="px-4 py-4">
+                        <td colSpan={10} className="px-4 py-4">
                           {visibleRequests.length === 0 ? (
                             <p className="font-dm text-xs text-go-dark/40 text-center py-4">Sin videos para este filtro.</p>
                           ) : (
@@ -4660,7 +4677,172 @@ function AdminDashboardTab({
         lastUpdated={monthlyGoal?.updated_at ?? monthlyGoal?.created_at ?? null}
         startTransition={startTransition}
       />
+
+      {/* Section 6 — Weekly report (manual export + Sheets config) */}
+      <WeeklyReportSection />
     </div>
+  )
+}
+
+/**
+ * Weekly manager report — manual export button + the Sheet ID
+ * setting that drives the Monday-8am cron. The cron lives at
+ * /api/cron/weekly-report; this UI is the only place to configure
+ * it from inside the app.
+ *
+ * The manual export hits the same code path as the cron via the
+ * exportWeeklyReport server action; falls back to a CSV download
+ * when no Sheet ID is configured so the admin can use it before
+ * setting up Sheets at all.
+ */
+function WeeklyReportSection() {
+  const [isPending, startTransition] = useTransition()
+  const [sheetId, setSheetId] = useState('')
+  const [loadedSheetId, setLoadedSheetId] = useState<string | null>(null)
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const [exportResult, setExportResult] = useState<{ sheetUrl?: string; csv?: string; filename?: string } | null>(null)
+  const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
+
+  useEffect(() => {
+    let cancelled = false
+    startTransition(async () => {
+      const r = await getSetting('weekly_report_sheet_id')
+      if (cancelled) return
+      const v = r.value ?? ''
+      setLoadedSheetId(v)
+      setSheetId(v)
+    })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function handleSaveSheetId() {
+    const trimmed = sheetId.trim()
+    startTransition(async () => {
+      const r = await setSetting('weekly_report_sheet_id', trimmed)
+      if (r.error) fb(`Error: ${r.error}`)
+      else {
+        setLoadedSheetId(trimmed)
+        fb('✅ Sheet ID guardado')
+      }
+    })
+  }
+
+  function handleExport() {
+    setExportResult(null)
+    startTransition(async () => {
+      const r = await exportWeeklyReport()
+      if (r.error) { fb(`Error: ${r.error}`); return }
+      if (r.csv && r.filename) {
+        // Browser download
+        const blob = new Blob([r.csv], { type: 'text/csv;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = r.filename
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+        setExportResult({ csv: r.csv, filename: r.filename })
+        fb('✅ Reporte descargado como CSV')
+        return
+      }
+      if (r.sheetUrl) {
+        setExportResult({ sheetUrl: r.sheetUrl })
+        fb('✅ Reporte exportado a Google Sheets')
+        return
+      }
+      fb('Reporte generado pero sin destino')
+    })
+  }
+
+  const dirty = sheetId.trim() !== (loadedSheetId ?? '')
+
+  return (
+    <SectionCard>
+      <div className="p-6 space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h3 className="font-syne font-bold text-base text-go-dark">📊 Reporte Semanal</h3>
+            <p className="font-dm text-xs text-go-dark/50 mt-0.5">
+              Cron automático cada lunes 8:00 UTC + exportación manual on-demand.
+            </p>
+          </div>
+          <button
+            onClick={handleExport}
+            disabled={isPending}
+            className="font-dm text-sm font-semibold bg-go-orange text-white px-4 py-2 rounded-xl hover:bg-go-orange/90 transition disabled:opacity-50"
+          >
+            {isPending ? 'Generando…' : '📊 Exportar reporte esta semana'}
+          </button>
+        </div>
+
+        {feedback && (
+          <p className={`text-sm font-dm px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>
+            {feedback}
+          </p>
+        )}
+
+        {exportResult?.sheetUrl && (
+          <a
+            href={exportResult.sheetUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-sm text-go-orange hover:underline font-dm"
+          >
+            Abrir Google Sheet →
+          </a>
+        )}
+
+        <div className="border-t border-go-dark/5 pt-4">
+          <h4 className="font-syne font-bold text-sm text-go-dark mb-1">⚙️ Configuración</h4>
+          <p className="font-dm text-xs text-go-dark/50 mb-3">
+            Pega el ID del Google Sheet donde quieres que se publique el reporte. Abre tu sheet → File → Share → Anyone with link (Editor) → copia el ID de la URL.
+          </p>
+          <div className="flex gap-2 items-center flex-wrap">
+            <input
+              type="text"
+              value={sheetId}
+              onChange={(e) => setSheetId(e.target.value)}
+              placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms"
+              className="flex-1 min-w-[280px] px-3 py-2 text-sm font-mono rounded-lg border border-go-dark/10 focus:outline-none focus:ring-2 focus:ring-go-orange/30"
+            />
+            <button
+              onClick={handleSaveSheetId}
+              disabled={isPending || !dirty}
+              className="font-dm text-sm font-semibold bg-go-dark text-white px-4 py-2 rounded-xl hover:bg-go-dark/80 transition disabled:opacity-40"
+            >
+              {dirty ? 'Guardar' : 'Guardado'}
+            </button>
+          </div>
+          {loadedSheetId && (
+            <p className="font-dm text-[11px] text-go-dark/40 mt-2">
+              Configurado: <a
+                href={`https://docs.google.com/spreadsheets/d/${loadedSheetId}/edit`}
+                target="_blank" rel="noopener noreferrer"
+                className="text-go-orange hover:underline"
+              >
+                docs.google.com/.../{loadedSheetId.slice(0, 20)}…
+              </a>
+            </p>
+          )}
+          <details className="mt-3">
+            <summary className="font-dm text-xs text-go-dark/50 cursor-pointer hover:text-go-dark">
+              Requiere también GOOGLE_SERVICE_ACCOUNT_JSON en Vercel →
+            </summary>
+            <div className="font-dm text-xs text-go-dark/60 mt-2 space-y-1 pl-4">
+              <p>1. Crea una service account en Google Cloud Console → APIs & Services → Credentials.</p>
+              <p>2. Habilita la Google Sheets API en ese proyecto.</p>
+              <p>3. Descarga la JSON key.</p>
+              <p>4. Pega el JSON completo en Vercel → Settings → Environment Variables → <code className="font-mono bg-go-dark/[0.04] px-1 rounded">GOOGLE_SERVICE_ACCOUNT_JSON</code>.</p>
+              <p>5. Comparte tu Google Sheet con el email <code className="font-mono bg-go-dark/[0.04] px-1 rounded">client_email</code> del JSON (con permiso Editor).</p>
+              <p>Si todavía no configuras esto: el botón &quot;Exportar&quot; descarga un CSV en lugar de escribir al sheet.</p>
+            </div>
+          </details>
+        </div>
+      </div>
+    </SectionCard>
   )
 }
 
