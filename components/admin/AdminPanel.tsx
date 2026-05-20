@@ -4703,8 +4703,10 @@ function WeeklyReportSection() {
   const [syncResult, setSyncResult] = useState<{
     syncedAt?: string
     currentWeek?: number
-    creatorsTab?: { updated: number; appended: number; total: number }
+    creatorsTab?: { updated: number; appended: number; total: number; teamTotalsUpdated?: string[] }
     dashboardTab?: { updatedLabels: string[] }
+    contentTab?: { updatedLabels: string[] }
+    dashboardAnualTab?: { updatedLabels: string[]; monthColumn: string | null }
     sheetUrl?: string
   } | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
@@ -4720,8 +4722,10 @@ function WeeklyReportSection() {
           error?: string
           syncedAt?: string
           currentWeek?: number
-          creatorsTab?: { updated: number; appended: number; total: number }
+          creatorsTab?: { updated: number; appended: number; total: number; teamTotalsUpdated?: string[] }
           dashboardTab?: { updatedLabels: string[] }
+          contentTab?: { updatedLabels: string[] }
+          dashboardAnualTab?: { updatedLabels: string[]; monthColumn: string | null }
         }
         if (!res.ok || !data.ok) {
           fb(`Error: ${data.error ?? `HTTP ${res.status}`}`)
@@ -4796,15 +4800,27 @@ function WeeklyReportSection() {
         )}
 
         {syncResult?.creatorsTab && (
-          <div className="text-xs font-dm text-go-dark/60 bg-go-light/30 rounded-xl p-3 space-y-1">
+          <div className="text-xs font-dm text-go-dark/60 bg-go-light/30 rounded-xl p-3 space-y-1.5">
             <p>
               <span className="font-semibold text-go-dark">Semana S{syncResult.currentWeek}</span>
               {' · '}
               CREATORS: {syncResult.creatorsTab.updated} actualizadas, {syncResult.creatorsTab.appended} nuevas
-              {syncResult.dashboardTab && syncResult.dashboardTab.updatedLabels.length > 0 && (
-                <> · DASHBOARD: {syncResult.dashboardTab.updatedLabels.join(', ')}</>
+              {syncResult.creatorsTab.teamTotalsUpdated && syncResult.creatorsTab.teamTotalsUpdated.length > 0 && (
+                <> · totales: {syncResult.creatorsTab.teamTotalsUpdated.length} fila(s)</>
               )}
             </p>
+            {syncResult.dashboardTab && syncResult.dashboardTab.updatedLabels.length > 0 && (
+              <p>DASHBOARD MAYO: {syncResult.dashboardTab.updatedLabels.join(', ')}</p>
+            )}
+            {syncResult.contentTab && syncResult.contentTab.updatedLabels.length > 0 && (
+              <p>CONTENT: {syncResult.contentTab.updatedLabels.join(', ')}</p>
+            )}
+            {syncResult.dashboardAnualTab && syncResult.dashboardAnualTab.updatedLabels.length > 0 && (
+              <p>
+                DASHBOARD ANUAL{syncResult.dashboardAnualTab.monthColumn ? ` (col ${syncResult.dashboardAnualTab.monthColumn})` : ''}:{' '}
+                {syncResult.dashboardAnualTab.updatedLabels.join(', ')}
+              </p>
+            )}
             {syncResult.sheetUrl && (
               <a
                 href={syncResult.sheetUrl}

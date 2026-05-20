@@ -9,6 +9,13 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 const MASTER_SHEET_ID = process.env.PAPAYA_GO_SHEET_ID ?? '1a_WJ5LYw21JwN61K2z1VkJrVvpxvfVCH'
 const CREATORS_TAB = 'CREATORS'
 const DASHBOARD_TAB = 'DASHBOARD MAYO'
+const DASHBOARD_ANUAL_TAB = 'DASHBOARD ANUAL'
+const CONTENT_TAB = 'CONTENT'
+
+const SPANISH_MONTHS = [
+  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+]
 
 /**
  * Map day-of-month → week-of-month bucket (1..4). Used by the cron
@@ -114,13 +121,22 @@ type CreatorRow = {
 export type SyncSummary = {
   syncedAt: string
   currentWeek: 1 | 2 | 3 | 4
-  creatorsTab: { updated: number; appended: number; total: number }
+  creatorsTab: {
+    updated: number
+    appended: number
+    total: number
+    teamTotalsUpdated: string[]
+  }
   dashboardTab: { updatedLabels: string[] }
+  contentTab: { updatedLabels: string[] }
+  dashboardAnualTab: { updatedLabels: string[]; monthColumn: string | null }
   totals: {
     accThisMonth: number
     ttdThisMonth: number
     gmvThisMonthSum: number
     newCreatorsThisMonth: number
+    activeCreatorsCount: number
+    creatorsWithGmvCount: number
   }
 }
 
@@ -166,22 +182,70 @@ export async function syncSheets(admin: SupabaseClient): Promise<SyncSummary> {
     else if (b.video_type === 'TTD') bucket.ttd[w] += 1
   }
 
-  const creatorsTabSummary = await syncToCreatorsTab(sheets, creators, byCreator, currentWeek)
-  const dashboardTabSummary = await syncToDashboardTab(sheets, creators, byCreator, currentWeek, startIso, endIso)
-
+  // Compute the team-totals we need across multiple tabs once, then
+  // pass into each tab writer.
   const accThisMonth = boosts.filter((b) => b.video_type === 'ACC').length
   const ttdThisMonth = boosts.filter((b) => b.video_type === 'TTD').length
-  const gmvThisMonthSum = creators.reduce((s, c) => s + Number(c.gmv_this_month ?? 0), 0)
+  const gmvThisMonthSum = creators
+    .filter((c) => c.status === 'active')
+    .reduce((s, c) => s + Number(c.gmv_this_month ?? 0), 0)
   const newCreatorsThisMonth = creators.filter(
     (c) => c.approved_at && c.approved_at >= startIso && c.approved_at <= endIso,
   ).length
+  const activeCreatorsCount = creators.filter((c) => c.status === 'active').length
+  const creatorsWithGmvCount = creators.filter((c) => Number(c.gmv_this_month ?? 0) > 0).length
+
+  // Per-week count of creators with at least one approved video.
+  const activeCreatorsByWeek: [number, number, number, number] = [0, 0, 0, 0]
+  byCreator.forEach((b) => {
+    for (let w = 0; w < 4; w++) {
+      if (b.acc[w] + b.ttd[w] > 0) activeCreatorsByWeek[w] += 1
+    }
+  })
+
+  // Per-week ACC and TTD totals across all non-internal creators.
+  const accByWeek: [number, number, number, number] = [0, 0, 0, 0]
+  const ttdByWeek: [number, number, number, number] = [0, 0, 0, 0]
+  byCreator.forEach((b) => {
+    for (let w = 0; w < 4; w++) {
+      accByWeek[w] += b.acc[w]
+      ttdByWeek[w] += b.ttd[w]
+    }
+  })
+
+  const creatorsTabSummary = await syncToCreatorsTab(
+    sheets,
+    creators,
+    byCreator,
+    currentWeek,
+    activeCreatorsByWeek,
+    creatorsWithGmvCount,
+  )
+  const dashboardTabSummary = await syncToDashboardTab(sheets, creators, byCreator, currentWeek, startIso, endIso)
+  const contentTabSummary = await syncToContentTab(sheets, accByWeek, ttdByWeek)
+  const dashboardAnualTabSummary = await syncToDashboardAnualTab(sheets, now, {
+    nuevasCriadoras: newCreatorsThisMonth,
+    totalActivas: activeCreatorsCount,
+    accPosts: accThisMonth,
+    ttdPosts: ttdThisMonth,
+    gmvTotal: gmvThisMonthSum,
+  })
 
   return {
     syncedAt: now.toISOString(),
     currentWeek,
     creatorsTab: creatorsTabSummary,
     dashboardTab: dashboardTabSummary,
-    totals: { accThisMonth, ttdThisMonth, gmvThisMonthSum, newCreatorsThisMonth },
+    contentTab: contentTabSummary,
+    dashboardAnualTab: dashboardAnualTabSummary,
+    totals: {
+      accThisMonth,
+      ttdThisMonth,
+      gmvThisMonthSum,
+      newCreatorsThisMonth,
+      activeCreatorsCount,
+      creatorsWithGmvCount,
+    },
   }
 }
 
@@ -192,7 +256,9 @@ async function syncToCreatorsTab(
   creators: CreatorRow[],
   byCreator: Map<string, { acc: number[]; ttd: number[] }>,
   currentWeek: 1 | 2 | 3 | 4,
-): Promise<{ updated: number; appended: number; total: number }> {
+  activeCreatorsByWeek: [number, number, number, number],
+  creatorsWithGmvCount: number,
+): Promise<{ updated: number; appended: number; total: number; teamTotalsUpdated: string[] }> {
   // Pull header row + a wide enough body to cover most realistic
   // sheet sizes. Empty trailing rows are returned as undefined which
   // we coerce to "" — Google trims trailing blanks in the response.
@@ -296,6 +362,46 @@ async function syncToCreatorsTab(
     updated++
   }
 
+  // ── Team totals ─────────────────────────────────────────
+  //
+  // Two summary rows at the bottom of the CREATORS tab:
+  //
+  //   "✅ Creadoras Activas"  → per-week count of creators who had
+  //       at least one approved video that week. One value per
+  //       S1/S2/S3/S4.
+  //   "🌟 Creadoras con GMV>0" → current count of creators whose
+  //       gmv_this_month > 0. Stamped only into the current week's
+  //       column (the metric is per-month, not per-week — matches
+  //       the GMV-stamp pattern used for the per-creator rows).
+  //
+  // We write into the ACC S{w} column for each week. This assumes
+  // the totals rows reuse the same column layout as the per-creator
+  // rows above them, which is the common case for these "totals at
+  // the bottom of a creator-keyed table" sheets. If the admin's
+  // sheet actually uses GMV S{w} or TTD S{w} for the totals, the
+  // value still lands at the right horizontal position — they can
+  // move the cell display to whichever column they prefer.
+  const teamTotalsUpdated: string[] = []
+  const writeTeamTotalsCell = (rowIdx1Based: number, col: number, value: number) => {
+    if (col < 0) return
+    updateRequests.push({
+      range: `${quoteTab(CREATORS_TAB)}!${colLetter(col)}${rowIdx1Based}`,
+      values: [[value]],
+    })
+  }
+  const activasIdx = findRow(allRows, '✅ Creadoras Activas')
+  if (activasIdx >= 0) {
+    for (let w = 0; w < 4; w++) {
+      writeTeamTotalsCell(activasIdx + 1, accWeekCols[w], activeCreatorsByWeek[w])
+    }
+    teamTotalsUpdated.push('✅ Creadoras Activas')
+  }
+  const conGmvIdx = findRow(allRows, '🌟 Creadoras con GMV>0')
+  if (conGmvIdx >= 0) {
+    writeTeamTotalsCell(conGmvIdx + 1, accWeekCols[currentWeek - 1], creatorsWithGmvCount)
+    teamTotalsUpdated.push('🌟 Creadoras con GMV>0')
+  }
+
   if (updateRequests.length > 0) {
     await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId: MASTER_SHEET_ID,
@@ -315,7 +421,7 @@ async function syncToCreatorsTab(
     })
   }
 
-  return { updated, appended, total: updated + appended }
+  return { updated, appended, total: updated + appended, teamTotalsUpdated }
 }
 
 function writeWeeklyCells(
@@ -482,4 +588,183 @@ async function syncToDashboardTab(
 
 function normalizeHandle(raw: unknown): string {
   return String(raw ?? '').trim().toLowerCase().replace(/^@/, '')
+}
+
+// ── CONTENT tab ────────────────────────────────────────────
+
+/**
+ * "CONTENT" tab — three labeled rows ("ACC Posts", "TTD Posts",
+ * "Total Videos") updated per week. Same S1..S4 column-discovery
+ * pattern as the DASHBOARD MAYO tab.
+ */
+async function syncToContentTab(
+  sheets: sheets_v4.Sheets,
+  accByWeek: [number, number, number, number],
+  ttdByWeek: [number, number, number, number],
+): Promise<{ updatedLabels: string[] }> {
+  const range = `${quoteTab(CONTENT_TAB)}!A1:AZ100`
+  let read
+  try {
+    read = await sheets.spreadsheets.values.get({ spreadsheetId: MASTER_SHEET_ID, range })
+  } catch (e) {
+    console.warn(`[sheets-sync] CONTENT tab read failed (skipping): ${e instanceof Error ? e.message : String(e)}`)
+    return { updatedLabels: [] }
+  }
+  const allRows = (read.data.values ?? []) as string[][]
+  if (allRows.length === 0) return { updatedLabels: [] }
+
+  const weekCols = findWeekColumns(allRows) ?? [1, 2, 3, 4]
+  const updates: sheets_v4.Schema$ValueRange[] = []
+  const updatedLabels: string[] = []
+
+  const totalsByWeek: [number, number, number, number] = [
+    accByWeek[0] + ttdByWeek[0],
+    accByWeek[1] + ttdByWeek[1],
+    accByWeek[2] + ttdByWeek[2],
+    accByWeek[3] + ttdByWeek[3],
+  ]
+
+  const writeWeekly = (label: string, values: number[]) => {
+    const idx = findRow(allRows, label)
+    if (idx < 0) return
+    for (let w = 0; w < 4; w++) {
+      const col = weekCols[w]
+      if (col < 0) continue
+      updates.push({
+        range: `${quoteTab(CONTENT_TAB)}!${colLetter(col)}${idx + 1}`,
+        values: [[values[w]]],
+      })
+    }
+    updatedLabels.push(label)
+  }
+
+  writeWeekly('ACC Posts', accByWeek)
+  writeWeekly('TTD Posts', ttdByWeek)
+  writeWeekly('Total Videos', totalsByWeek)
+
+  if (updates.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: MASTER_SHEET_ID,
+      requestBody: { valueInputOption: 'RAW', data: updates },
+    })
+  }
+  return { updatedLabels }
+}
+
+/**
+ * Look for a row containing the literal headers "S1", "S2", ...
+ * within the first 20 rows. Returns the 4 column indices (or null
+ * if not all four are found — caller falls back to B/C/D/E).
+ */
+function findWeekColumns(allRows: string[][]): [number, number, number, number] | null {
+  const headerRowIndex = allRows
+    .slice(0, 20)
+    .findIndex(
+      (row) =>
+        row.some((c) => normHeader(c) === 's1') &&
+        row.some((c) => normHeader(c) === 's2'),
+    )
+  if (headerRowIndex < 0) return null
+  const r = allRows[headerRowIndex]
+  const cols: [number, number, number, number] = [
+    r.findIndex((c) => normHeader(c) === 's1'),
+    r.findIndex((c) => normHeader(c) === 's2'),
+    r.findIndex((c) => normHeader(c) === 's3'),
+    r.findIndex((c) => normHeader(c) === 's4'),
+  ]
+  if (cols.some((c) => c < 0)) return null
+  return cols
+}
+
+// ── DASHBOARD ANUAL tab ────────────────────────────────────
+
+/**
+ * Annual dashboard — one column per month (Jan→Dec). We resolve the
+ * current month's column by:
+ *
+ *   1. Scanning the first 20 rows for a header cell matching the
+ *      Spanish month name (case-insensitive, accents-folded).
+ *   2. Falling back to colLetter(currentMonth) — i.e. column B for
+ *      January, C for February, …, F for May, …, M for December.
+ *      (Column A is the label column; B..M are months 1..12.)
+ *
+ * Then we update the cells at the intersection of the month column
+ * and these labeled rows:
+ *
+ *   "Nuevas Criadoras Incorporadas" → newCreatorsThisMonth
+ *   "Total Criadoras Activas"        → activeCreatorsCount
+ *   "ACC Posts"                       → accThisMonth
+ *   "TTD Posts"                       → ttdThisMonth
+ *   "GMV Total ($)"                   → gmvThisMonthSum
+ */
+async function syncToDashboardAnualTab(
+  sheets: sheets_v4.Sheets,
+  now: Date,
+  data: {
+    nuevasCriadoras: number
+    totalActivas: number
+    accPosts: number
+    ttdPosts: number
+    gmvTotal: number
+  },
+): Promise<{ updatedLabels: string[]; monthColumn: string | null }> {
+  const range = `${quoteTab(DASHBOARD_ANUAL_TAB)}!A1:AZ200`
+  let read
+  try {
+    read = await sheets.spreadsheets.values.get({ spreadsheetId: MASTER_SHEET_ID, range })
+  } catch (e) {
+    console.warn(`[sheets-sync] DASHBOARD ANUAL tab read failed (skipping): ${e instanceof Error ? e.message : String(e)}`)
+    return { updatedLabels: [], monthColumn: null }
+  }
+  const allRows = (read.data.values ?? []) as string[][]
+  if (allRows.length === 0) return { updatedLabels: [], monthColumn: null }
+
+  const monthIdx0 = now.getUTCMonth() // 0..11
+  const monthName = SPANISH_MONTHS[monthIdx0]
+
+  // 1) Try to find the column whose header (within first 20 rows)
+  // contains the Spanish month name.
+  let monthCol = -1
+  for (let r = 0; r < Math.min(20, allRows.length); r++) {
+    const row = allRows[r] ?? []
+    for (let c = 0; c < row.length; c++) {
+      const cell = normHeader(row[c])
+      if (cell === monthName || cell.startsWith(monthName + ' ')) {
+        monthCol = c
+        break
+      }
+    }
+    if (monthCol >= 0) break
+  }
+
+  // 2) Fallback to the conventional column layout (A=label, B=Jan,
+  // …, M=Dec). For May (monthIdx0=4) this gives column F.
+  if (monthCol < 0) monthCol = monthIdx0 + 1
+
+  const updates: sheets_v4.Schema$ValueRange[] = []
+  const updatedLabels: string[] = []
+
+  const writeCell = (label: string, value: number) => {
+    const idx = findRow(allRows, label)
+    if (idx < 0) return
+    updates.push({
+      range: `${quoteTab(DASHBOARD_ANUAL_TAB)}!${colLetter(monthCol)}${idx + 1}`,
+      values: [[value]],
+    })
+    updatedLabels.push(label)
+  }
+
+  writeCell('Nuevas Criadoras Incorporadas', data.nuevasCriadoras)
+  writeCell('Total Criadoras Activas', data.totalActivas)
+  writeCell('ACC Posts', data.accPosts)
+  writeCell('TTD Posts', data.ttdPosts)
+  writeCell('GMV Total ($)', data.gmvTotal)
+
+  if (updates.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: MASTER_SHEET_ID,
+      requestBody: { valueInputOption: 'RAW', data: updates },
+    })
+  }
+  return { updatedLabels, monthColumn: colLetter(monthCol) }
 }
