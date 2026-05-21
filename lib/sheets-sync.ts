@@ -459,8 +459,25 @@ async function syncToCreatorsTab(
   currentWeek: 1 | 2 | 3 | 4,
   totals: CreatorsTotals,
 ): Promise<{ updated: number; appended: number; total: number; teamTotalsUpdated: string[] }> {
-  // 1) Read column B starting at row 13 to find which @handles
-  // already have rows. Range goes wide (200 rows) and we use the
+  // 1a) Defensive header check — column B row 12 should label the
+  // handle column. If the layout has shifted (someone reordered
+  // columns or inserted a row above the data range) we won't be
+  // able to recover; log a loud warning so the operator can see
+  // exactly what the sheet says instead of debugging silently
+  // mis-aligned writes.
+  const headerRange = `${quoteTab(CREATORS_TAB)}!A11:V12`
+  const headerRows = await safeGet(sheets, CREATORS_TAB, headerRange)
+  const colBHeader = normalizeHeader(headerRows?.[1]?.[CREATORS_COL.handle])
+  if (!HANDLE_HEADER_ALIASES.has(colBHeader)) {
+    console.warn(
+      `[sheets-sync:${CREATORS_TAB}] WARN: column B row 12 is "${headerRows?.[1]?.[CREATORS_COL.handle] ?? '(empty)'}", expected one of @Handle/Handle/TikTok. Layout may have shifted — verify CREATORS_COL constants. Full row 12: ${JSON.stringify(headerRows?.[1] ?? [])}`,
+    )
+  } else {
+    console.log(`[sheets-sync:${CREATORS_TAB}] header check OK (col B row 12 = "${headerRows?.[1]?.[CREATORS_COL.handle]}")`)
+  }
+
+  // 1b) Read column B starting at row 13 to find which @handles
+  // already have rows. Range goes wide (500 rows) and we use the
   // length of the response to know where to append new rows.
   const handleRange = `${quoteTab(CREATORS_TAB)}!B${CREATORS_DATA_START_ROW}:B500`
   const handleRows = await safeGet(sheets, CREATORS_TAB, handleRange)
@@ -481,11 +498,19 @@ async function syncToCreatorsTab(
       lastDataRow = sheetRow
     }
   }
+  console.log(
+    `[sheets-sync:${CREATORS_TAB}] indexed handles=${handleToRow.size}, sample=${JSON.stringify(Array.from(handleToRow.keys()).slice(0, 5))}`,
+  )
 
   const updateRequests: sheets_v4.Schema$ValueRange[] = []
   const appendRows: (string | number)[][] = []
   let updated = 0
   let appended = 0
+  // Bound the per-creator comparison log — 86 lines is fine but
+  // pollutes the cron log. First 10 + a summary at the end is the
+  // sweet spot for debugging "why didn't this creator match?".
+  let comparisonsLogged = 0
+  const unmatchedHandles: string[] = []
 
   // Reusable helper: stage a single-cell write for the per-creator
   // section. Targets a specific (row, col) by name — keeps the
@@ -508,6 +533,14 @@ async function syncToCreatorsTab(
     const gmvTotalThisCreator = Number(c.gmv_this_month ?? 0)
 
     const existingRow = handleToRow.get(key)
+    if (comparisonsLogged < 10) {
+      console.log(
+        `[sheets-sync:${CREATORS_TAB}] cmp db=${JSON.stringify(c.tiktok_handle)} normalized=${JSON.stringify(key)} → ${existingRow != null ? `row ${existingRow}` : 'NOT FOUND'}`,
+      )
+      comparisonsLogged++
+    }
+    if (existingRow == null) unmatchedHandles.push(key)
+
     if (existingRow != null) {
       // ACC + TTD recomputed for ALL 4 weeks (idempotent — a late
       // validation lands in its true week column on the next sync).
@@ -542,6 +575,13 @@ async function syncToCreatorsTab(
     appendRows.push(row)
     appended++
   }
+
+  console.log(
+    `[sheets-sync:${CREATORS_TAB}] matched=${updated} unmatched=${unmatchedHandles.length}` +
+      (unmatchedHandles.length > 0
+        ? ` (sample: ${JSON.stringify(unmatchedHandles.slice(0, 5))})`
+        : ''),
+  )
 
   // 3) Team totals at fixed sheet rows. Cols B..E (TEAM_TOTALS_COLS)
   // for the S1..S4 metrics; for per-month metrics (GMV semana, GMV>0)
@@ -681,9 +721,23 @@ async function syncToDashboardTab(
   return { updatedLabels }
 }
 
+/**
+ * Normalize a TikTok handle for matching: strip every `@` (handles
+ * shouldn't carry one and admins paste them with or without it
+ * inconsistently), trim whitespace, lowercase. The sheet side and
+ * the DB side both go through this so the comparison is symmetric.
+ */
 function normalizeHandle(raw: unknown): string {
-  return String(raw ?? '').trim().toLowerCase().replace(/^@/, '')
+  return String(raw ?? '').replace(/@/g, '').trim().toLowerCase()
 }
+
+/** Used for the defensive column-B header check. Lower + trim + drop @. */
+function normalizeHeader(raw: unknown): string {
+  return String(raw ?? '').replace(/@/g, '').trim().toLowerCase()
+}
+
+/** Aliases we accept in the column-B header (row 12). All match. */
+const HANDLE_HEADER_ALIASES = new Set(['handle', 'tiktok', '@handle', '@tiktok'].map((s) => s.replace('@', '').toLowerCase()))
 
 // ── CONTENT tab ────────────────────────────────────────────
 
