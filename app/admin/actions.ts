@@ -66,8 +66,12 @@ export async function deleteCreator(id: string) {
 export async function updateCreator(
   id: string,
   data: {
+    full_name?: string
+    email?: string
+    tiktok_handle?: string | null
     nivel?: number
     gmv_total?: number
+    gmv_this_month?: number
     acc_this_month?: number
     ttd_this_month?: number
     videos_this_month?: number
@@ -75,7 +79,20 @@ export async function updateCreator(
   }
 ) {
   const supabase = createAdminClient()
-  const { error } = await supabase.from('go_creators').update(data).eq('id', id)
+
+  // Normalize the identity-shaped fields before write so the admin's
+  // "Editar" modal can't introduce inconsistencies (case-mismatched
+  // email, stray @ on handles, whitespace) that would later confuse
+  // the Sheets-sync handle matcher or auth lookup.
+  const normalized: Record<string, unknown> = { ...data }
+  if (typeof data.email === 'string') normalized.email = data.email.trim().toLowerCase()
+  if (typeof data.full_name === 'string') normalized.full_name = data.full_name.trim()
+  if (typeof data.tiktok_handle === 'string') {
+    const cleaned = data.tiktok_handle.replace(/@/g, '').trim()
+    normalized.tiktok_handle = cleaned.length === 0 ? null : cleaned
+  }
+
+  const { error } = await supabase.from('go_creators').update(normalized).eq('id', id)
   if (error) return { error: error.message }
   revalidatePath('/admin')
   // The creator dashboard renders monthly counters from this row, so
@@ -83,6 +100,43 @@ export async function updateCreator(
   // still see the cached pre-edit values until they hit the next
   // dynamic-rendering window.
   revalidatePath('/dashboard')
+  return { success: true }
+}
+
+/**
+ * Creator-facing profile edit — full_name + tiktok_handle only. Uses
+ * the user-scoped supabase client so the update is gated by the auth
+ * cookie + an `email = auth.email()` predicate (RLS-safe even if the
+ * caller forges the id). Admin equivalent is updateCreator above.
+ */
+export async function updateOwnProfile(data: {
+  full_name?: string
+  tiktok_handle?: string | null
+}): Promise<{ success?: true; error?: string }> {
+  const { createClient } = await import('@/lib/supabase/server')
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user?.email) {
+    return { error: 'No autenticada' }
+  }
+
+  const update: Record<string, unknown> = {}
+  if (typeof data.full_name === 'string') {
+    update.full_name = data.full_name.trim()
+  }
+  if (typeof data.tiktok_handle === 'string') {
+    const cleaned = data.tiktok_handle.replace(/@/g, '').trim()
+    update.tiktok_handle = cleaned.length === 0 ? null : cleaned
+  }
+  if (Object.keys(update).length === 0) return { success: true }
+
+  const { error } = await supabase
+    .from('go_creators')
+    .update(update)
+    .eq('email', user.email)
+  if (error) return { error: error.message }
+  revalidatePath('/dashboard')
+  revalidatePath('/admin')
   return { success: true }
 }
 

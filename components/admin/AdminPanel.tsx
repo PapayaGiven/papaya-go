@@ -26,7 +26,6 @@ import { NIVEL_NAMES, POI_TYPE_LABELS, CHALLENGE_TYPE_LABELS } from '@/lib/types
 import {
   adminLogout,
   approveCreator,
-  updateCreator,
   addCreator,
   deleteCreator,
   updateCreatorStrategy,
@@ -74,7 +73,6 @@ import {
   // approveBoostRequest, rejectBoostRequest — replaced by setBoostValidity + setBoostStatus
 
   takeMonthlySnapshot,
-  updateCreatorNivel,
   setBoostValidity,
   setBoostInvalid,
   setBoostStatus,
@@ -88,6 +86,7 @@ import {
 } from '@/app/admin/actions'
 import TikTokPreviewModal, { PreviewButton } from './TikTokPreviewModal'
 import { GmvCell } from './GmvCell'
+import { CreatorEditModal } from './CreatorEditModal'
 
 // ── Types ─────────────────────────────────────────────
 
@@ -1836,8 +1835,7 @@ function CreatorsTab({
   startTransition: (cb: () => void) => void
 }) {
   const [showAdd, setShowAdd] = useState(false)
-  const [editId, setEditId] = useState<string | null>(null)
-  const [editData, setEditData] = useState<Record<string, string | number>>({})
+  const [modalCreator, setModalCreator] = useState<Creator | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
   const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
   const [strategyId, setStrategyId] = useState<string | null>(null)
@@ -1887,45 +1885,6 @@ function CreatorsTab({
   })
 
   const visibleCreators = activityFilter === 'all' ? derived : derived.filter((d) => d.status === activityFilter)
-
-  function startEdit(c: Creator) {
-    setEditId(c.id)
-    setEditData({
-      nivel: c.nivel,
-      gmv_total: c.gmv_total,
-      acc_this_month: c.acc_this_month,
-      ttd_this_month: c.ttd_this_month,
-      videos_this_month: c.videos_this_month,
-      status: c.status,
-    })
-  }
-
-  function saveEdit(id: string) {
-    const original = creators.find(c => c.id === id)
-    const newNivel = Number(editData.nivel)
-    const nivelChanged = !!original && original.nivel !== newNivel
-    if (nivelChanged) {
-      const ok = confirm(`¿Confirmas? Esto reiniciará el contador de videos de este mes para ${original.full_name ?? original.email}.`)
-      if (!ok) return
-    }
-    startTransition(async () => {
-      // Other fields go through the regular update path. If the nivel
-      // changed, updateCreatorNivel takes care of nivel + monthly counter
-      // reset atomically afterward.
-      await updateCreator(id, {
-        nivel: newNivel,
-        gmv_total: Number(editData.gmv_total),
-        acc_this_month: Number(editData.acc_this_month),
-        ttd_this_month: Number(editData.ttd_this_month),
-        videos_this_month: Number(editData.videos_this_month),
-        status: editData.status as Creator['status'],
-      })
-      if (nivelChanged) {
-        await updateCreatorNivel(id, newNivel)
-      }
-      setEditId(null)
-    })
-  }
 
   function handleAdd(e: React.FormEvent) {
     e.preventDefault()
@@ -2033,89 +1992,7 @@ function CreatorsTab({
                   <td className="px-4 py-3 text-go-dark/60">{c.email}</td>
                   <td className="px-4 py-3 text-go-orange">{c.tiktok_handle ?? '—'}</td>
 
-                  {editId === c.id ? (
-                    <>
-                      <td className="px-4 py-3">
-                        <select
-                          value={editData.nivel}
-                          onChange={(e) => setEditData({ ...editData, nivel: Number(e.target.value) })}
-                          className="w-16 px-1 py-1 text-xs rounded border border-go-border"
-                        >
-                          {[1, 2, 3, 4].map((n) => (
-                            <option key={n} value={n}>
-                              {n} - {NIVEL_NAMES[n]}
-                            </option>
-                          ))}
-                        </select>
-                        {Number(editData.nivel) !== c.nivel && (
-                          <p className="font-dm text-[10px] text-amber-700 mt-1 max-w-[160px]">
-                            ⚠️ Cambiar el nivel reiniciará el contador mensual.
-                          </p>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <input
-                          type="number"
-                          value={editData.gmv_total}
-                          onChange={(e) => setEditData({ ...editData, gmv_total: e.target.value })}
-                          className="w-20 px-1 py-1 text-xs rounded border border-go-border text-right"
-                        />
-                      </td>
-                      {/* GMV mes — also inline-editable in this row; the
-                          row-edit modal doesn't touch gmv_this_month so
-                          we keep the cell live during edit too. */}
-                      <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                        <GmvCell creatorId={c.id} value={c.gmv_this_month} onFeedback={fb} align="right" />
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <input
-                          type="number"
-                          value={editData.acc_this_month}
-                          onChange={(e) => setEditData({ ...editData, acc_this_month: e.target.value })}
-                          className="w-16 px-1 py-1 text-xs rounded border border-go-border text-right"
-                        />
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <input
-                          type="number"
-                          value={editData.ttd_this_month}
-                          onChange={(e) => setEditData({ ...editData, ttd_this_month: e.target.value })}
-                          className="w-16 px-1 py-1 text-xs rounded border border-go-border text-right"
-                        />
-                      </td>
-                      <td className="px-4 py-3 text-right" title="Stored leaderboard counter for the Total column — edit to fix drift">
-                        <input
-                          type="number"
-                          value={editData.videos_this_month}
-                          onChange={(e) => setEditData({ ...editData, videos_this_month: e.target.value })}
-                          className="w-16 px-1 py-1 text-xs rounded border border-go-border text-right"
-                        />
-                      </td>
-                      {/* Pend / Activity / vs mes pasado / Código — read-only when editing. */}
-                      <td className="px-4 py-3 text-xs text-gray-300 text-right">—</td>
-                      <td className="px-4 py-3 text-xs text-gray-300">—</td>
-                      <td className="px-4 py-3 text-xs text-gray-300">—</td>
-                      <td className="px-4 py-3">
-                        <select
-                          value={editData.status}
-                          onChange={(e) => setEditData({ ...editData, status: e.target.value })}
-                          className="px-1 py-1 text-xs rounded border border-go-border"
-                        >
-                          <option value="pending">pending</option>
-                          <option value="active">active</option>
-                          <option value="suspended">suspended</option>
-                        </select>
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-300">—</td>
-                      <td className="px-4 py-3 text-right space-x-1">
-                        <ActionButton onClick={() => saveEdit(c.id)}>Guardar</ActionButton>
-                        <ActionButton variant="ghost" onClick={() => setEditId(null)}>
-                          Cancelar
-                        </ActionButton>
-                      </td>
-                    </>
-                  ) : (
-                    <>
+                  <>
                       <td className="px-4 py-3">
                         <span className="text-xs font-medium">
                           {c.nivel} - {NIVEL_NAMES[c.nivel] ?? '?'}
@@ -2192,7 +2069,7 @@ function CreatorsTab({
                         >
                           {c.is_internal ? '✓ Interna' : '○ Hacer Interna'}
                         </ActionButton>
-                        <ActionButton variant="ghost" onClick={() => startEdit(c)}>
+                        <ActionButton variant="ghost" onClick={() => setModalCreator(c)}>
                           Editar
                         </ActionButton>
                         <ActionButton variant="ghost" onClick={() => {
@@ -2234,7 +2111,6 @@ function CreatorsTab({
                         </ActionButton>
                       </td>
                     </>
-                  )}
                 </tr>
               ))}
               {creators.length === 0 && (
@@ -2350,6 +2226,15 @@ function CreatorsTab({
             <button onClick={() => setStrategyId(null)} className="font-dm text-sm text-gray-500 px-4 py-2">Cancelar</button>
           </div>
         </div>
+      )}
+
+      {/* Edit modal — opened by the "Editar" row action. */}
+      {modalCreator && (
+        <CreatorEditModal
+          creator={modalCreator}
+          onClose={() => setModalCreator(null)}
+          onFeedback={fb}
+        />
       )}
     </div>
   )

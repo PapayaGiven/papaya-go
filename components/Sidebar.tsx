@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { NIVEL_NAMES, NIVEL_COLORS } from '@/lib/types'
+import { ProfileEditModal } from './ProfileEditModal'
 
 interface SidebarProps {
   creatorName: string | null
@@ -33,6 +34,7 @@ export default function Sidebar({ creatorName, tiktokHandle, nivel }: SidebarPro
   const router = useRouter()
   const [, setMobileOpen] = useState(false)
   const [signingOut, setSigningOut] = useState(false)
+  const [editingProfile, setEditingProfile] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const nivelColor = NIVEL_COLORS[nivel] ?? NIVEL_COLORS[1]
 
@@ -91,6 +93,15 @@ export default function Sidebar({ creatorName, tiktokHandle, nivel }: SidebarPro
             <p className="font-dm text-sm text-go-dark truncate">{creatorName ?? 'Creator'}</p>
             {tiktokHandle && <p className="font-dm text-xs text-gray-400 truncate">@{tiktokHandle}</p>}
           </div>
+          <button
+            type="button"
+            onClick={() => setEditingProfile(true)}
+            title="Editar perfil"
+            aria-label="Editar perfil"
+            className="text-gray-400 hover:text-go-orange transition text-sm shrink-0 p-1"
+          >
+            ✏️
+          </button>
         </div>
         <div className="flex items-center justify-between">
           <span className="font-dm text-xs font-bold px-2.5 py-1 rounded-full bg-go-orange/10 text-go-orange">
@@ -110,6 +121,14 @@ export default function Sidebar({ creatorName, tiktokHandle, nivel }: SidebarPro
       <aside className="hidden md:flex fixed left-0 top-0 bottom-0 w-[220px] bg-white border-r border-go-border flex-col z-40">
         {navContent}
       </aside>
+
+      {editingProfile && (
+        <ProfileEditModal
+          initialName={creatorName}
+          initialHandle={tiktokHandle}
+          onClose={() => setEditingProfile(false)}
+        />
+      )}
 
       {/* Mobile bottom nav */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-go-border z-40 flex overflow-x-auto safe-area-bottom">
