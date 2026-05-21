@@ -221,6 +221,20 @@ async function safeGet(
   }
 }
 
+async function safeClear(
+  sheets: sheets_v4.Sheets,
+  tabLabel: string,
+  range: string,
+): Promise<void> {
+  try {
+    await sheets.spreadsheets.values.clear({ spreadsheetId: MASTER_SHEET_ID, range })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error(`[sheets-sync:${tabLabel}] clear failed range=${range}: ${msg}`)
+    throw new Error(`${tabLabel} clear ${range}: ${msg}`)
+  }
+}
+
 async function safeBatchUpdate(
   sheets: sheets_v4.Sheets,
   tabLabel: string,
@@ -289,7 +303,12 @@ export async function syncSheets(admin: SupabaseClient): Promise<SyncSummary> {
   const startIso = monthStartIso(now)
   const endIso = monthEndIso(now)
 
-  const [creatorsRes, boostsRes] = await Promise.all([
+  // Previous-month coordinates for the "ACC/TTD mes ant." columns.
+  const prevDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
+  const prevYear = prevDate.getUTCFullYear()
+  const prevMonth = prevDate.getUTCMonth() + 1 // 1..12
+
+  const [creatorsRes, boostsRes, snapsRes] = await Promise.all([
     admin
       .from('go_creators')
       .select('id, full_name, tiktok_handle, nivel, status, is_internal, gmv_this_month, created_at, approved_at')
@@ -300,13 +319,29 @@ export async function syncSheets(admin: SupabaseClient): Promise<SyncSummary> {
       .eq('is_valid', true)
       .gte('created_at', startIso)
       .lte('created_at', endIso),
+    admin
+      .from('go_creator_snapshots')
+      .select('creator_id, acc_videos, ttd_videos')
+      .eq('year', prevYear)
+      .eq('month', prevMonth),
   ])
 
   if (creatorsRes.error) throw new Error(`creators: ${creatorsRes.error.message}`)
   if (boostsRes.error) throw new Error(`boost_requests: ${boostsRes.error.message}`)
+  if (snapsRes.error) {
+    // Snapshots are best-effort — log + continue with zero values
+    // rather than failing the whole sync if the table is empty / RLS
+    // blocked / never populated for the previous month.
+    console.warn(`[sheets-sync] previous-month snapshots read failed: ${snapsRes.error.message}`)
+  }
 
   const creators = (creatorsRes.data ?? []) as CreatorRow[]
   const boosts = (boostsRes.data ?? []) as Boost[]
+  type PrevSnap = { creator_id: string; acc_videos: number | null; ttd_videos: number | null }
+  const prevSnapByCreator = new Map<string, PrevSnap>()
+  for (const s of (snapsRes.data ?? []) as PrevSnap[]) {
+    prevSnapByCreator.set(s.creator_id, s)
+  }
 
   // ── Aggregate per-creator weekly counts (recomputed in full every
   // sync so a late-validated S1 video shows up retroactively next
@@ -374,7 +409,7 @@ export async function syncSheets(admin: SupabaseClient): Promise<SyncSummary> {
     sheets,
     creators,
     byCreator,
-    currentWeek,
+    prevSnapByCreator,
     {
       accByWeek,
       ttdByWeek,
@@ -452,171 +487,142 @@ type CreatorsTotals = {
  * ACC/TTD mes ant., Fidelidad %) are preserved because we write each
  * managed cell individually.
  */
+type PrevMonthSnapshot = {
+  creator_id: string
+  acc_videos: number | null
+  ttd_videos: number | null
+}
+
+/**
+ * Clear-and-rewrite CREATORS sync.
+ *
+ * Earlier versions tried to match each DB creator against an
+ * existing sheet row by @handle and patch only the cells we own.
+ * That was fragile (admins rename handles, paste with whitespace,
+ * delete rows) and the matching loop became the biggest source of
+ * sync bugs. The sheet is small enough (≤200 creators) that we can
+ * just clear A13:V500 and write the whole table from scratch every
+ * sync — idempotent, no row-drift, and a re-sync after an admin
+ * edits a name in the DB shows up instantly.
+ *
+ * Trade-off: any manual edits to the CREATORS data rows in the
+ * sheet (Nicho, e.g.) are wiped each sync. That's the desired
+ * behavior per the new spec.
+ *
+ * Team totals at rows 4-9 are written separately and are not in
+ * the cleared range, so the section headers + label cells in cols
+ * A and the GMV>0 / GMV semana cells stay intact.
+ */
 async function syncToCreatorsTab(
   sheets: sheets_v4.Sheets,
   creators: CreatorRow[],
   byCreator: Map<string, { acc: number[]; ttd: number[] }>,
-  currentWeek: 1 | 2 | 3 | 4,
+  prevSnapByCreator: Map<string, PrevMonthSnapshot>,
   totals: CreatorsTotals,
 ): Promise<{ updated: number; appended: number; total: number; teamTotalsUpdated: string[] }> {
-  // 1a) Defensive header check — column B row 12 should label the
-  // handle column. If the layout has shifted (someone reordered
-  // columns or inserted a row above the data range) we won't be
-  // able to recover; log a loud warning so the operator can see
-  // exactly what the sheet says instead of debugging silently
-  // mis-aligned writes.
-  const headerRange = `${quoteTab(CREATORS_TAB)}!A11:V12`
-  const headerRows = await safeGet(sheets, CREATORS_TAB, headerRange)
-  const colBHeader = normalizeHeader(headerRows?.[1]?.[CREATORS_COL.handle])
-  if (!HANDLE_HEADER_ALIASES.has(colBHeader)) {
-    console.warn(
-      `[sheets-sync:${CREATORS_TAB}] WARN: column B row 12 is "${headerRows?.[1]?.[CREATORS_COL.handle] ?? '(empty)'}", expected one of @Handle/Handle/TikTok. Layout may have shifted — verify CREATORS_COL constants. Full row 12: ${JSON.stringify(headerRows?.[1] ?? [])}`,
-    )
-  } else {
-    console.log(`[sheets-sync:${CREATORS_TAB}] header check OK (col B row 12 = "${headerRows?.[1]?.[CREATORS_COL.handle]}")`)
-  }
+  // 1) Clear the per-creator data range. Team totals (rows 4-9)
+  // and headers (rows 1-12) stay untouched.
+  const clearRange = `${quoteTab(CREATORS_TAB)}!A${CREATORS_DATA_START_ROW}:V500`
+  await safeClear(sheets, CREATORS_TAB, clearRange)
+  console.log(`[sheets-sync:${CREATORS_TAB}] cleared ${clearRange}`)
 
-  // 1b) Read column B starting at row 13 to find which @handles
-  // already have rows. Range goes wide (500 rows) and we use the
-  // length of the response to know where to append new rows.
-  const handleRange = `${quoteTab(CREATORS_TAB)}!B${CREATORS_DATA_START_ROW}:B500`
-  const handleRows = await safeGet(sheets, CREATORS_TAB, handleRange)
-  console.log(
-    `[sheets-sync:${CREATORS_TAB}] data-rows scanned=${handleRows.length} starting=row ${CREATORS_DATA_START_ROW}`,
+  // 2) Build all rows from active regular creators (is_internal=false
+  // is already enforced by the orchestrator query). Sorted alpha by
+  // name so the sheet has a stable order across re-syncs.
+  const sortedCreators = [...creators].sort((a, b) =>
+    (a.full_name ?? '').localeCompare(b.full_name ?? '', 'es', { sensitivity: 'base' }),
   )
 
-  // Map normalized handle → 1-based sheet row (so first data row = 13).
-  const handleToRow = new Map<string, number>()
-  // Track the last row that had a handle so we know where to append.
-  let lastDataRow = CREATORS_DATA_START_ROW - 1
-  for (let i = 0; i < handleRows.length; i++) {
-    const raw = handleRows[i]?.[0]
-    const key = normalizeHandle(raw)
-    const sheetRow = CREATORS_DATA_START_ROW + i
-    if (key) {
-      handleToRow.set(key, sheetRow)
-      lastDataRow = sheetRow
-    }
-  }
-  console.log(
-    `[sheets-sync:${CREATORS_TAB}] indexed handles=${handleToRow.size}, sample=${JSON.stringify(Array.from(handleToRow.keys()).slice(0, 5))}`,
-  )
-
-  const updateRequests: sheets_v4.Schema$ValueRange[] = []
-  const appendRows: (string | number)[][] = []
-  let updated = 0
-  let appended = 0
-  // Bound the per-creator comparison log — 86 lines is fine but
-  // pollutes the cron log. First 10 + a summary at the end is the
-  // sweet spot for debugging "why didn't this creator match?".
-  let comparisonsLogged = 0
-  const unmatchedHandles: string[] = []
-
-  // Reusable helper: stage a single-cell write for the per-creator
-  // section. Targets a specific (row, col) by name — keeps the
-  // column → field mapping in one place.
-  const pushCell = (row: number, col: number, value: string | number) => {
-    updateRequests.push({
-      range: `${quoteTab(CREATORS_TAB)}!${colLetter(col)}${row}`,
-      values: [[value]],
-    })
-  }
-
-  // 2) For every active creator with a handle, either patch the
-  // tracked cells in their row or compose a brand-new row to append.
-  for (const c of creators) {
-    if (!c.tiktok_handle) continue
-    const key = normalizeHandle(c.tiktok_handle)
+  const allRows: (string | number)[][] = []
+  for (const c of sortedCreators) {
     const buckets = byCreator.get(c.id) ?? { acc: [0, 0, 0, 0], ttd: [0, 0, 0, 0] }
-    const totalPostsThisCreator =
-      buckets.acc.reduce((s, n) => s + n, 0) + buckets.ttd.reduce((s, n) => s + n, 0)
+    const snap = prevSnapByCreator.get(c.id)
+    const totalAcc = buckets.acc.reduce((s, n) => s + n, 0)
+    const totalTtd = buckets.ttd.reduce((s, n) => s + n, 0)
+    const totalPostsThisCreator = totalAcc + totalTtd
     const gmvTotalThisCreator = Number(c.gmv_this_month ?? 0)
+    const weeksWithVideo =
+      (buckets.acc[0] + buckets.ttd[0] > 0 ? 1 : 0) +
+      (buckets.acc[1] + buckets.ttd[1] > 0 ? 1 : 0) +
+      (buckets.acc[2] + buckets.ttd[2] > 0 ? 1 : 0) +
+      (buckets.acc[3] + buckets.ttd[3] > 0 ? 1 : 0)
+    const fidelidad = Math.round((weeksWithVideo / 4) * 100) + '%'
 
-    const existingRow = handleToRow.get(key)
-    if (comparisonsLogged < 10) {
-      console.log(
-        `[sheets-sync:${CREATORS_TAB}] cmp db=${JSON.stringify(c.tiktok_handle)} normalized=${JSON.stringify(key)} → ${existingRow != null ? `row ${existingRow}` : 'NOT FOUND'}`,
-      )
-      comparisonsLogged++
-    }
-    if (existingRow == null) unmatchedHandles.push(key)
-
-    if (existingRow != null) {
-      // ACC + TTD recomputed for ALL 4 weeks (idempotent — a late
-      // validation lands in its true week column on the next sync).
-      for (let w = 0; w < 4; w++) {
-        pushCell(existingRow, CREATORS_COL.accS[w], buckets.acc[w])
-        pushCell(existingRow, CREATORS_COL.ttdS[w], buckets.ttd[w])
-      }
-      // GMV is per-month — stamp the running total into the current
-      // week's GMV cell only. Past weeks keep their historic snapshot.
-      pushCell(existingRow, CREATORS_COL.gmvS[currentWeek - 1], gmvTotalThisCreator)
-      pushCell(existingRow, CREATORS_COL.totalPosts, totalPostsThisCreator)
-      pushCell(existingRow, CREATORS_COL.totalGmv, gmvTotalThisCreator)
-      updated++
-      continue
-    }
-
-    // New row — fill what we know, leave admin-maintained columns
-    // (Nicho, ACC/TTD mes ant., Fidelidad %) blank. Length matches
-    // the schema (22 columns A..V).
     const row = new Array<string | number>(22).fill('')
     row[CREATORS_COL.nombre] = c.full_name ?? ''
-    row[CREATORS_COL.handle] = c.tiktok_handle ?? ''
+    // Handle without the @ — Sheets users typically prefer the bare
+    // identifier in a column titled "@Handle" since the @ is in the
+    // header itself.
+    row[CREATORS_COL.handle] = normalizeHandle(c.tiktok_handle ?? '')
+    // Nicho intentionally blank — admin fills manually post-sync.
     row[CREATORS_COL.tier] = c.nivel
-    if (c.created_at) row[CREATORS_COL.fechaLinkeo] = c.created_at.slice(0, 10)
+    row[CREATORS_COL.fechaLinkeo] = (c.approved_at ?? c.created_at ?? '').slice(0, 10)
+    row[CREATORS_COL.accLast] = Number(snap?.acc_videos ?? 0)
+    row[CREATORS_COL.ttdLast] = Number(snap?.ttd_videos ?? 0)
+    // Per-week ACC/TTD from this month's approved boosts.
     for (let w = 0; w < 4; w++) {
       row[CREATORS_COL.accS[w]] = buckets.acc[w]
       row[CREATORS_COL.ttdS[w]] = buckets.ttd[w]
+      row[CREATORS_COL.gmvS[w]] = 0
     }
-    row[CREATORS_COL.gmvS[currentWeek - 1]] = gmvTotalThisCreator
+    // No weekly GMV breakdown available in the DB — park the running
+    // monthly total in S4 so the column has a real number, per spec.
+    row[CREATORS_COL.gmvS[3]] = gmvTotalThisCreator
     row[CREATORS_COL.totalPosts] = totalPostsThisCreator
     row[CREATORS_COL.totalGmv] = gmvTotalThisCreator
-    appendRows.push(row)
-    appended++
+    row[21] = fidelidad // V — Fidelidad %
+    allRows.push(row)
   }
 
-  console.log(
-    `[sheets-sync:${CREATORS_TAB}] matched=${updated} unmatched=${unmatchedHandles.length}` +
-      (unmatchedHandles.length > 0
-        ? ` (sample: ${JSON.stringify(unmatchedHandles.slice(0, 5))})`
-        : ''),
-  )
+  // 3) Single write covering the entire data block. valueInputOption
+  // = USER_ENTERED so percentages / numbers / dates get parsed by
+  // Sheets into their proper cell types.
+  if (allRows.length > 0) {
+    const writeRange = `${quoteTab(CREATORS_TAB)}!A${CREATORS_DATA_START_ROW}:V${CREATORS_DATA_START_ROW + allRows.length - 1}`
+    await safeBatchUpdate(sheets, CREATORS_TAB, [
+      { range: writeRange, values: allRows },
+    ])
+    console.log(
+      `[sheets-sync:${CREATORS_TAB}] wrote ${allRows.length} creator rows to ${writeRange}`,
+    )
+  }
 
-  // 3) Team totals at fixed sheet rows. Cols B..E (TEAM_TOTALS_COLS)
+  // 4) Team totals at fixed sheet rows. Cols B..E (TEAM_TOTALS_COLS)
   // for the S1..S4 metrics; for per-month metrics (GMV semana, GMV>0)
-  // we stamp the current week's column only.
+  // we stamp into S4 (col E) only, since those numbers don't have a
+  // weekly breakdown.
   const teamTotalsUpdated: string[] = []
-  const writeTeamRow = (label: string, sheetRow: number, perWeek: readonly number[]) => {
+  const teamUpdates: sheets_v4.Schema$ValueRange[] = []
+  const stageTeamRow = (label: string, sheetRow: number, perWeek: readonly number[]) => {
     for (let w = 0; w < 4; w++) {
-      pushCell(sheetRow, TEAM_TOTALS_COLS[w], perWeek[w])
+      teamUpdates.push({
+        range: `${quoteTab(CREATORS_TAB)}!${colLetter(TEAM_TOTALS_COLS[w])}${sheetRow}`,
+        values: [[perWeek[w]]],
+      })
     }
     teamTotalsUpdated.push(label)
   }
-  const writeTeamCurrentWeekCell = (label: string, sheetRow: number, value: number) => {
-    pushCell(sheetRow, TEAM_TOTALS_COLS[currentWeek - 1], value)
+  const stageTeamCellS4 = (label: string, sheetRow: number, value: number) => {
+    teamUpdates.push({
+      range: `${quoteTab(CREATORS_TAB)}!${colLetter(TEAM_TOTALS_COLS[3])}${sheetRow}`,
+      values: [[value]],
+    })
     teamTotalsUpdated.push(label)
   }
-  writeTeamRow('Nuevas Incorporadas', TEAM_TOTALS_ROW.nuevas, totals.newCreatorsByWeek)
-  writeTeamRow('ACC Posts (semana)', TEAM_TOTALS_ROW.accPosts, totals.accByWeek)
-  writeTeamRow('TTD Posts (semana)', TEAM_TOTALS_ROW.ttdPosts, totals.ttdByWeek)
-  writeTeamCurrentWeekCell('GMV Semana', TEAM_TOTALS_ROW.gmvSemana, totals.gmvThisMonthSum)
-  writeTeamRow('Creadoras Activas', TEAM_TOTALS_ROW.activas, totals.activeCreatorsByWeek)
-  writeTeamCurrentWeekCell('Creadoras con GMV>0', TEAM_TOTALS_ROW.conGmv, totals.creatorsWithGmvCount)
+  stageTeamRow('Nuevas Incorporadas', TEAM_TOTALS_ROW.nuevas, totals.newCreatorsByWeek)
+  stageTeamRow('ACC Posts (semana)', TEAM_TOTALS_ROW.accPosts, totals.accByWeek)
+  stageTeamRow('TTD Posts (semana)', TEAM_TOTALS_ROW.ttdPosts, totals.ttdByWeek)
+  stageTeamCellS4('GMV Semana', TEAM_TOTALS_ROW.gmvSemana, totals.gmvThisMonthSum)
+  stageTeamRow('Creadoras Activas', TEAM_TOTALS_ROW.activas, totals.activeCreatorsByWeek)
+  stageTeamCellS4('Creadoras con GMV>0', TEAM_TOTALS_ROW.conGmv, totals.creatorsWithGmvCount)
 
-  // 4) Flush — batch update first, then append. Append inserts
-  // after the last filled row in the data range so it doesn't
-  // collide with the team-totals section above.
-  await safeBatchUpdate(sheets, CREATORS_TAB, updateRequests)
-  if (appendRows.length > 0) {
-    const appendStart = lastDataRow + 1
-    const appendRange = `${quoteTab(CREATORS_TAB)}!A${appendStart}:V${appendStart + appendRows.length - 1}`
-    await safeBatchUpdate(sheets, CREATORS_TAB, [
-      { range: appendRange, values: appendRows },
-    ])
-  }
+  await safeBatchUpdate(sheets, CREATORS_TAB, teamUpdates)
 
-  return { updated, appended, total: updated + appended, teamTotalsUpdated }
+  // We expose `updated` as the row count so the admin toast can say
+  // "X creadoras sincronizadas". `appended` stays 0 for compatibility
+  // with the SyncSummary shape — there's no "new vs existing" split
+  // in clear-and-rewrite mode.
+  return { updated: allRows.length, appended: 0, total: allRows.length, teamTotalsUpdated }
 }
 
 // ── DASHBOARD MAYO tab ─────────────────────────────────────
@@ -671,41 +677,50 @@ async function syncToDashboardTab(
   const updatedLabels: string[] = []
 
   // Helper: update the S1..S4 cells on a labeled row.
-  const updateWeekly = (label: string, values: number[]) => {
-    const idx = findRow(allRows, label)
-    if (idx < 0) return
-    if (!weekCols) {
-      // Fallback: columns B/C/D/E (1..4).
-      weekCols = [1, 2, 3, 4]
+  // Try each alias in order — sheets get re-labeled with emoji
+  // prefixes over time; the bare names are kept as fallbacks for
+  // older copies of the dashboard.
+  const findRowByAliases = (aliases: string[]): number => {
+    for (const a of aliases) {
+      const idx = findRow(allRows, a)
+      if (idx >= 0) return idx
     }
+    return -1
+  }
+  const updateWeekly = (label: string, aliases: string[], values: number[]) => {
+    const idx = findRowByAliases(aliases)
+    if (idx < 0) return
+    if (!weekCols) weekCols = [1, 2, 3, 4]
     for (let w = 0; w < 4; w++) {
       const col = weekCols[w]
       if (col < 0) continue
-      const a1 = `${quoteTab(DASHBOARD_TAB)}!${colLetter(col)}${idx + 1}`
-      updates.push({ range: a1, values: [[values[w]]] })
+      updates.push({
+        range: `${quoteTab(DASHBOARD_TAB)}!${colLetter(col)}${idx + 1}`,
+        values: [[values[w]]],
+      })
     }
     updatedLabels.push(label)
   }
 
-  updateWeekly('ACC Posts', accTotalsByWeek)
-  updateWeekly('TTD Posts', ttdTotalsByWeek)
+  updateWeekly('📝 ACC Posts', ['📝 ACC Posts', 'ACC Posts'], accTotalsByWeek)
+  updateWeekly('🎬 TTD Posts', ['🎬 TTD Posts', 'TTD Posts'], ttdTotalsByWeek)
 
-  // GMV Total → write the running month total into the current week's
-  // column. Same pattern as the per-creator GMV stamp.
-  const idxGmv = findRow(allRows, 'GMV Total')
+  // 💰 GMV Total ($) — write the running month total into the
+  // current week's column. Same pattern as the per-creator GMV stamp.
+  const idxGmv = findRowByAliases(['💰 GMV Total ($)', 'GMV Total ($)', 'GMV Total'])
   if (idxGmv >= 0) {
-    const col = weekCols ? weekCols[currentWeek - 1] : currentWeek // fallback B/C/D/E
+    const col = weekCols ? weekCols[currentWeek - 1] : currentWeek
     if (col >= 0) {
       updates.push({
         range: `${quoteTab(DASHBOARD_TAB)}!${colLetter(col)}${idxGmv + 1}`,
         values: [[gmvMonthTotal]],
       })
-      updatedLabels.push('GMV Total')
+      updatedLabels.push('💰 GMV Total ($)')
     }
   }
 
-  // Nuevas Criadoras → single cell, current week's column.
-  const idxNew = findRow(allRows, 'Nuevas Criadoras')
+  // 🧑 Nuevas Criadoras → current week's column.
+  const idxNew = findRowByAliases(['🧑 Nuevas Criadoras', 'Nuevas Criadoras'])
   if (idxNew >= 0) {
     const col = weekCols ? weekCols[currentWeek - 1] : currentWeek
     if (col >= 0) {
@@ -713,7 +728,7 @@ async function syncToDashboardTab(
         range: `${quoteTab(DASHBOARD_TAB)}!${colLetter(col)}${idxNew + 1}`,
         values: [[newCreatorsCount]],
       })
-      updatedLabels.push('Nuevas Criadoras')
+      updatedLabels.push('🧑 Nuevas Criadoras')
     }
   }
 
@@ -731,13 +746,6 @@ function normalizeHandle(raw: unknown): string {
   return String(raw ?? '').replace(/@/g, '').trim().toLowerCase()
 }
 
-/** Used for the defensive column-B header check. Lower + trim + drop @. */
-function normalizeHeader(raw: unknown): string {
-  return String(raw ?? '').replace(/@/g, '').trim().toLowerCase()
-}
-
-/** Aliases we accept in the column-B header (row 12). All match. */
-const HANDLE_HEADER_ALIASES = new Set(['handle', 'tiktok', '@handle', '@tiktok'].map((s) => s.replace('@', '').toLowerCase()))
 
 // ── CONTENT tab ────────────────────────────────────────────
 

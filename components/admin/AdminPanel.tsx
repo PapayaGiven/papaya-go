@@ -4622,7 +4622,8 @@ function WeeklyReportSection() {
         // Use the URL the API returned so the sheet ID lives in
         // exactly one place (lib/sheets-sync.ts).
         setSyncResult(data)
-        fb(`✅ Datos sincronizados a Google Sheets — ${dateStr}`)
+        const count = data.creatorsTab?.total ?? 0
+        fb(`✅ ${count} creadora${count === 1 ? '' : 's'} sincronizada${count === 1 ? '' : 's'} a Google Sheets — ${dateStr}`)
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         fb(`Error: ${msg}`)
