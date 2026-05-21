@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import { updateCreator, updateCreatorNivel } from '@/app/admin/actions'
 import { Creator, NIVEL_NAMES } from '@/lib/types'
 
@@ -33,6 +34,7 @@ export function CreatorEditModal({
     status: creator.status,
   })
   const [isPending, startTransition] = useTransition()
+  const router = useRouter()
 
   // Strip a leading @ for the input display — admins paste handles
   // both ways and we want the value the field renders to match
@@ -71,6 +73,13 @@ export function CreatorEditModal({
           return
         }
       }
+      // revalidatePath in the server action marks the route stale,
+      // but the AdminPanel server component only re-fetches on the
+      // next request. Calling router.refresh() here forces it now
+      // so the row in the table reflects the new name/handle/etc.
+      // immediately on modal close — without this the admin sees
+      // the old values and thinks the save didn't persist.
+      router.refresh()
       onFeedback('✅ Creadora actualizada')
       onClose()
     })

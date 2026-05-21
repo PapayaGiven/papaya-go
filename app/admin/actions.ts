@@ -104,20 +104,30 @@ export async function updateCreator(
 }
 
 /**
- * Creator-facing profile edit — full_name + tiktok_handle only. Uses
- * the user-scoped supabase client so the update is gated by the auth
- * cookie + an `email = auth.email()` predicate (RLS-safe even if the
- * caller forges the id). Admin equivalent is updateCreator above.
+ * Creator-facing profile edit — full_name + tiktok_handle only.
+ *
+ * Two-step authorization:
+ *   1. The user-scoped supabase client reads auth.getUser() — the
+ *      caller MUST be a signed-in creator. No cookie → no email →
+ *      bail with 401-shaped error.
+ *   2. The actual update runs through the admin client and is gated
+ *      by `eq('email', user.email)`. The email comes from the
+ *      authenticated session (server-side), so a creator can never
+ *      target someone else's row even if they craft a request. The
+ *      admin client is used because RLS UPDATE policies on
+ *      go_creators may not allow the authenticated role — and the
+ *      gate above makes the bypass safe.
  */
 export async function updateOwnProfile(data: {
   full_name?: string
   tiktok_handle?: string | null
 }): Promise<{ success?: true; error?: string }> {
   const { createClient } = await import('@/lib/supabase/server')
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const userSupabase = await createClient()
+  const { data: { user }, error: authErr } = await userSupabase.auth.getUser()
+  if (authErr) return { error: authErr.message }
   if (!user?.email) {
-    return { error: 'No autenticada' }
+    return { error: 'No autenticada — vuelve a iniciar sesión.' }
   }
 
   const update: Record<string, unknown> = {}
@@ -130,7 +140,10 @@ export async function updateOwnProfile(data: {
   }
   if (Object.keys(update).length === 0) return { success: true }
 
-  const { error } = await supabase
+  // Admin client bypasses RLS; the email constraint above is what
+  // keeps the write scoped to the caller's own row.
+  const adminSupabase = createAdminClient()
+  const { error } = await adminSupabase
     .from('go_creators')
     .update(update)
     .eq('email', user.email)
