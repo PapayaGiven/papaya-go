@@ -45,23 +45,9 @@ const SPANISH_MONTHS = [
 
 const CREATORS_DATA_START_ROW = 13
 
-/** 0-based column indices for the per-creator data rows. */
-const CREATORS_COL = {
-  nombre: 0,        // A
-  handle: 1,        // B
-  nicho: 2,         // C
-  tier: 3,          // D
-  fechaLinkeo: 4,   // E
-  accLast: 5,       // F  (ACC mes ant.)
-  ttdLast: 6,       // G  (TTD mes ant.)
-  // Per-week ACC / TTD / GMV cluster, 3 cols per week
-  accS: [7, 10, 13, 16] as const,   // H, K, N, Q
-  ttdS: [8, 11, 14, 17] as const,   // I, L, O, R
-  gmvS: [9, 12, 15, 18] as const,   // J, M, P, S
-  totalPosts: 19,   // T
-  totalGmv: 20,     // U
-  // Fidelidad % (col V) is admin-maintained — we don't touch it.
-} as const
+// Per-creator data rows write A..V (22 columns). The column → field
+// mapping is encoded positionally in syncToCreatorsTab — see the
+// array literal there, each slot has a // A/B/C/… comment.
 
 /** Team totals — 1-based sheet rows. Cols B/C/D/E = S1/S2/S3/S4. */
 const TEAM_TOTALS_ROW = {
@@ -155,10 +141,24 @@ function monthEndIso(d: Date): string {
 // ── Types ──────────────────────────────────────────────────
 
 type Boost = {
+  id: string
   creator_id: string
   video_type: 'ACC' | 'TTD' | null
   is_valid: boolean | null
   created_at: string
+}
+
+/**
+ * Format a date column for the sheet — empty string for null /
+ * undefined / un-parseable timestamps so Sheets doesn't render the
+ * Lotus epoch ("1899-12-30") that USER_ENTERED parses 0 / "" as
+ * inside a date-formatted column.
+ */
+function formatSheetDate(raw: string | null | undefined): string {
+  if (!raw) return ''
+  const d = new Date(raw)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toISOString().split('T')[0]
 }
 type CreatorRow = {
   id: string
@@ -313,9 +313,12 @@ export async function syncSheets(admin: SupabaseClient): Promise<SyncSummary> {
       .from('go_creators')
       .select('id, full_name, tiktok_handle, nivel, status, is_internal, gmv_this_month, created_at, approved_at')
       .eq('is_internal', false),
+    // `id` so we can dedupe defensively — a duplicate row in
+    // go_boost_requests would otherwise double-count toward both
+    // per-creator buckets and the team-total rows.
     admin
       .from('go_boost_requests')
-      .select('creator_id, video_type, is_valid, created_at')
+      .select('id, creator_id, video_type, is_valid, created_at')
       .eq('is_valid', true)
       .gte('created_at', startIso)
       .lte('created_at', endIso),
@@ -343,24 +346,56 @@ export async function syncSheets(admin: SupabaseClient): Promise<SyncSummary> {
     prevSnapByCreator.set(s.creator_id, s)
   }
 
-  // ── Aggregate per-creator weekly counts (recomputed in full every
-  // sync so a late-validated S1 video shows up retroactively next
-  // week — idempotent) ───────────────────────────────────
+  // ── Filter + dedupe boosts ────────────────────────────────
+  //
+  // Defensive against two real-world failure modes that would
+  // inflate the team totals:
+  //
+  //   1. internal-creator boosts leaking in — go_boost_requests is
+  //      queried by date+validity only, no join on go_creators, so
+  //      internal-creator rows would otherwise contribute to the
+  //      ttd-this-month / acc-this-month numbers used by DASHBOARD
+  //      MAYO + DASHBOARD ANUAL (they shouldn't — those tabs track
+  //      regular creators).
+  //   2. duplicate rows in go_boost_requests itself. Shouldn't
+  //      happen, but if it does each TTD/ACC is counted twice and
+  //      shows up as "doubled" totals in the team-totals row.
+  //
+  // creatorIdSet is the set of non-internal creator ids returned by
+  // the creators query above.
+  const creatorIdSet = new Set<string>(creators.map((c) => c.id))
+  const seenBoostId = new Set<string>()
+  const filteredBoosts: Boost[] = []
+  for (const b of boosts) {
+    if (!creatorIdSet.has(b.creator_id)) continue
+    if (seenBoostId.has(b.id)) continue
+    seenBoostId.add(b.id)
+    filteredBoosts.push(b)
+  }
+  const droppedInternal = boosts.length - filteredBoosts.length
+  if (droppedInternal > 0) {
+    console.log(
+      `[sheets-sync] boost filter: dropped ${droppedInternal} rows (internal-creator or duplicate ids). ${filteredBoosts.length} remain.`,
+    )
+  }
+
+  // ── Aggregate per-creator weekly counts ───────────────────
   type WeekBuckets = { acc: [number, number, number, number]; ttd: [number, number, number, number] }
   const byCreator = new Map<string, WeekBuckets>()
   for (const c of creators) byCreator.set(c.id, { acc: [0, 0, 0, 0], ttd: [0, 0, 0, 0] })
-  for (const b of boosts) {
+  for (const b of filteredBoosts) {
     const w = weekOfMonth(new Date(b.created_at)) - 1
     const bucket = byCreator.get(b.creator_id)
-    if (!bucket) continue // boost from internal creator or deleted account
+    if (!bucket) continue // belt-and-suspenders — creatorIdSet filter above already covers
     if (b.video_type === 'ACC') bucket.acc[w] += 1
     else if (b.video_type === 'TTD') bucket.ttd[w] += 1
   }
 
   // Compute the team-totals we need across multiple tabs once, then
-  // pass into each tab writer.
-  const accThisMonth = boosts.filter((b) => b.video_type === 'ACC').length
-  const ttdThisMonth = boosts.filter((b) => b.video_type === 'TTD').length
+  // pass into each tab writer. Source = filteredBoosts so internal
+  // creators never contribute.
+  const accThisMonth = filteredBoosts.filter((b) => b.video_type === 'ACC').length
+  const ttdThisMonth = filteredBoosts.filter((b) => b.video_type === 'TTD').length
   const gmvThisMonthSum = creators
     .filter((c) => c.status === 'active')
     .reduce((s, c) => s + Number(c.gmv_this_month ?? 0), 0)
@@ -410,6 +445,7 @@ export async function syncSheets(admin: SupabaseClient): Promise<SyncSummary> {
     creators,
     byCreator,
     prevSnapByCreator,
+    currentWeek,
     {
       accByWeek,
       ttdByWeek,
@@ -518,6 +554,7 @@ async function syncToCreatorsTab(
   creators: CreatorRow[],
   byCreator: Map<string, { acc: number[]; ttd: number[] }>,
   prevSnapByCreator: Map<string, PrevMonthSnapshot>,
+  currentWeek: 1 | 2 | 3 | 4,
   totals: CreatorsTotals,
 ): Promise<{ updated: number; appended: number; total: number; teamTotalsUpdated: string[] }> {
   // 1) Clear the per-creator data range. Team totals (rows 4-9)
@@ -546,32 +583,41 @@ async function syncToCreatorsTab(
       (buckets.acc[1] + buckets.ttd[1] > 0 ? 1 : 0) +
       (buckets.acc[2] + buckets.ttd[2] > 0 ? 1 : 0) +
       (buckets.acc[3] + buckets.ttd[3] > 0 ? 1 : 0)
-    const fidelidad = Math.round((weeksWithVideo / 4) * 100) + '%'
+    // Denominator is weeks elapsed in this month so far — not always
+    // 4. S2: weeks=2, S4: weeks=4. Prevents 25% showing when a
+    // creator with 1 video in week 1 sees the rest of the month
+    // unfold without contributing.
+    const fidelidad = Math.round((weeksWithVideo / currentWeek) * 100) + '%'
 
-    const row = new Array<string | number>(22).fill('')
-    row[CREATORS_COL.nombre] = c.full_name ?? ''
-    // Handle without the @ — Sheets users typically prefer the bare
-    // identifier in a column titled "@Handle" since the @ is in the
-    // header itself.
-    row[CREATORS_COL.handle] = normalizeHandle(c.tiktok_handle ?? '')
-    // Nicho intentionally blank — admin fills manually post-sync.
-    row[CREATORS_COL.tier] = c.nivel
-    row[CREATORS_COL.fechaLinkeo] = (c.approved_at ?? c.created_at ?? '').slice(0, 10)
-    row[CREATORS_COL.accLast] = Number(snap?.acc_videos ?? 0)
-    row[CREATORS_COL.ttdLast] = Number(snap?.ttd_videos ?? 0)
-    // Per-week ACC/TTD from this month's approved boosts.
-    for (let w = 0; w < 4; w++) {
-      row[CREATORS_COL.accS[w]] = buckets.acc[w]
-      row[CREATORS_COL.ttdS[w]] = buckets.ttd[w]
-      row[CREATORS_COL.gmvS[w]] = 0
-    }
-    // No weekly GMV breakdown available in the DB — park the running
-    // monthly total in S4 so the column has a real number, per spec.
-    row[CREATORS_COL.gmvS[3]] = gmvTotalThisCreator
-    row[CREATORS_COL.totalPosts] = totalPostsThisCreator
-    row[CREATORS_COL.totalGmv] = gmvTotalThisCreator
-    row[21] = fidelidad // V — Fidelidad %
+    // Be defensive about full_name — trim whitespace, treat null /
+    // undefined / "   " as empty so col A renders blank rather than
+    // a single space (which sometimes shows as a visible artifact).
+    const nombre = String(c.full_name ?? '').trim()
+    const row: (string | number)[] = [
+      nombre,                                                // A  Nombre
+      normalizeHandle(c.tiktok_handle ?? ''),                // B  @Handle (no @)
+      '',                                                    // C  Nicho — blank
+      c.nivel,                                                // D  Tier
+      formatSheetDate(c.approved_at),                        // E  Fecha Linkeo
+      Number(snap?.acc_videos ?? 0),                          // F  ACC mes ant.
+      Number(snap?.ttd_videos ?? 0),                          // G  TTD mes ant.
+      buckets.acc[0], buckets.ttd[0], 0,                      // H/I/J S1
+      buckets.acc[1], buckets.ttd[1], 0,                      // K/L/M S2
+      buckets.acc[2], buckets.ttd[2], 0,                      // N/O/P S3
+      buckets.acc[3], buckets.ttd[3], gmvTotalThisCreator,    // Q/R/S S4 (GMV parked here)
+      totalPostsThisCreator,                                  // T  Total Posts
+      gmvTotalThisCreator,                                    // U  Total GMV $
+      fidelidad,                                              // V  Fidelidad %
+    ]
     allRows.push(row)
+  }
+  // Surface an early signal if any rows are missing names — these
+  // are the rows that would show as a blank col A in the sheet.
+  const blankNames = allRows.filter((r) => r[0] === '').length
+  if (blankNames > 0) {
+    console.warn(
+      `[sheets-sync:${CREATORS_TAB}] ${blankNames} creator(s) have empty full_name and will show as blank in col A`,
+    )
   }
 
   // 3) Single write covering the entire data block. valueInputOption
