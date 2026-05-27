@@ -70,7 +70,8 @@ import {
   bulkApproveInternalVideos,
   getInternalVideoStats,
   upsertMonthlyGoal,
-  // approveBoostRequest, rejectBoostRequest — replaced by setBoostValidity + setBoostStatus
+  // Single-action approval: marks valid + boosteado + increments counters.
+  approveBoostRequest,
 
   takeMonthlySnapshot,
   setBoostValidity,
@@ -1384,8 +1385,10 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
                       boostStatus={b.boost_status}
                       boostRequested={!!b.boost_requested}
                       onApprove={() => startTransition(async () => {
-                        const r = await setBoostStatus(b.id, 'boosteado')
-                        if (r.error) fb(`Error: ${r.error}`); else fb('✓ Boost aprobado')
+                        const r = await approveBoostRequest(b.id)
+                        if (r.error) fb(`Error: ${r.error}`)
+                        else if (r.message === 'Already approved') fb('✓ Ya estaba aprobado')
+                        else fb(`✓ Boost aprobado · ACC: ${r.newAccCount ?? '–'} · TTD: ${r.newTtdCount ?? '–'}`)
                       })}
                       onReject={() => {
                         const reason = prompt('Razón para no boostear (visible para la creadora):') ?? ''
@@ -3781,8 +3784,10 @@ function VideoTrackerSection({
                                         boostStatus={req.boost_status}
                                         boostRequested={!!req.boost_requested}
                                         onApprove={() => startTransition(async () => {
-                                          const r = await setBoostStatus(req.id, 'boosteado')
-                                          if (r.error) fb(`Error: ${r.error}`); else fb('✓ Boost aprobado')
+                                          const r = await approveBoostRequest(req.id)
+                                          if (r.error) fb(`Error: ${r.error}`)
+                                          else if (r.message === 'Already approved') fb('✓ Ya estaba aprobado')
+                                          else fb(`✓ Boost aprobado · ACC: ${r.newAccCount ?? '–'} · TTD: ${r.newTtdCount ?? '–'}`)
                                         })}
                                         onReject={() => { setRejectingId(req.id); setRejectReason('') }}
                                       />
