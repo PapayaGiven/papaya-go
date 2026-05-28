@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getMonthlyVideoStats } from '@/lib/videoStats'
 import AdminLogin from '@/components/admin/AdminLogin'
 import AdminPanel from '@/components/admin/AdminPanel'
 import type {
@@ -128,6 +129,13 @@ export default async function AdminPage() {
   console.log('Internal videos fetched:', internalVideos?.length, 'error:', internalVideosRes.error)
   console.log('Sample row:', internalVideos?.[0])
 
+  // Authoritative month aggregates. Computed via DB head-counts (not the
+  // row arrays above, which PostgREST caps at 1000 rows and would
+  // undercount once the team grows). Dashboard rings, quick stats, and
+  // Crecimiento totals all read from here so they can never disagree.
+  const monthlyStats = await getMonthlyVideoStats(supabase, currentMonth, currentYear)
+  console.log('[admin] monthlyStats:', monthlyStats)
+
   return (
     <AdminPanel
       creators={(creators as Creator[]) ?? []}
@@ -153,6 +161,7 @@ export default async function AdminPage() {
       creatorSnapshots={(creatorSnapshots as CreatorSnapshot[]) ?? []}
       levelUpEvents={(levelUpEvents as LevelUpEvent[]) ?? []}
       topPois={(topPois as TopPoi[]) ?? []}
+      monthlyStats={monthlyStats}
       currentMonth={currentMonth}
       currentYear={currentYear}
     />

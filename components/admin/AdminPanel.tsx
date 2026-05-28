@@ -23,6 +23,7 @@ import type {
   BoostStatus,
 } from '@/lib/types'
 import { NIVEL_NAMES, POI_TYPE_LABELS, CHALLENGE_TYPE_LABELS } from '@/lib/types'
+import type { MonthlyVideoStats } from '@/lib/videoStats'
 import {
   adminLogout,
   approveCreator,
@@ -138,6 +139,7 @@ interface AdminPanelProps {
   creatorSnapshots: CreatorSnapshot[]
   levelUpEvents: LevelUpEvent[]
   topPois: TopPoi[]
+  monthlyStats: MonthlyVideoStats
   currentMonth: number
   currentYear: number
 }
@@ -1659,6 +1661,7 @@ export default function AdminPanel({
   creatorSnapshots,
   levelUpEvents,
   topPois,
+  monthlyStats,
   currentMonth,
   currentYear,
 }: AdminPanelProps) {
@@ -1742,6 +1745,7 @@ export default function AdminPanel({
             creatorSnapshots={creatorSnapshots}
             levelUpEvents={levelUpEvents}
             monthlyGoal={monthlyGoal}
+            monthlyStats={monthlyStats}
             currentMonth={currentMonth}
             currentYear={currentYear}
             startTransition={startTransition}
@@ -1754,6 +1758,7 @@ export default function AdminPanel({
             internalVideos={internalVideos}
             boostRequests={boostRequests}
             monthlyGoal={monthlyGoal}
+            monthlyStats={monthlyStats}
             currentMonth={currentMonth}
             currentYear={currentYear}
             startTransition={startTransition}
@@ -3895,13 +3900,14 @@ function VideoTrackerSection({
 import { MonthlyAccTtdBars, GmvLine, CreatorsLine, type SnapshotPoint } from './CrecimientoCharts'
 
 function CrecimientoTab({
-  monthlySnapshots, creators, internalVideos, boostRequests, monthlyGoal, currentMonth, currentYear, startTransition,
+  monthlySnapshots, creators, internalVideos, boostRequests, monthlyGoal, monthlyStats, currentMonth, currentYear, startTransition,
 }: {
   monthlySnapshots: MonthlySnapshot[]
   creators: Creator[]
   internalVideos: InternalVideo[]
   boostRequests: BoostRequest[]
   monthlyGoal: MonthlyGoal | null
+  monthlyStats: MonthlyVideoStats
   currentMonth: number
   currentYear: number
   startTransition: (cb: () => void) => void
@@ -3913,8 +3919,11 @@ function CrecimientoTab({
   const accGoal = monthlyGoal?.acc_goal ?? 300
   const ttdGoal = monthlyGoal?.ttd_goal ?? 300
 
-  // Live current-month aggregates — only VALID videos count toward
-  // the totals; pending-review and boost_status are tracked separately.
+  // Headline current-month aggregates come from monthlyStats — authoritative
+  // DB head-counts (regular is_valid=true + internal status='approved',
+  // internal included in the totals, not capped by the 1000-row prop limit).
+  // The row arrays below are still used for top-contributor lists, which
+  // only need relative ordering.
   const startOfMonth = new Date(Date.UTC(currentYear, currentMonth - 1, 1)).toISOString()
   const active = creators.filter(c => c.status === 'active')
   const regular = active.filter(c => !c.is_internal)
@@ -3922,20 +3931,20 @@ function CrecimientoTab({
   const regularIds = new Set(regular.map(c => c.id))
   const regularBoostsThisMonth = boostRequests.filter(b => b.creator_id && regularIds.has(b.creator_id) && b.created_at >= startOfMonth)
   const regularValid = regularBoostsThisMonth.filter(b => b.is_valid === true)
-  const regAcc = regularValid.filter(b => b.video_type === 'ACC').length
-  const regTtd = regularValid.filter(b => b.video_type === 'TTD').length
-  const regSubmitted = regularBoostsThisMonth.length
-  const regValid = regularValid.length
-  const regPendingReview = regularBoostsThisMonth.filter(b => b.is_valid == null).length
+  const regAcc = monthlyStats.regularAccApproved
+  const regTtd = monthlyStats.regularTtdApproved
+  const regSubmitted = monthlyStats.regularSubmitted
+  const regValid = regAcc + regTtd
+  const regPendingReview = monthlyStats.regularPending
   const regBoosted = regularBoostsThisMonth.filter(b => b.boost_status === 'boosteado').length
   // Internal videos: anchor "this month" on submitted_at so an approval
   // that lands in the next calendar month doesn't pull the row forward.
   const internalApprovedThisMonth = internalVideos.filter(v => v.status === 'approved' && v.submitted_at >= startOfMonth)
-  const intAcc = internalApprovedThisMonth.filter(v => v.video_type === 'ACC').length
-  const intTtd = internalApprovedThisMonth.filter(v => v.video_type === 'TTD').length
-  const intPending = internalVideos.filter(v => v.status === 'pending').length
-  const totalAcc = regAcc + intAcc
-  const totalTtd = regTtd + intTtd
+  const intAcc = monthlyStats.internalAccApproved
+  const intTtd = monthlyStats.internalTtdApproved
+  const intPending = monthlyStats.internalPending
+  const totalAcc = monthlyStats.totalAccApproved
+  const totalTtd = monthlyStats.totalTtdApproved
   const totalGmv = active.reduce((s, c) => s + Number(c.gmv_this_month ?? 0), 0)
   const newCreatorsThisMonth = creators.filter(c => c.approved_at && c.approved_at >= startOfMonth).length
 
@@ -4220,7 +4229,7 @@ function CrecimientoTab({
 }
 
 function AdminDashboardTab({
-  creators, internalVideos, boostRequests, creatorSnapshots, levelUpEvents, monthlyGoal, currentMonth, currentYear, startTransition,
+  creators, internalVideos, boostRequests, creatorSnapshots, levelUpEvents, monthlyGoal, monthlyStats, currentMonth, currentYear, startTransition,
 }: {
   creators: Creator[]
   internalVideos: InternalVideo[]
@@ -4228,6 +4237,7 @@ function AdminDashboardTab({
   creatorSnapshots: CreatorSnapshot[]
   levelUpEvents: LevelUpEvent[]
   monthlyGoal: MonthlyGoal | null
+  monthlyStats: MonthlyVideoStats
   currentMonth: number
   currentYear: number
   startTransition: (cb: () => void) => void
@@ -4277,24 +4287,27 @@ function AdminDashboardTab({
   )
   console.log(`[AdminDashboard] regularBoosts=${regularBoosts.length} window=[${startOfMonth}, ${endOfMonth}] is_valid dist=`, isValidDist)
 
-  // Regular creators
-  const regularAccApproved = regularBoosts.filter(b => b.video_type === 'ACC' && b.is_valid === true).length
-  const regularTtdApproved = regularBoosts.filter(b => b.video_type === 'TTD' && b.is_valid === true).length
-  const regularPending = regularBoosts.filter(b => b.is_valid === null || b.is_valid === undefined).length
-  const regularSubmitted = regularBoosts.length
+  // All approved/pending counts come from monthlyStats — authoritative DB
+  // head-counts (not the row arrays, which PostgREST caps at 1000 and would
+  // undercount). regularBoosts above is still used for the is_valid
+  // distribution log + top-contributor lists, which need row data.
+  const regularAccApproved = monthlyStats.regularAccApproved
+  const regularTtdApproved = monthlyStats.regularTtdApproved
+  const regularPending = monthlyStats.regularPending
+  const regularSubmitted = monthlyStats.regularSubmitted
   const regularValidTotal = regularAccApproved + regularTtdApproved
   const regularBoosted = regularBoosts.filter(b => b.boost_status === 'boosteado').length
 
   // Internal team
-  const internalAccApproved = internalVideosThisMonth.filter(v => v.video_type === 'ACC' && v.status === 'approved').length
-  const internalTtdApproved = internalVideosThisMonth.filter(v => v.video_type === 'TTD' && v.status === 'approved').length
-  // Pending internal verifications — not month-scoped, this is admin queue.
-  const internalPending = internalVideos.filter(v => v.status === 'pending').length
+  const internalAccApproved = monthlyStats.internalAccApproved
+  const internalTtdApproved = monthlyStats.internalTtdApproved
+  const internalPending = monthlyStats.internalPending
 
-  // Totals
-  const totalAccApproved = regularAccApproved + internalAccApproved
-  const totalTtdApproved = regularTtdApproved + internalTtdApproved
-  const totalApproved = totalAccApproved + totalTtdApproved
+  // Totals — combined regular + internal, straight from monthlyStats so the
+  // rings always include the internal pipeline.
+  const totalAccApproved = monthlyStats.totalAccApproved
+  const totalTtdApproved = monthlyStats.totalTtdApproved
+  const totalApproved = monthlyStats.totalApproved
 
   // Goals (fallback 300/300 if no monthly_goal row yet)
   const accGoal = monthlyGoal?.acc_goal ?? 300
