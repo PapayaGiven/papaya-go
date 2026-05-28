@@ -82,6 +82,7 @@ import {
   updateTopPoi,
   deleteTopPoi,
   resetCalendarMonth,
+  recomputeAllCounters,
   adminSubmitVideosForCreator,
   exportWeeklyReport,
 } from '@/app/admin/actions'
@@ -4385,6 +4386,7 @@ function AdminDashboardTab({
   // Modals
   const [showResetMay, setShowResetMay] = useState(false)
   const [showImport, setShowImport] = useState(false)
+  const [recomputeMsg, setRecomputeMsg] = useState<string | null>(null)
 
   return (
     <div className="space-y-6">
@@ -4399,7 +4401,22 @@ function AdminDashboardTab({
       )}
 
       {/* Destructive / bulk-import controls */}
-      <div className="flex flex-wrap gap-2 justify-end">
+      <div className="flex flex-wrap items-center gap-2 justify-end">
+        {recomputeMsg && (
+          <span className="text-xs font-dm text-go-dark/60">{recomputeMsg}</span>
+        )}
+        <button
+          onClick={() => {
+            if (!confirm('¿Recomputar todos los contadores desde los datos reales?')) return
+            setRecomputeMsg('Recomputando…')
+            startTransition(async () => {
+              const r = await recomputeAllCounters()
+              if (r.error) setRecomputeMsg(`Error: ${r.error}`)
+              else setRecomputeMsg(`✅ Contadores recomputados para ${r.count ?? 0} creadoras`)
+            })
+          }}
+          className="text-xs font-syne font-bold bg-go-dark/[0.06] text-go-dark/70 hover:bg-go-dark/[0.12] px-4 py-2 rounded-lg"
+        >🔄 Recomputar contadores</button>
         <button
           onClick={() => setShowImport(true)}
           className="text-xs font-syne font-bold bg-go-dark/[0.06] text-go-dark hover:bg-go-dark/[0.1] px-4 py-2 rounded-lg"

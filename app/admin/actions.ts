@@ -1739,6 +1739,88 @@ export async function updateCreatorNivel(id: string, nivel: number): Promise<{ e
   return {}
 }
 
+// ── Recompute counters from source data ─────────────────
+//
+// Rebuilds every active creator's monthly counters from the actual
+// validated/approved video rows, so the cached counters on go_creators
+// can never silently drift from reality. For the current calendar month:
+//
+//   acc_this_month = valid ACC boosts + approved ACC internal videos
+//   ttd_this_month = valid TTD boosts + approved TTD internal videos
+//   videos_this_month = acc_this_month + ttd_this_month
+//
+// Runs entirely through the admin client so RLS can't block the writes.
+export async function recomputeAllCounters(): Promise<{ error?: string; count?: number }> {
+  const supabase = createAdminClient()
+
+  // Current calendar month window in UTC, matching isThisMonthIso().
+  const now = new Date()
+  const startIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString()
+  const endIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString()
+  console.log(`[recomputeAllCounters] window ${startIso} → ${endIso}`)
+
+  // Active creators only.
+  const { data: creators, error: creatorsErr } = await supabase
+    .from('go_creators')
+    .select('id')
+    .eq('is_active', true)
+  if (creatorsErr) return { error: creatorsErr.message }
+  if (!creators || creators.length === 0) return { count: 0 }
+
+  // Valid boost rows for the month.
+  const { data: boosts, error: boostErr } = await supabase
+    .from('go_boost_requests')
+    .select('creator_id, video_type')
+    .eq('is_valid', true)
+    .gte('created_at', startIso)
+    .lt('created_at', endIso)
+  if (boostErr) return { error: boostErr.message }
+
+  // Approved internal videos for the month.
+  const { data: internals, error: internalErr } = await supabase
+    .from('go_internal_videos')
+    .select('creator_id, video_type')
+    .eq('status', 'approved')
+    .gte('submitted_at', startIso)
+    .lt('submitted_at', endIso)
+  if (internalErr) return { error: internalErr.message }
+
+  // Aggregate ACC/TTD counts per creator from both pipelines.
+  const counts = new Map<string, { acc: number; ttd: number }>()
+  const bump = (creatorId: string | null, type: string | null) => {
+    if (!creatorId) return
+    const entry = counts.get(creatorId) ?? { acc: 0, ttd: 0 }
+    if (type === 'ACC') entry.acc++
+    else if (type === 'TTD') entry.ttd++
+    counts.set(creatorId, entry)
+  }
+  for (const b of boosts ?? []) bump(b.creator_id, b.video_type)
+  for (const v of internals ?? []) bump(v.creator_id, v.video_type)
+
+  // Write fresh counters for every active creator (including zeros for
+  // creators with no videos this month, so stale values get cleared).
+  let updated = 0
+  for (const c of creators) {
+    const entry = counts.get(c.id) ?? { acc: 0, ttd: 0 }
+    const next = {
+      acc_this_month: entry.acc,
+      ttd_this_month: entry.ttd,
+      videos_this_month: entry.acc + entry.ttd,
+    }
+    const { error: updErr } = await supabase.from('go_creators').update(next).eq('id', c.id)
+    if (updErr) {
+      console.log(`[recomputeAllCounters] update failed for ${c.id}: ${updErr.message}`)
+      continue
+    }
+    updated++
+  }
+  console.log(`[recomputeAllCounters] recomputed ${updated}/${creators.length} creators`)
+
+  revalidatePath('/admin')
+  revalidatePath('/dashboard')
+  return { count: updated }
+}
+
 // ── Destructive: reset a calendar month ─────────────────
 //
 // Backs up that month's go_boost_requests rows, deletes them, zeros every
