@@ -73,6 +73,7 @@ import {
   upsertMonthlyGoal,
   // Single-action approval: marks valid + boosteado + increments counters.
   approveBoostRequest,
+  bulkApproveBoostRequests,
 
   takeMonthlySnapshot,
   setBoostValidity,
@@ -1299,10 +1300,26 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
   const [editing, setEditing] = useState<{ id: string; url: string; type: 'ACC' | 'TTD' } | null>(null)
   const [preview, setPreview] = useState<{ url: string; boostId: string } | null>(null)
   const [rejectModal, setRejectModal] = useState<{ open: boolean; boostId: string | null; url: string | null; reason: string }>({ open: false, boostId: null, url: null, reason: '' })
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
   function closeRejectModal() { setRejectModal({ open: false, boostId: null, url: null, reason: '' }) }
 
   const filtered = typeFilter === 'all' ? boosts : boosts.filter(b => b.video_type === typeFilter)
+
+  // Only unreviewed rows are eligible for bulk approval — already-valid rows
+  // are skipped by the action anyway, but hiding them keeps the count honest.
+  const approvableIds = filtered.filter(b => b.is_valid !== true).map(b => b.id)
+  const allApprovableSelected = approvableIds.length > 0 && approvableIds.every(id => selectedIds.has(id))
+  function toggleId(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+  function toggleAll() {
+    setSelectedIds(allApprovableSelected ? new Set() : new Set(approvableIds))
+  }
 
   return (
     <SectionCard>
@@ -1330,12 +1347,42 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
           ℹ️ <strong>Válido</strong> = el video cuenta para la meta mensual de la creadora. <strong>Boost</strong> = decisión separada, si Papaya amplifica el video.
         </p>
 
+        {selectedIds.size > 0 && (
+          <div className="flex items-center gap-3 mb-3 px-3 py-2 rounded-lg bg-go-orange/5 border border-go-orange/20">
+            <span className="text-xs font-dm text-go-dark/70">{selectedIds.size} seleccionados</span>
+            <button
+              onClick={() => startTransition(async () => {
+                const ids = Array.from(selectedIds)
+                const r = await bulkApproveBoostRequests(ids)
+                if (r.error) fb(`Error: ${r.error}`)
+                else fb(`✓ ${r.approved} aprobados${r.failed ? ` · ${r.failed} fallaron` : ''}`)
+                setSelectedIds(new Set())
+              })}
+              className="text-xs font-syne font-bold bg-go-orange text-white hover:opacity-90 px-3 py-1.5 rounded-lg"
+            >✓ Aprobar seleccionados</button>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="text-xs font-dm text-go-dark/50 hover:text-go-dark"
+            >Limpiar</button>
+          </div>
+        )}
+
         {feedback && <p className={`text-sm font-dm mb-3 px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{feedback}</p>}
 
         <div className="overflow-x-auto rounded-2xl border border-go-dark/5">
           <table className="w-full text-sm font-dm">
             <thead className="bg-go-dark/[0.03]">
               <tr>
+                <th className="px-4 py-3 text-left">
+                  <input
+                    type="checkbox"
+                    checked={allApprovableSelected}
+                    onChange={toggleAll}
+                    disabled={approvableIds.length === 0}
+                    className="h-4 w-4 rounded border-go-dark/20 accent-go-orange cursor-pointer disabled:cursor-not-allowed"
+                    title="Seleccionar todos los no revisados"
+                  />
+                </th>
                 {['Creator', 'TikTok', 'Tipo', 'URL Video', 'Validez', 'Boost', 'Fecha', ''].map(h => (
                   <th key={h} className="px-4 py-3 text-left text-xs text-go-dark/50 font-semibold uppercase tracking-wide">{h}</th>
                 ))}
@@ -1344,6 +1391,15 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
             <tbody className="divide-y divide-go-dark/5">
               {filtered.map(b => (
                 <tr key={b.id} className={b.is_valid === true ? 'bg-emerald-50/50' : ''}>
+                  <td className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(b.id)}
+                      onChange={() => toggleId(b.id)}
+                      disabled={b.is_valid === true}
+                      className="h-4 w-4 rounded border-go-dark/20 accent-go-orange cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                    />
+                  </td>
                   <td className="px-4 py-3 font-medium text-go-dark">{b.creator_name ?? '—'}</td>
                   <td className="px-4 py-3 text-go-dark/60 text-xs">{b.tiktok_handle ?? '—'}</td>
                   <td className="px-4 py-3">
@@ -1412,7 +1468,7 @@ function BoostsTab({ boosts, startTransition }: { boosts: BoostRequest[]; startT
                   </td>
                 </tr>
               ))}
-              {filtered.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-go-dark/40">No hay solicitudes de boost.</td></tr>}
+              {filtered.length === 0 && <tr><td colSpan={9} className="px-4 py-8 text-center text-go-dark/40">No hay solicitudes de boost.</td></tr>}
             </tbody>
           </table>
         </div>

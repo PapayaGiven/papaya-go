@@ -1615,105 +1615,137 @@ export async function approveBoostRequest(id: string): Promise<{
   newTtdCount?: number
   newVideosCount?: number
 }> {
-  console.log(`[approveBoostRequest] Approving boost: ${id}`)
-  const supabase = createAdminClient()
-
-  const { data: boost, error: readErr } = await supabase
-    .from('go_boost_requests')
-    .select('creator_id, video_type, is_valid, status, boost_status, created_at')
-    .eq('id', id)
-    .maybeSingle()
-  if (readErr) {
-    console.log(`[approveBoostRequest] read failed: ${readErr.message}`)
-    return { error: readErr.message }
-  }
-  if (!boost) return { error: 'Video no encontrado' }
-
-  const isCurrentMonth = isThisMonthIso(boost.created_at)
-  console.log(`[approveBoostRequest] Video type: ${boost.video_type}`)
-  console.log(`[approveBoostRequest] Creator ID: ${boost.creator_id}`)
-  console.log(`[approveBoostRequest] Is current month: ${isCurrentMonth}`)
-  console.log(`[approveBoostRequest] Previous is_valid: ${boost.is_valid}`)
-
-  // Idempotency: if already approved, don't double-count. Still nudge the
-  // boost_status to 'boosteado' in case validity was set previously without
-  // status (e.g. legacy "Válido" click).
-  if (boost.is_valid === true) {
-    console.log(`[approveBoostRequest] Already approved — skipping counter increment`)
-    if (boost.boost_status !== 'boosteado') {
-      const { error: statusErr } = await supabase
-        .from('go_boost_requests')
-        .update({ boost_status: 'boosteado', status: 'boosteado', rejection_reason: null })
-        .eq('id', id)
-      if (statusErr) console.log(`[approveBoostRequest] status sync failed: ${statusErr.message}`)
+  try {
+    console.log(`[approveBoostRequest] Approving boost: ${id}`)
+    console.log(`[approveBoostRequest] Using key type: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? 'service role' : 'MISSING'}`)
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      return { error: 'SUPABASE_SERVICE_ROLE_KEY no está configurada en el servidor' }
     }
-    revalidatePath('/admin')
-    revalidatePath('/dashboard')
-    revalidatePath('/boost')
-    return { success: true, message: 'Already approved' }
-  }
+    const supabase = createAdminClient()
 
-  // Mark valid + boosteado + clear rejection reason in a single update.
-  const { error: updBoostErr } = await supabase
-    .from('go_boost_requests')
-    .update({
-      is_valid: true,
-      boost_status: 'boosteado',
-      status: 'boosteado',
-      rejection_reason: null,
+    // Step 1 — fetch the boost record.
+    const { data: boost, error: fetchError } = await supabase
+      .from('go_boost_requests')
+      .select('*')
+      .eq('id', id)
+      .single()
+    if (fetchError || !boost) {
+      console.error('[approveBoostRequest] Failed to fetch boost:', fetchError)
+      return { error: 'Video no encontrado' }
+    }
+    console.log('[approveBoostRequest] fetched:', {
+      id, type: boost.video_type, creatorId: boost.creator_id, currentValid: boost.is_valid,
     })
-    .eq('id', id)
-  if (updBoostErr) {
-    console.log(`[approveBoostRequest] boost update failed: ${updBoostErr.message}`)
-    return { error: updBoostErr.message }
-  }
 
-  let newAccCount: number | undefined
-  let newTtdCount: number | undefined
-  let newVideosCount: number | undefined
+    // Step 2 — idempotency: already approved → don't double-count.
+    if (boost.is_valid === true) {
+      console.log('[approveBoostRequest] Already approved, skipping')
+      // Keep the boost decision coherent even on a re-click.
+      if (boost.boost_status !== 'boosteado') {
+        await supabase
+          .from('go_boost_requests')
+          .update({ boost_status: 'boosteado', status: 'boosteado', rejection_reason: null })
+          .eq('id', id)
+      }
+      revalidatePath('/admin')
+      revalidatePath('/dashboard')
+      revalidatePath('/boost')
+      return { success: true, message: 'Already approved' }
+    }
 
-  if (isCurrentMonth && boost.creator_id) {
-    const { data: c, error: readCreatorErr } = await supabase
-      .from('go_creators')
-      .select('acc_this_month, ttd_this_month, videos_this_month')
-      .eq('id', boost.creator_id)
-      .maybeSingle()
-    if (readCreatorErr || !c) {
-      console.log(`[approveBoostRequest] creator read failed: ${readCreatorErr?.message ?? 'no row'}`)
-    } else {
+    // Step 3 — mark valid + boosteado + clear any rejection reason.
+    const { error: updateError } = await supabase
+      .from('go_boost_requests')
+      .update({ is_valid: true, boost_status: 'boosteado', status: 'boosteado', rejection_reason: null })
+      .eq('id', id)
+    if (updateError) {
+      console.error('[approveBoostRequest] Failed to update is_valid:', updateError)
+      return { error: 'Error al aprobar: ' + updateError.message }
+    }
+
+    // Step 4 — only count toward this calendar month.
+    const isCurrentMonth = isThisMonthIso(boost.created_at)
+    console.log('[approveBoostRequest] Is current month:', isCurrentMonth, { boostDate: boost.created_at })
+
+    let newAccCount: number | undefined
+    let newTtdCount: number | undefined
+    let newVideosCount: number | undefined
+
+    if (isCurrentMonth && boost.creator_id) {
+      // Step 5 — increment the creator counter (read current, then write).
       const accDelta = boost.video_type === 'ACC' ? 1 : 0
       const ttdDelta = boost.video_type === 'TTD' ? 1 : 0
+
+      const { data: creator } = await supabase
+        .from('go_creators')
+        .select('acc_this_month, ttd_this_month, videos_this_month')
+        .eq('id', boost.creator_id)
+        .single()
+      console.log('[approveBoostRequest] Creator before:', creator)
+
       const next = {
-        acc_this_month: (c.acc_this_month ?? 0) + accDelta,
-        ttd_this_month: (c.ttd_this_month ?? 0) + ttdDelta,
-        videos_this_month: (c.videos_this_month ?? 0) + 1,
+        acc_this_month: (creator?.acc_this_month ?? 0) + accDelta,
+        ttd_this_month: (creator?.ttd_this_month ?? 0) + ttdDelta,
+        videos_this_month: (creator?.videos_this_month ?? 0) + 1,
       }
-      console.log(`[approveBoostRequest] counters before:`, c)
-      console.log(`[approveBoostRequest] counters after:`, next)
-      const { error: updCreatorErr } = await supabase
+      const { error: incrementError } = await supabase
         .from('go_creators')
         .update(next)
         .eq('id', boost.creator_id)
-      if (updCreatorErr) {
-        console.log(`[approveBoostRequest] creator update failed: ${updCreatorErr.message}`)
+      if (incrementError) {
+        // The approval itself worked — surface but don't fail the request.
+        console.error('[approveBoostRequest] Failed to increment counter:', incrementError)
       } else {
-        newAccCount = next.acc_this_month
-        newTtdCount = next.ttd_this_month
-        newVideosCount = next.videos_this_month
-        console.log(`[approveBoostRequest] creator update result: ok newAcc=${newAccCount} newTtd=${newTtdCount} newVideos=${newVideosCount}`)
+        const { data: updatedCreator } = await supabase
+          .from('go_creators')
+          .select('acc_this_month, ttd_this_month, videos_this_month')
+          .eq('id', boost.creator_id)
+          .single()
+        console.log('[approveBoostRequest] Creator after:', updatedCreator)
+        newAccCount = updatedCreator?.acc_this_month ?? next.acc_this_month
+        newTtdCount = updatedCreator?.ttd_this_month ?? next.ttd_this_month
+        newVideosCount = updatedCreator?.videos_this_month ?? next.videos_this_month
       }
+
+      // Step 6 — level-up check after a successful approval+increment.
+      console.log(`[approveBoostRequest] running level-up check for ${boost.creator_id}`)
+      await checkAndApplyLevelUps(boost.creator_id)
+    } else {
+      console.log(`[approveBoostRequest] Skipping counter increment (currentMonth=${isCurrentMonth}, creator=${boost.creator_id ?? 'null'})`)
     }
 
-    console.log(`[approveBoostRequest] running level-up check for ${boost.creator_id}`)
-    await checkAndApplyLevelUps(boost.creator_id)
-  } else {
-    console.log(`[approveBoostRequest] Skipping counter increment (currentMonth=${isCurrentMonth}, creator=${boost.creator_id ?? 'null'})`)
+    revalidatePath('/admin')
+    revalidatePath('/dashboard')
+    revalidatePath('/boost')
+    return { success: true, newAccCount, newTtdCount, newVideosCount }
+  } catch (e) {
+    console.error('[approveBoostRequest] Unexpected error:', e)
+    return { error: 'Error inesperado: ' + String(e) }
   }
+}
 
+// Approve many boosts in one click. Runs each through approveBoostRequest
+// so the counter increment, idempotency guard, and level-up check are
+// identical to single approval. Returns how many succeeded.
+export async function bulkApproveBoostRequests(
+  ids: string[],
+): Promise<{ approved: number; failed: number; error?: string }> {
+  if (!ids || ids.length === 0) return { approved: 0, failed: 0 }
+  let approved = 0
+  let failed = 0
+  for (const id of ids) {
+    const r = await approveBoostRequest(id)
+    if (r.error) {
+      failed++
+      console.log(`[bulkApproveBoostRequests] ${id} failed: ${r.error}`)
+    } else {
+      approved++
+    }
+  }
   revalidatePath('/admin')
   revalidatePath('/dashboard')
   revalidatePath('/boost')
-  return { success: true, newAccCount, newTtdCount, newVideosCount }
+  return { approved, failed }
 }
 
 export async function rejectBoostRequest(id: string, reason: string): Promise<{ error?: string }> {
