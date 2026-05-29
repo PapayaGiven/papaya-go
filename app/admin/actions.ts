@@ -1791,11 +1791,13 @@ export async function recomputeAllCounters(): Promise<{ error?: string; count?: 
   const endIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString()
   console.log(`[recomputeAllCounters] window ${startIso} → ${endIso}`)
 
-  // Active creators only.
+  // Active creators only. NB: go_creators uses a `status` text column
+  // ('active'), there is no `is_active` boolean — querying it 500s with
+  // "column go_creators.is_active does not exist".
   const { data: creators, error: creatorsErr } = await supabase
     .from('go_creators')
     .select('id')
-    .eq('is_active', true)
+    .eq('status', 'active')
   if (creatorsErr) return { error: creatorsErr.message }
   if (!creators || creators.length === 0) return { count: 0 }
 

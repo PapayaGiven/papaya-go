@@ -57,6 +57,11 @@ export async function getMonthlyVideoStats(
   const { startOfMonth, endOfMonth } = getMonthBounds(month, year)
   const head = { count: 'exact' as const, head: true }
 
+  // TWO sources ONLY: go_boost_requests (regular creators) +
+  // go_internal_videos (internal team). NEVER add
+  // go_creators.acc_this_month / ttd_this_month here — those are
+  // denormalized leaderboard/challenge counters, and adding them is what
+  // triple-counted the dashboard rings.
   const [
     regAcc, regTtd, regPending, regInvalid, regSubmitted,
     intAcc, intTtd, intPending,
