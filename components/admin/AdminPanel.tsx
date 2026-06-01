@@ -3969,7 +3969,18 @@ function CrecimientoTab({
   startTransition: (cb: () => void) => void
 }) {
   const [feedback, setFeedback] = useState<string | null>(null)
-  const [selectedKey, setSelectedKey] = useState<string>(`${currentYear}-${String(currentMonth).padStart(2, '0')}`)
+  // Default the snapshot selector to the PREVIOUS month when the current
+  // month hasn't been snapshotted yet (the common case admin needs: close
+  // out last month). Once the current month has a snapshot, default to it.
+  const [selectedKey, setSelectedKey] = useState<string>(() => {
+    const currentHasSnap = monthlySnapshots.some(s => s.month === currentMonth && s.year === currentYear)
+    const pd = new Date(Date.UTC(currentYear, currentMonth - 2, 1))
+    const pm = pd.getUTCMonth() + 1
+    const py = pd.getUTCFullYear()
+    return currentHasSnap
+      ? `${currentYear}-${String(currentMonth).padStart(2, '0')}`
+      : `${py}-${String(pm).padStart(2, '0')}`
+  })
   function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 4000) }
 
   const accGoal = monthlyGoal?.acc_goal ?? 300
@@ -4075,6 +4086,24 @@ function CrecimientoTab({
   const sortedSnapshots = [...monthlySnapshots].sort((a, b) => (b.year * 100 + b.month) - (a.year * 100 + a.month))
   const lastSnapshotAt = sortedSnapshots[0]?.snapshot_taken_at ?? null
 
+  // Last 3 months (oldest → current) offered in the snapshot selector.
+  // Admin can manually snapshot any of them; the action pulls boost rows
+  // by created_at for that month, so past months snapshot correctly.
+  const monthOptions = [2, 1, 0].map((i) => {
+    const d = new Date(Date.UTC(currentYear, currentMonth - 1 - i, 1))
+    const m = d.getUTCMonth() + 1
+    const y = d.getUTCFullYear()
+    return { month: m, year: y, isCurrent: m === currentMonth && y === currentYear, key: `${y}-${String(m).padStart(2, '0')}` }
+  })
+
+  function saveSnapshot(month: number, year: number) {
+    startTransition(async () => {
+      const r = await takeMonthlySnapshot(month, year)
+      if (r.error) fb(`Error: ${r.error}`)
+      else fb(`✅ Snapshot de ${MONTH_NAMES_ES[r.month! - 1]} ${r.year} guardado correctamente`)
+    })
+  }
+
   function exportCsv() {
     const header = ['Mes', 'Año', 'ACC', 'TTD', 'GMV', 'Creadoras', 'Nuevas', 'Int. ACC', 'Int. TTD', 'Guardado']
     const rows = sortedSnapshots.map(s => [
@@ -4125,21 +4154,17 @@ function CrecimientoTab({
             onChange={(e) => setSelectedKey(e.target.value)}
             className="text-xs px-3 py-1.5 rounded-lg border border-go-border bg-go-light font-dm text-go-dark"
           >
-            <option value={`${currentYear}-${String(currentMonth).padStart(2, '0')}`}>
-              {MONTH_NAMES_ES[currentMonth - 1]} {currentYear} (en curso)
-            </option>
-            {sortedSnapshots.map(s => (
-              <option key={`${s.year}-${s.month}`} value={`${s.year}-${String(s.month).padStart(2, '0')}`}>
-                {MONTH_NAMES_ES[s.month - 1]} {s.year}
+            {monthOptions.map(o => (
+              <option key={o.key} value={o.key}>
+                {MONTH_NAMES_ES[o.month - 1]} {o.year}{o.isCurrent ? ' (en curso)' : ''}
               </option>
             ))}
           </select>
           <button
-            onClick={() => startTransition(async () => {
-              const r = await takeMonthlySnapshot(currentMonth, currentYear)
-              if (r.error) fb(`Error: ${r.error}`)
-              else fb(`✓ Snapshot guardado para ${MONTH_NAMES_ES[(r.month! - 1)]} ${r.year}`)
-            })}
+            onClick={() => {
+              const [sy, sm] = selectedKey.split('-').map(Number)
+              saveSnapshot(sm, sy)
+            }}
             className="text-xs font-syne font-bold bg-go-orange text-white px-3 py-1.5 rounded-lg hover:bg-go-orange/90 transition"
           >
             📸 Guardar snapshot ahora
@@ -4148,6 +4173,22 @@ function CrecimientoTab({
       </div>
       {feedback && (
         <p className={`text-sm font-dm px-3 py-2 rounded-lg ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>{feedback}</p>
+      )}
+
+      {/* Urgent quick action: snapshot the previous month if it's still
+          missing. Disappears once that month has a snapshot. */}
+      {!monthlySnapshots.some(s => s.month === prevMonth && s.year === prevYear) && (
+        <div className="flex items-center justify-between gap-3 flex-wrap bg-red-50 border border-red-200 rounded-2xl px-4 py-3">
+          <p className="font-dm text-sm text-red-700">
+            ⚠️ Aún no hay snapshot de <strong>{MONTH_NAMES_ES[prevMonth - 1]} {prevYear}</strong>. Guárdalo para cerrar el mes.
+          </p>
+          <button
+            onClick={() => saveSnapshot(prevMonth, prevYear)}
+            className="text-sm font-syne font-bold bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition shadow-sm"
+          >
+            📸 Guardar snapshot de {MONTH_NAMES_ES[prevMonth - 1]} {prevYear}
+          </button>
+        </div>
       )}
 
       {/* Section 1 — MoM cards */}
