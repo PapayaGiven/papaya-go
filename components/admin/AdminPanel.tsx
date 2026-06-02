@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition, useRef } from 'react'
+import { useState, useTransition, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import type {
   Creator,
@@ -3955,6 +3955,19 @@ function VideoTrackerSection({
 
 import { MonthlyAccTtdBars, GmvLine, CreatorsLine, type SnapshotPoint } from './CrecimientoCharts'
 
+// Shape returned by GET /api/monthly-stats.
+interface MonthStats {
+  month: number
+  year: number
+  acc: number
+  ttd: number
+  gmv: number
+  newCreators: number
+  totalCreators: number
+  fromSnapshot: boolean
+  snapshotDate: string | null
+}
+
 function CrecimientoTab({
   monthlySnapshots, creators, internalVideos, boostRequests, monthlyGoal, monthlyStats, currentMonth, currentYear, startTransition,
 }: {
@@ -3969,19 +3982,44 @@ function CrecimientoTab({
   startTransition: (cb: () => void) => void
 }) {
   const [feedback, setFeedback] = useState<string | null>(null)
-  // Default the snapshot selector to the PREVIOUS month when the current
-  // month hasn't been snapshotted yet (the common case admin needs: close
-  // out last month). Once the current month has a snapshot, default to it.
-  const [selectedKey, setSelectedKey] = useState<string>(() => {
-    const currentHasSnap = monthlySnapshots.some(s => s.month === currentMonth && s.year === currentYear)
-    const pd = new Date(Date.UTC(currentYear, currentMonth - 2, 1))
+  // Selected month/year drive the stat cards. Data is fetched from
+  // /api/monthly-stats (snapshot if saved, else live) so switching months
+  // actually changes the numbers. prevData is the month before the selected
+  // one, used for the "vs mes pasado" comparison.
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth)
+  const [selectedYear, setSelectedYear] = useState(currentYear)
+  const [monthData, setMonthData] = useState<MonthStats | null>(null)
+  const [prevData, setPrevData] = useState<MonthStats | null>(null)
+  const [loading, setLoading] = useState(false)
+  function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 4000) }
+
+  const loadMonth = useCallback(async (month: number, year: number) => {
+    setLoading(true)
+    const pd = new Date(Date.UTC(year, month - 2, 1))
     const pm = pd.getUTCMonth() + 1
     const py = pd.getUTCFullYear()
-    return currentHasSnap
-      ? `${currentYear}-${String(currentMonth).padStart(2, '0')}`
-      : `${py}-${String(pm).padStart(2, '0')}`
-  })
-  function fb(msg: string) { setFeedback(msg); setTimeout(() => setFeedback(null), 4000) }
+    try {
+      const [curRes, prevRes] = await Promise.all([
+        fetch(`/api/monthly-stats?month=${month}&year=${year}`).then(r => r.json()),
+        fetch(`/api/monthly-stats?month=${pm}&year=${py}`).then(r => r.json()),
+      ])
+      setMonthData(curRes && !curRes.error ? curRes : null)
+      setPrevData(prevRes && !prevRes.error ? prevRes : null)
+    } catch {
+      setMonthData(null)
+      setPrevData(null)
+      fb('Error cargando datos del mes')
+    }
+    setLoading(false)
+  }, [])
+
+  // Initial load (current month) + reload whenever the selection changes.
+  useEffect(() => { loadMonth(selectedMonth, selectedYear) }, [loadMonth, selectedMonth, selectedYear])
+
+  function handleMonthChange(month: number, year: number) {
+    setSelectedMonth(month)
+    setSelectedYear(year)
+  }
 
   const accGoal = monthlyGoal?.acc_goal ?? 300
   const ttdGoal = monthlyGoal?.ttd_goal ?? 300
@@ -4013,24 +4051,13 @@ function CrecimientoTab({
   const totalAcc = monthlyStats.totalAccApproved
   const totalTtd = monthlyStats.totalTtdApproved
   const totalGmv = active.reduce((s, c) => s + Number(c.gmv_this_month ?? 0), 0)
-  const newCreatorsThisMonth = creators.filter(c => c.approved_at && c.approved_at >= startOfMonth).length
 
-  // Look up the previous month's snapshot for MoM cards
+  // Previous month relative to the CURRENT month — drives the urgent
+  // "snapshot last month" banner. (The card comparison uses prevData, the
+  // month before whichever month is selected.)
   const prevDate = new Date(Date.UTC(currentYear, currentMonth - 2, 1))
   const prevMonth = prevDate.getUTCMonth() + 1
   const prevYear = prevDate.getUTCFullYear()
-  const prev = monthlySnapshots.find(s => s.month === prevMonth && s.year === prevYear)
-
-  const mom = (current: number, last: number | undefined): { delta: number; pct: number | null } => {
-    if (last == null) return { delta: current, pct: null }
-    const delta = current - last
-    if (last === 0) return { delta, pct: current > 0 ? 100 : 0 }
-    return { delta, pct: Math.round((delta / last) * 100) }
-  }
-  const accMom = mom(totalAcc, prev?.total_acc_videos)
-  const ttdMom = mom(totalTtd, prev?.total_ttd_videos)
-  const gmvMom = mom(totalGmv, prev ? Number(prev.total_gmv) : undefined)
-  const newMom = mom(newCreatorsThisMonth, prev?.new_creators)
 
   // Build the last-6-months chart series (ascending), preferring snapshot data
   // and using live current-month aggregates only for the current cell.
@@ -4082,25 +4109,32 @@ function CrecimientoTab({
     .sort((a, b) => b.total - a.total)
     .slice(0, 5)
 
-  // Snapshot the user has selected from the dropdown (header)
+  // Newest-first snapshot list for the history table + CSV export.
   const sortedSnapshots = [...monthlySnapshots].sort((a, b) => (b.year * 100 + b.month) - (a.year * 100 + a.month))
-  const lastSnapshotAt = sortedSnapshots[0]?.snapshot_taken_at ?? null
 
-  // Last 3 months (oldest → current) offered in the snapshot selector.
-  // Admin can manually snapshot any of them; the action pulls boost rows
-  // by created_at for that month, so past months snapshot correctly.
-  const monthOptions = [2, 1, 0].map((i) => {
+  // Current month + last 5 (newest first). ✅ = a snapshot exists for that
+  // month, ⚠️ = not yet saved.
+  const monthOptions = [0, 1, 2, 3, 4, 5].map((i) => {
     const d = new Date(Date.UTC(currentYear, currentMonth - 1 - i, 1))
     const m = d.getUTCMonth() + 1
     const y = d.getUTCFullYear()
-    return { month: m, year: y, isCurrent: m === currentMonth && y === currentYear, key: `${y}-${String(m).padStart(2, '0')}` }
+    return {
+      month: m,
+      year: y,
+      isCurrent: m === currentMonth && y === currentYear,
+      hasSnap: monthlySnapshots.some(s => s.month === m && s.year === y),
+      key: `${y}-${String(m).padStart(2, '0')}`,
+    }
   })
 
   function saveSnapshot(month: number, year: number) {
     startTransition(async () => {
       const r = await takeMonthlySnapshot(month, year)
-      if (r.error) fb(`Error: ${r.error}`)
-      else fb(`✅ Snapshot de ${MONTH_NAMES_ES[r.month! - 1]} ${r.year} guardado correctamente`)
+      if (r.error) { fb(`Error: ${r.error}`); return }
+      const gmvStr = `$${Math.round(r.gmv ?? 0).toLocaleString('en-US')}`
+      fb(`✅ Snapshot de ${MONTH_NAMES_ES[r.month! - 1]} ${r.year} guardado — ACC: ${r.acc ?? 0} | TTD: ${r.ttd ?? 0} | GMV: ${gmvStr}`)
+      // Refresh the cards so the just-saved month flips to snapshot data.
+      loadMonth(selectedMonth, selectedYear)
     })
   }
 
@@ -4122,18 +4156,34 @@ function CrecimientoTab({
     URL.revokeObjectURL(url)
   }
 
-  function MomCard({ label, current, mom: m, formatter }: { label: string; current: number; mom: { delta: number; pct: number | null }; formatter: (n: number) => string }) {
-    const up = m.delta > 0
-    const flat = m.delta === 0
-    const color = flat ? 'text-gray-500' : up ? 'text-emerald-600' : 'text-red-600'
-    const arrow = flat ? '=' : up ? '▲' : '▼'
+  function StatCard({ label, value, prevValue, formatter, loading }: { label: string; value: number | null | undefined; prevValue: number | null | undefined; formatter: (n: number) => string; loading: boolean }) {
+    let comparison = null
+    if (!loading && value != null) {
+      if (prevValue == null) {
+        comparison = <p className="font-dm text-xs text-go-dark/40 mt-2">Sin datos del mes anterior</p>
+      } else {
+        const delta = value - prevValue
+        const flat = delta === 0
+        const up = delta > 0
+        const pct = prevValue === 0 ? (value > 0 ? 100 : 0) : Math.round((delta / prevValue) * 100)
+        const color = flat ? 'text-gray-500' : up ? 'text-emerald-600' : 'text-red-600'
+        const arrow = flat ? '=' : up ? '▲' : '▼'
+        comparison = (
+          <p className={`font-dm text-xs font-semibold mt-2 ${color}`}>
+            {arrow} {formatter(Math.abs(delta))} ({pct >= 0 ? '+' : ''}{pct}%) vs mes pasado
+          </p>
+        )
+      }
+    }
     return (
       <div className="bg-white border border-go-dark/[0.06] rounded-2xl p-5">
         <p className="font-dm text-xs text-go-dark/50 uppercase tracking-wide">{label}</p>
-        <p className="font-syne font-bold text-3xl text-go-dark mt-1">{formatter(current)}</p>
-        <p className={`font-dm text-xs font-semibold mt-2 ${color}`}>
-          {arrow} {formatter(Math.abs(m.delta))} {m.pct != null && `(${m.pct >= 0 ? '+' : ''}${m.pct}%)`} vs mes pasado
-        </p>
+        {loading ? (
+          <div className="mt-2 h-8 w-20 rounded-md bg-go-dark/5 animate-pulse" />
+        ) : (
+          <p className="font-syne font-bold text-3xl text-go-dark mt-1">{value != null ? formatter(value) : '—'}</p>
+        )}
+        {comparison}
       </div>
     )
   }
@@ -4144,28 +4194,33 @@ function CrecimientoTab({
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="font-syne text-2xl font-bold text-go-dark">📈 Panel de Crecimiento</h2>
-          {lastSnapshotAt && (
-            <p className="font-dm text-xs text-go-dark/50 mt-1">Último snapshot: {new Date(lastSnapshotAt).toLocaleString('es')}</p>
-          )}
+          <p className="font-dm text-sm text-go-dark/60 mt-1">
+            Mostrando <strong>{MONTH_NAMES_ES[selectedMonth - 1]} {selectedYear}</strong>
+            {!loading && monthData && (
+              <span className={`ml-2 inline-block text-xs font-semibold px-2 py-0.5 rounded-full ${monthData.fromSnapshot ? 'bg-go-orange/10 text-go-orange' : 'bg-emerald-50 text-emerald-700'}`}>
+                {monthData.fromSnapshot
+                  ? `📸 Snapshot del ${monthData.snapshotDate ? new Date(monthData.snapshotDate).toLocaleDateString('es') : '—'}`
+                  : '⚡ Calculado en tiempo real'}
+              </span>
+            )}
+          </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <select
-            value={selectedKey}
-            onChange={(e) => setSelectedKey(e.target.value)}
+            value={`${selectedYear}-${String(selectedMonth).padStart(2, '0')}`}
+            onChange={(e) => { const [yy, mm] = e.target.value.split('-').map(Number); handleMonthChange(mm, yy) }}
             className="text-xs px-3 py-1.5 rounded-lg border border-go-border bg-go-light font-dm text-go-dark"
           >
             {monthOptions.map(o => (
               <option key={o.key} value={o.key}>
-                {MONTH_NAMES_ES[o.month - 1]} {o.year}{o.isCurrent ? ' (en curso)' : ''}
+                {MONTH_NAMES_ES[o.month - 1]} {o.year}{o.isCurrent ? ' (en curso)' : ''} {o.hasSnap ? '✅' : '⚠️'}
               </option>
             ))}
           </select>
           <button
-            onClick={() => {
-              const [sy, sm] = selectedKey.split('-').map(Number)
-              saveSnapshot(sm, sy)
-            }}
-            className="text-xs font-syne font-bold bg-go-orange text-white px-3 py-1.5 rounded-lg hover:bg-go-orange/90 transition"
+            disabled={loading}
+            onClick={() => saveSnapshot(selectedMonth, selectedYear)}
+            className="text-xs font-syne font-bold bg-go-orange text-white px-3 py-1.5 rounded-lg hover:bg-go-orange/90 transition disabled:opacity-50"
           >
             📸 Guardar snapshot ahora
           </button>
@@ -4191,12 +4246,12 @@ function CrecimientoTab({
         </div>
       )}
 
-      {/* Section 1 — MoM cards */}
+      {/* Section 1 — stat cards for the SELECTED month (snapshot or live) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <MomCard label="ACC Videos" current={totalAcc} mom={accMom} formatter={(n) => String(n)} />
-        <MomCard label="TTD Videos" current={totalTtd} mom={ttdMom} formatter={(n) => String(n)} />
-        <MomCard label="GMV Total" current={totalGmv} mom={gmvMom} formatter={(n) => `$${Math.round(n).toLocaleString('en-US')}`} />
-        <MomCard label="Nuevas creadoras" current={newCreatorsThisMonth} mom={newMom} formatter={(n) => String(n)} />
+        <StatCard label="ACC Videos" value={monthData?.acc} prevValue={prevData?.acc ?? null} formatter={(n) => String(n)} loading={loading} />
+        <StatCard label="TTD Videos" value={monthData?.ttd} prevValue={prevData?.ttd ?? null} formatter={(n) => String(n)} loading={loading} />
+        <StatCard label="GMV Total" value={monthData?.gmv} prevValue={prevData?.gmv ?? null} formatter={(n) => `$${Math.round(n).toLocaleString('en-US')}`} loading={loading} />
+        <StatCard label="Nuevas creadoras" value={monthData?.newCreators} prevValue={prevData?.newCreators ?? null} formatter={(n) => String(n)} loading={loading} />
       </div>
 
       {/* Section 2 — ACC vs TTD bars (last 6 months) */}

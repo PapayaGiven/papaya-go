@@ -1177,7 +1177,7 @@ export async function applyGlobalPlan(
 
 // ── Monthly snapshots ────────────────────────────────
 
-export async function takeMonthlySnapshot(targetMonth?: number, targetYear?: number): Promise<{ error?: string; month?: number; year?: number }> {
+export async function takeMonthlySnapshot(targetMonth?: number, targetYear?: number): Promise<{ error?: string; month?: number; year?: number; acc?: number; ttd?: number; gmv?: number }> {
   const supabase = createAdminClient()
   const now = new Date()
   // Default: snapshot the PREVIOUS month
@@ -1193,11 +1193,20 @@ export async function takeMonthlySnapshot(targetMonth?: number, targetYear?: num
   const startIso = new Date(Date.UTC(year, month - 1, 1)).toISOString()
   const endIso = new Date(Date.UTC(year, month, 1)).toISOString()
 
-  // Team-wide aggregates
-  const [boostsRes, creatorsRes, internalRes] = await Promise.all([
-    supabase.from('go_boost_requests').select('creator_id, video_type, created_at').gte('created_at', startIso).lt('created_at', endIso),
-    supabase.from('go_creators').select('id, status, gmv_this_month, nivel, approved_at, is_internal'),
+  // Is the target the current calendar month? GMV (gmv_this_month) is only
+  // accurate for the live month; for past months we reuse an existing
+  // snapshot's GMV rather than overwriting it with current values.
+  const isCurrentMonth = month === (now.getMonth() + 1) && year === now.getFullYear()
+
+  // Team-wide aggregates. ACC/TTD count ONLY is_valid=true boosts, matching
+  // lib/videoStats (the live source of truth) so a saved snapshot equals
+  // what the dashboard showed live.
+  const [boostsRes, creatorsRes, internalRes, existingSnapRes, existingCreatorSnapsRes] = await Promise.all([
+    supabase.from('go_boost_requests').select('creator_id, video_type, created_at, is_valid').gte('created_at', startIso).lt('created_at', endIso),
+    supabase.from('go_creators').select('id, status, gmv_this_month, nivel, approved_at, is_internal, created_at'),
     supabase.from('go_internal_videos').select('creator_id, video_type, status, submitted_at, approved_at').gte('submitted_at', startIso).lt('submitted_at', endIso),
+    supabase.from('go_monthly_snapshots').select('total_gmv').eq('month', month).eq('year', year).maybeSingle(),
+    supabase.from('go_creator_snapshots').select('creator_id, gmv').eq('month', month).eq('year', year),
   ])
   if (boostsRes.error) return { error: boostsRes.error.message }
   if (creatorsRes.error) return { error: creatorsRes.error.message }
@@ -1206,11 +1215,17 @@ export async function takeMonthlySnapshot(targetMonth?: number, targetYear?: num
   const boosts = boostsRes.data ?? []
   const creators = creatorsRes.data ?? []
   const internalRows = internalRes.data ?? []
+  const existingSnap = existingSnapRes.data
+  const existingGmvByCreator = new Map((existingCreatorSnapsRes.data ?? []).map(r => [r.creator_id, Number(r.gmv ?? 0)]))
 
   const activeCreators = creators.filter(c => c.status === 'active')
-  const totalAcc = boosts.filter(b => b.video_type === 'ACC').length
-  const totalTtd = boosts.filter(b => b.video_type === 'TTD').length
-  const totalGmv = activeCreators.reduce((s, c) => s + Number(c.gmv_this_month ?? 0), 0)
+  // Total creators = active AND created on/before the end of the target month.
+  const totalCreators = activeCreators.filter(c => c.created_at < endIso).length
+  const validBoosts = boosts.filter(b => b.is_valid === true)
+  const totalAcc = validBoosts.filter(b => b.video_type === 'ACC').length
+  const totalTtd = validBoosts.filter(b => b.video_type === 'TTD').length
+  const liveGmv = activeCreators.reduce((s, c) => s + Number(c.gmv_this_month ?? 0), 0)
+  const totalGmv = isCurrentMonth ? liveGmv : (existingSnap ? Number(existingSnap.total_gmv ?? 0) : liveGmv)
   const newCreators = creators.filter(c => c.approved_at && c.approved_at >= startIso && c.approved_at < endIso).length
   const intApproved = internalRows.filter(v => v.status === 'approved')
   const intAcc = intApproved.filter(v => v.video_type === 'ACC').length
@@ -1221,7 +1236,7 @@ export async function takeMonthlySnapshot(targetMonth?: number, targetYear?: num
     total_acc_videos: totalAcc,
     total_ttd_videos: totalTtd,
     total_gmv: totalGmv,
-    total_creators: activeCreators.length,
+    total_creators: totalCreators,
     new_creators: newCreators,
     internal_acc_videos: intAcc,
     internal_ttd_videos: intTtd,
@@ -1230,10 +1245,10 @@ export async function takeMonthlySnapshot(targetMonth?: number, targetYear?: num
   }, { onConflict: 'month,year' })
   if (upsertMonthly.error) return { error: upsertMonthly.error.message }
 
-  // Per-creator snapshots
+  // Per-creator snapshots — same is_valid=true rule as the team totals.
   const accByCreator = new Map<string, number>()
   const ttdByCreator = new Map<string, number>()
-  for (const b of boosts) {
+  for (const b of validBoosts) {
     if (!b.creator_id) continue
     if (b.video_type === 'ACC') accByCreator.set(b.creator_id, (accByCreator.get(b.creator_id) ?? 0) + 1)
     if (b.video_type === 'TTD') ttdByCreator.set(b.creator_id, (ttdByCreator.get(b.creator_id) ?? 0) + 1)
@@ -1241,13 +1256,18 @@ export async function takeMonthlySnapshot(targetMonth?: number, targetYear?: num
   const rows = activeCreators.map(c => {
     const acc = accByCreator.get(c.id) ?? 0
     const ttd = ttdByCreator.get(c.id) ?? 0
+    // GMV: live counter for the current month; for past months reuse the
+    // creator's existing snapshot value so we don't overwrite history.
+    const gmv = isCurrentMonth
+      ? Number(c.gmv_this_month ?? 0)
+      : (existingGmvByCreator.has(c.id) ? existingGmvByCreator.get(c.id)! : Number(c.gmv_this_month ?? 0))
     return {
       creator_id: c.id,
       month, year,
       acc_videos: acc,
       ttd_videos: ttd,
       total_videos: acc + ttd,
-      gmv: Number(c.gmv_this_month ?? 0),
+      gmv,
       nivel: c.nivel,
       snapshot_taken_at: new Date().toISOString(),
     }
@@ -1259,7 +1279,9 @@ export async function takeMonthlySnapshot(targetMonth?: number, targetYear?: num
 
   revalidatePath('/admin')
   revalidatePath('/dashboard')
-  return { month, year }
+  // acc/ttd returned as combined totals (regular valid + internal approved)
+  // to match the Crecimiento card display.
+  return { month, year, acc: totalAcc + intAcc, ttd: totalTtd + intTtd, gmv: totalGmv }
 }
 
 // ── Monthly goals (admin dashboard) ──────────────────
