@@ -23,14 +23,20 @@ export async function GET(req: NextRequest) {
 
   const supabase = createAdminClient()
 
-  // 1. Prefer a saved snapshot for this month/year.
+  // 1. Prefer a saved snapshot for this month/year. The snapshot tables are
+  // optional infra — if they don't exist yet (migration not applied) or the
+  // read fails, DON'T 500: fall through to live aggregation so the month
+  // selector still works. Saving snapshots requires the tables; reading is
+  // best-effort.
   const { data: snap, error: snapErr } = await supabase
     .from('go_monthly_snapshots')
     .select('*')
     .eq('month', month)
     .eq('year', year)
     .maybeSingle()
-  if (snapErr) return NextResponse.json({ error: snapErr.message }, { status: 500 })
+  if (snapErr) {
+    console.warn('[monthly-stats] snapshot read failed, using live data:', snapErr.message)
+  }
 
   if (snap) {
     return NextResponse.json({

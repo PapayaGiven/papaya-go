@@ -4000,15 +4000,25 @@ function CrecimientoTab({
     const py = pd.getUTCFullYear()
     try {
       const [curRes, prevRes] = await Promise.all([
-        fetch(`/api/monthly-stats?month=${month}&year=${year}`).then(r => r.json()),
-        fetch(`/api/monthly-stats?month=${pm}&year=${py}`).then(r => r.json()),
+        fetch(`/api/monthly-stats?month=${month}&year=${year}`),
+        fetch(`/api/monthly-stats?month=${pm}&year=${py}`),
       ])
-      setMonthData(curRes && !curRes.error ? curRes : null)
-      setPrevData(prevRes && !prevRes.error ? prevRes : null)
-    } catch {
+      const cur = await curRes.json().catch(() => null)
+      const prev = await prevRes.json().catch(() => null)
+      console.log('[crecimiento] loadMonth', { month, year, status: curRes.status, cur })
+      // Surface API failures instead of silently rendering "—" — that's what
+      // made earlier breakage look like "nothing happens".
+      if (!curRes.ok || !cur || cur.error) {
+        setMonthData(null)
+        fb(`Error API (${curRes.status}): ${cur?.error ?? 'sin respuesta'}`)
+      } else {
+        setMonthData(cur)
+      }
+      setPrevData(prevRes.ok && prev && !prev.error ? prev : null)
+    } catch (e) {
       setMonthData(null)
       setPrevData(null)
-      fb('Error cargando datos del mes')
+      fb(`Error de red cargando datos: ${e instanceof Error ? e.message : 'desconocido'}`)
     }
     setLoading(false)
   }, [])
@@ -4017,6 +4027,7 @@ function CrecimientoTab({
   useEffect(() => { loadMonth(selectedMonth, selectedYear) }, [loadMonth, selectedMonth, selectedYear])
 
   function handleMonthChange(month: number, year: number) {
+    console.log('Month changed to:', month, year)
     setSelectedMonth(month)
     setSelectedYear(year)
   }
