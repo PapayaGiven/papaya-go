@@ -1,25 +1,28 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { updateCreatorGmv } from '@/app/admin/actions'
+import { updateCreatorGmv, updateCreatorGmvTotal } from '@/app/admin/actions'
 
 /**
- * Inline-edit cell for go_creators.gmv_this_month. Click the value
- * to swap it for an input + ✓ / ✗ controls. Saves via the
- * updateCreatorGmv server action, surfaces success/error to the
- * parent through `onFeedback` so the parent's toast strip is the
- * single source of truth for status messages across the page.
+ * Inline-edit cell for a creator's GMV. `field` selects which column:
+ * 'this_month' (default) → gmv_this_month (also nudges gmv_total),
+ * 'total' → gmv_total (lifetime cumulative, admin correction). Click
+ * the value to swap it for an input + ✓ / ✗ controls. Surfaces
+ * success/error to the parent through `onFeedback` so the parent's
+ * toast strip is the single source of truth for status messages.
  */
 export function GmvCell({
   creatorId,
   value,
   onFeedback,
   align = 'left',
+  field = 'this_month',
 }: {
   creatorId: string
   value: number | null | undefined
   onFeedback?: (msg: string) => void
   align?: 'left' | 'right'
+  field?: 'this_month' | 'total'
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<string>('')
@@ -52,13 +55,15 @@ export function GmvCell({
     setOptimistic(parsed)
     setEditing(false)
     startTransition(async () => {
-      const r = await updateCreatorGmv(creatorId, parsed)
+      const r = field === 'total'
+        ? await updateCreatorGmvTotal(creatorId, parsed)
+        : await updateCreatorGmv(creatorId, parsed)
       if (r.error) {
         setOptimistic(null)
         onFeedback?.(`Error: ${r.error}`)
         return
       }
-      onFeedback?.('✅ GMV actualizado')
+      onFeedback?.(field === 'total' ? '✅ GMV total actualizado' : '✅ GMV actualizado')
       // Server revalidatePath('/admin') will refetch the page's data;
       // once the new prop comes in, our optimistic value matches and
       // can be cleared. Until then we keep showing the optimistic
@@ -114,7 +119,7 @@ export function GmvCell({
     <button
       type="button"
       onClick={start}
-      title="Click para editar GMV"
+      title={field === 'total' ? 'Click para editar GMV total' : 'Click para editar GMV'}
       className={`inline-flex items-baseline gap-0.5 font-dm text-sm text-go-dark hover:text-go-orange hover:underline decoration-dotted underline-offset-4 transition ${align === 'right' ? 'tabular-nums' : ''}`}
     >
       <span className="text-go-dark/40 text-xs">$</span>

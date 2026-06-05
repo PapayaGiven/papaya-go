@@ -170,7 +170,7 @@ export default function ProgressRings({
               </div>
             </div>
             <p className="mt-2 font-dm text-[#1a0800]" style={{ fontSize: 13, fontWeight: 500 }}>
-              GMV
+              GMV {monthName.charAt(0).toUpperCase() + monthName.slice(1)}
             </p>
             {gmvComplete ? (
               <p className="font-dm text-xs mt-1" style={{ color: '#2a9d4a' }}>

@@ -167,13 +167,49 @@ export async function updateCreatorGmv(
     return { error: 'GMV inválido — debe ser un número >= 0.' }
   }
   const supabase = createAdminClient()
+  // Keep gmv_total (lifetime cumulative) in sync with the month value.
+  // total moves by the DELTA between the old and new month value, so
+  // re-editing the same month corrects rather than double-counts. On the
+  // first entry of a month oldMonth is 0, so total += gmv as expected.
+  const { data: row, error: readErr } = await supabase
+    .from('go_creators')
+    .select('gmv_this_month, gmv_total')
+    .eq('id', id)
+    .single()
+  if (readErr) return { error: readErr.message }
+  const oldMonth = Number(row?.gmv_this_month ?? 0)
+  const oldTotal = Number(row?.gmv_total ?? 0)
+  const newTotal = Math.max(0, oldTotal - oldMonth + gmv)
   const { error } = await supabase
     .from('go_creators')
-    .update({ gmv_this_month: gmv })
+    .update({ gmv_this_month: gmv, gmv_total: newTotal })
     .eq('id', id)
   if (error) return { error: error.message }
   revalidatePath('/admin')
   // Creator dashboard reads gmv_this_month directly off this row.
+  revalidatePath('/dashboard')
+  return { success: true }
+}
+
+/**
+ * Inline-edit the lifetime cumulative GMV (go_creators.gmv_total)
+ * directly. Lets admin correct the running total when needed without
+ * touching the current-month value. Never auto-resets.
+ */
+export async function updateCreatorGmvTotal(
+  id: string,
+  gmv: number,
+): Promise<{ error?: string; success?: true }> {
+  if (!Number.isFinite(gmv) || gmv < 0) {
+    return { error: 'GMV total inválido — debe ser un número >= 0.' }
+  }
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('go_creators')
+    .update({ gmv_total: gmv })
+    .eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin')
   revalidatePath('/dashboard')
   return { success: true }
 }

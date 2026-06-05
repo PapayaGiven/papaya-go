@@ -168,6 +168,17 @@ export default async function DashboardPage() {
             <span className="font-semibold text-amber-700">{pendingThisMonth} pendientes de revisión</span>
           </p>
 
+          {/* CARD 2b: GMV total acumulado (lifetime — never resets) */}
+          <div className="bg-white border border-go-orange/20 rounded-2xl p-5 flex items-center justify-between gap-4">
+            <div>
+              <p className="font-syne font-bold text-base text-[#1a0800]">💰 Tu GMV total acumulado</p>
+              <p className="font-dm text-xs text-go-dark/50 mt-1">Desde que te uniste a Papaya GO</p>
+            </div>
+            <p className="font-syne font-bold text-2xl md:text-3xl text-go-orange tabular-nums">
+              ${Math.round(creator.gmv_total ?? 0).toLocaleString('en-US')}
+            </p>
+          </div>
+
           {/* CARD 3: Challenge */}
           {challenge && (
             <div className="bg-white border border-[rgba(255,119,0,0.12)] rounded-2xl p-5">

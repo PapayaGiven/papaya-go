@@ -2063,8 +2063,8 @@ function CreatorsTab({
                           {c.nivel} - {NIVEL_NAMES[c.nivel] ?? '?'}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-right font-mono text-go-dark/70">
-                        ${c.gmv_total.toLocaleString()}
+                      <td className="px-4 py-3 text-right">
+                        <GmvCell creatorId={c.id} value={c.gmv_total} field="total" onFeedback={fb} align="right" />
                       </td>
                       <td className="px-4 py-3 text-right">
                         <GmvCell creatorId={c.id} value={c.gmv_this_month} onFeedback={fb} align="right" />
