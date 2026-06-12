@@ -60,6 +60,7 @@ export default function InternalDashboardClient({ creator, accounts, videos, sta
   const [videoType, setVideoType] = useState<'ACC' | 'TTD' | null>(null)
   const [submitted, setSubmitted] = useState(false)
   const [error, setError] = useState('')
+  const [urlError, setUrlError] = useState(false)
   const [loading, setLoading] = useState(false)
   const [signingOut, setSigningOut] = useState(false)
 
@@ -74,7 +75,8 @@ export default function InternalDashboardClient({ creator, accounts, videos, sta
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-    if (!tiktokUrl.trim()) { setError('Pega el link de tu video'); return }
+    setUrlError(false)
+    if (!tiktokUrl.trim()) { setError('Pega el link de tu video'); setUrlError(true); return }
     if (!videoType) { setError('Selecciona ACC o TTD'); return }
 
     setLoading(true)
@@ -85,7 +87,7 @@ export default function InternalDashboardClient({ creator, accounts, videos, sta
         tiktok_url: tiktokUrl.trim(),
         video_type: videoType,
       })
-      if (r.error) setError(r.error)
+      if (r.error) { setError(r.error); if (r.duplicate) setUrlError(true) }
       else {
         setSubmitted(true)
         setAccountId('')
@@ -196,9 +198,13 @@ export default function InternalDashboardClient({ creator, accounts, videos, sta
                   <input
                     type="url"
                     value={tiktokUrl}
-                    onChange={(e) => setTiktokUrl(e.target.value)}
+                    onChange={(e) => { setTiktokUrl(e.target.value); setUrlError(false) }}
                     placeholder="https://www.tiktok.com/@..."
-                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 font-dm text-sm text-go-dark placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition"
+                    className={`w-full border rounded-xl px-4 py-2.5 font-dm text-sm text-go-dark placeholder:text-gray-300 focus:outline-none focus:ring-2 transition ${
+                      urlError
+                        ? 'border-red-400 bg-red-50 focus:ring-red-300/40 focus:border-red-400'
+                        : 'border-gray-200 focus:ring-go-orange/30 focus:border-go-orange'
+                    }`}
                   />
                 </div>
 

@@ -3,6 +3,7 @@
 import { cookies } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { normalizeTiktokUrl } from '@/lib/normalizeUrl'
 import type { BoostStatus } from '@/lib/types'
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'papaya-admin-2024'
@@ -2070,7 +2071,13 @@ export async function adminSubmitVideosForCreator(data: {
   creator_id: string
   date: string // YYYY-MM-DD
   videos: AdminVideoInput[]
-}): Promise<{ error?: string; rowErrors?: { index: number; message: string }[]; inserted?: number }> {
+}): Promise<{
+  error?: string
+  rowErrors?: { index: number; message: string }[]
+  inserted?: number
+  duplicates?: number
+  duplicateIndexes?: number[]
+}> {
   if (!data.videos.length) return { error: 'Agrega al menos un video' }
 
   const supabase = createAdminClient()
@@ -2082,36 +2089,45 @@ export async function adminSubmitVideosForCreator(data: {
   if (creatorErr) return { error: creatorErr.message }
   if (!creator) return { error: 'Creator no encontrada' }
 
-  // Normalize URLs and validate.
-  const rowErrors: { index: number; message: string }[] = []
-  const normalized = data.videos.map((v, i) => {
-    const url = (v.tiktok_url ?? '').trim().toLowerCase().replace(/\/+$/, '')
-    if (!url) rowErrors.push({ index: i, message: 'URL requerida' })
-    if (v.video_type !== 'ACC' && v.video_type !== 'TTD') rowErrors.push({ index: i, message: 'Selecciona ACC o TTD' })
-    return { ...v, tiktok_url: url }
-  })
-
-  // In-batch dedupe.
-  const seen = new Map<string, number>()
+  // Normalize URLs and validate. Hard errors (missing URL / type) block the
+  // whole submission — they're genuine input mistakes, not duplicates.
+  const normalized = data.videos.map((v) => ({
+    ...v,
+    tiktok_url: normalizeTiktokUrl(v.tiktok_url),
+  }))
+  const hardErrors: { index: number; message: string }[] = []
   normalized.forEach((v, i) => {
-    if (!v.tiktok_url) return
-    if (seen.has(v.tiktok_url)) rowErrors.push({ index: i, message: 'URL duplicada en este envío' })
-    else seen.set(v.tiktok_url, i)
+    if (!v.tiktok_url) hardErrors.push({ index: i, message: 'URL requerida' })
+    if (v.video_type !== 'ACC' && v.video_type !== 'TTD') hardErrors.push({ index: i, message: 'Selecciona ACC o TTD' })
   })
+  if (hardErrors.length > 0) return { rowErrors: hardErrors }
 
-  // DB dedupe — check the correct table based on creator type. Internal
-  // creators live in go_internal_videos; everyone else in go_boost_requests.
+  // Duplicate detection — within this batch AND against existing rows for the
+  // creator. Internal creators live in go_internal_videos; everyone else in
+  // go_boost_requests. Duplicates are SKIPPED (not fatal): we insert the rest
+  // and report how many were ignored.
   const dedupeTable = creator.is_internal ? 'go_internal_videos' : 'go_boost_requests'
   const { data: existing } = await supabase
     .from(dedupeTable)
     .select('tiktok_url')
     .eq('creator_id', data.creator_id)
-  const existingSet = new Set((existing ?? []).map((r) => (r.tiktok_url ?? '').trim().toLowerCase().replace(/\/+$/, '')))
-  normalized.forEach((v, i) => {
-    if (existingSet.has(v.tiktok_url)) rowErrors.push({ index: i, message: 'Esta URL ya existe para esta creadora' })
-  })
+  const existingSet = new Set((existing ?? []).map((r) => normalizeTiktokUrl(r.tiktok_url)))
 
-  if (rowErrors.length > 0) return { rowErrors }
+  const duplicateIndexes: number[] = []
+  const seen = new Set<string>()
+  const toInsert: { tiktok_url: string; video_type: 'ACC' | 'TTD'; boost_requested?: boolean }[] = []
+  normalized.forEach((v, i) => {
+    if (existingSet.has(v.tiktok_url) || seen.has(v.tiktok_url)) {
+      duplicateIndexes.push(i)
+      return
+    }
+    seen.add(v.tiktok_url)
+    toInsert.push({ tiktok_url: v.tiktok_url, video_type: v.video_type as 'ACC' | 'TTD', boost_requested: v.boost_requested })
+  })
+  const duplicates = duplicateIndexes.length
+
+  // Everything in the batch was a duplicate — nothing left to insert.
+  if (toInsert.length === 0) return { inserted: 0, duplicates, duplicateIndexes }
 
   // Insert with the chosen date. Use noon UTC so timezone shifts don't push
   // it into a different day for any reasonable region.
@@ -2123,7 +2139,7 @@ export async function adminSubmitVideosForCreator(data: {
   if (creator.is_internal) {
     // Internal pipeline: insert into go_internal_videos as approved so the
     // counter bump fires immediately. submitted_at carries the chosen date.
-    const rows = normalized.map((v) => ({
+    const rows = toInsert.map((v) => ({
       creator_id: data.creator_id,
       tiktok_account_id: null,
       tiktok_url: v.tiktok_url,
@@ -2162,11 +2178,11 @@ export async function adminSubmitVideosForCreator(data: {
     revalidatePath('/admin')
     revalidatePath('/internal-dashboard')
     revalidatePath('/dashboard')
-    return { inserted: rows.length }
+    return { inserted: rows.length, duplicates, duplicateIndexes }
   }
 
   // Regular (non-internal) creator: keep the existing boost-request path.
-  const rows = normalized.map((v) => ({
+  const rows = toInsert.map((v) => ({
     creator_id: data.creator_id,
     creator_name: creator.full_name ?? null,
     tiktok_handle: creator.tiktok_handle ?? null,
@@ -2209,7 +2225,7 @@ export async function adminSubmitVideosForCreator(data: {
   revalidatePath('/admin')
   revalidatePath('/dashboard')
   revalidatePath('/boost')
-  return { inserted: rows.length }
+  return { inserted: rows.length, duplicates, duplicateIndexes }
 }
 
 // ── Top POIs (Google Sheets sync) ───────────────────────

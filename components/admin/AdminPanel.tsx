@@ -838,6 +838,7 @@ function AdminVideoSubmitModal({
   const [date, setDate] = useState(defaultDate ?? new Date().toISOString().split('T')[0])
   const [rows, setRows] = useState<SubmitRow[]>([{ url: '', type: null, boost: false }])
   const [topError, setTopError] = useState('')
+  const [summary, setSummary] = useState('')
   const [done, setDone] = useState<{ inserted: number; creatorName: string } | null>(null)
 
   const selectedCreator = creators.find(c => c.id === creatorId)
@@ -845,12 +846,14 @@ function AdminVideoSubmitModal({
   function update(i: number, patch: Partial<SubmitRow>) {
     setRows((p) => p.map((r, idx) => idx === i ? { ...r, ...patch, error: undefined } : r))
     setTopError('')
+    setSummary('')
   }
   function addRow() { setRows((p) => [...p, { url: '', type: null, boost: false }]) }
   function removeRow(i: number) { setRows((p) => p.length === 1 ? p : p.filter((_, idx) => idx !== i)) }
 
   function submit() {
     setTopError('')
+    setSummary('')
     if (!creatorId) { setTopError('Selecciona una creadora'); return }
     const cleaned = rows.map((r) => ({ ...r, error: undefined as string | undefined }))
     cleaned.forEach((r) => {
@@ -866,11 +869,23 @@ function AdminVideoSubmitModal({
         videos: cleaned.map(r => ({ tiktok_url: r.url, video_type: r.type as 'ACC' | 'TTD', boost_requested: r.boost })),
       })
       if (res.error) { setTopError(res.error); return }
+      // Hard input errors (missing URL / type) block the whole batch.
       if (res.rowErrors && res.rowErrors.length) {
         const next = [...cleaned]
         for (const e of res.rowErrors) if (next[e.index]) next[e.index].error = e.message
         setRows(next)
         setTopError('Revisa los errores marcados')
+        return
+      }
+      // Duplicates were skipped — mark those rows and keep the form open so the
+      // admin can see exactly which links were ignored, plus a count summary.
+      const dupes = res.duplicateIndexes ?? []
+      if (dupes.length > 0) {
+        const next = cleaned.map((r, i) =>
+          dupes.includes(i) ? { ...r, error: '⚠️ Link duplicado — ya existe' } : r
+        )
+        setRows(next)
+        setSummary(`✅ ${res.inserted ?? 0} videos agregados · ${res.duplicates ?? dupes.length} duplicados ignorados`)
         return
       }
       setDone({ inserted: res.inserted ?? 0, creatorName: selectedCreator?.full_name ?? selectedCreator?.email ?? 'creator' })
@@ -967,6 +982,9 @@ function AdminVideoSubmitModal({
             <button onClick={addRow} className="w-full border-2 border-dashed border-go-orange/40 text-go-orange font-dm text-xs font-semibold py-2 rounded-lg hover:bg-go-orange/5">+ Agregar otro video</button>
 
             {topError && <p className="font-dm text-sm text-red-600">{topError}</p>}
+            {summary && (
+              <p className="font-dm text-sm font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">{summary}</p>
+            )}
 
             <div className="flex gap-2 pt-2">
               <button onClick={submit} className="flex-1 bg-go-orange text-white font-dm font-bold text-sm py-2.5 rounded-lg hover:bg-go-orange/90">Enviar videos</button>

@@ -263,6 +263,13 @@ DO $$ BEGIN
   ALTER TABLE go_boost_requests ADD CONSTRAINT go_boost_requests_creator_url_unique UNIQUE (creator_id, tiktok_url);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+-- Same rule for internal creators' videos (go_internal_videos). See
+-- supabase/migrations/004_internal_videos_unique_url.sql for the dedup step that
+-- must run first if the table already contains duplicates.
+DO $$ BEGIN
+  ALTER TABLE go_internal_videos ADD CONSTRAINT go_internal_videos_creator_url_unique UNIQUE (creator_id, tiktok_url);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
 -- Split "status" into two orthogonal concepts:
 --   is_valid     — admin confirms this is a real TikTok GO video
 --                  (this is what counts toward the monthly goal)
