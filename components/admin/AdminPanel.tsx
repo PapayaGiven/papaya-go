@@ -68,6 +68,7 @@ import {
   deleteTikTokAccount,
   approveInternalVideo,
   rejectInternalVideo,
+  undoInternalVideo,
   bulkApproveInternalVideos,
   getInternalVideoStats,
   upsertMonthlyGoal,
@@ -3309,6 +3310,14 @@ function TikTokAccountsTab({ accounts, startTransition }: { accounts: TikTokAcco
 
 // ── Internal Videos Tab ───────────────────────────────
 
+const INTERNAL_REJECT_REASONS = [
+  'No es un video de TikTok GO',
+  'Tag incorrecto (blanco, no verde)',
+  'Video duplicado',
+  'Link no funciona',
+  'No corresponde al tipo (ACC/TTD)',
+]
+
 function InternalVideosTab({ videos, creators, startTransition }: { videos: InternalVideo[]; creators: Creator[]; startTransition: (fn: () => void) => void }) {
   const [feedback, setFeedback] = useState<string | null>(null)
   const fb = (msg: string) => { setFeedback(msg); setTimeout(() => setFeedback(null), 5000) }
@@ -3467,7 +3476,7 @@ function InternalVideosTab({ videos, creators, startTransition }: { videos: Inte
                           onClick={() => startTransition(async () => {
                             const r = await approveInternalVideo(v.id)
                             if (r.error) fb(`Error: ${r.error}`)
-                            else fb('✓ Aprobado')
+                            else fb('✅ Video aprobado')
                           })}
                           className="font-dm text-xs font-semibold bg-emerald-600 text-white px-3 py-1 rounded-lg hover:bg-emerald-700 transition"
                         >
@@ -3481,7 +3490,16 @@ function InternalVideosTab({ videos, creators, startTransition }: { videos: Inte
                         </button>
                       </>
                     ) : (
-                      <span className="text-xs text-go-dark/40">—</span>
+                      <button
+                        onClick={() => startTransition(async () => {
+                          const r = await undoInternalVideo(v.id)
+                          if (r.error) fb(`Error: ${r.error}`)
+                          else fb('↩️ Video marcado como pendiente')
+                        })}
+                        className="font-dm text-xs font-semibold bg-go-light text-go-dark/70 border border-go-border px-3 py-1 rounded-lg hover:bg-go-border/40 transition"
+                      >
+                        ↩️ Deshacer
+                      </button>
                     )}
                   </td>
                 </tr>
@@ -3496,8 +3514,20 @@ function InternalVideosTab({ videos, creators, startTransition }: { videos: Inte
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-go-dark/40 p-4">
           <div className="bg-white rounded-2xl p-6 max-w-md w-full">
             <h3 className="font-syne font-bold text-lg text-go-dark mb-3">Rechazar video</h3>
-            <p className="font-dm text-xs text-go-dark/60 mb-3">Escribe la razón del rechazo. La creadora la verá en su dashboard.</p>
-            <textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={3} placeholder="Ej. URL inválida, video no relacionado con la marca..." className="w-full px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition" />
+            <p className="font-dm text-xs text-go-dark/60 mb-3">Elige una razón rápida o escribe una personalizada. La creadora la verá en su dashboard.</p>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {INTERNAL_REJECT_REASONS.map(reason => (
+                <button
+                  key={reason}
+                  type="button"
+                  onClick={() => setRejectReason(reason)}
+                  className={`font-dm text-xs px-3 py-1.5 rounded-full border transition ${rejectReason === reason ? 'bg-red-600 text-white border-red-600' : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'}`}
+                >
+                  {reason}
+                </button>
+              ))}
+            </div>
+            <textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} rows={3} placeholder="Razón personalizada del rechazo..." className="w-full px-3 py-2 rounded-lg border border-go-border bg-go-light text-sm font-dm text-go-dark focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition" />
             <div className="flex gap-2 mt-4 justify-end">
               <button onClick={() => setRejectingId(null)} className="font-dm text-sm text-go-dark/60 px-4 py-2">Cancelar</button>
               <button
@@ -3505,11 +3535,11 @@ function InternalVideosTab({ videos, creators, startTransition }: { videos: Inte
                 onClick={() => startTransition(async () => {
                   const r = await rejectInternalVideo(rejectingId!, rejectReason.trim())
                   if (r.error) fb(`Error: ${r.error}`)
-                  else { fb('✓ Rechazado'); setRejectingId(null); setRejectReason('') }
+                  else { fb('❌ Video rechazado'); setRejectingId(null); setRejectReason('') }
                 })}
                 className="font-dm text-sm font-semibold bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition disabled:opacity-50"
               >
-                Rechazar
+                Confirmar rechazo
               </button>
             </div>
           </div>

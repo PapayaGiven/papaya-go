@@ -646,6 +646,41 @@ export async function rejectInternalVideo(id: string, reason: string): Promise<{
   return {}
 }
 
+// Undo: flip an approved/rejected video back to pending. If it was approved
+// this month its counter bump has to be reversed; a rejected video never
+// touched the counters so there's nothing to undo there.
+export async function undoInternalVideo(id: string): Promise<{ error?: string }> {
+  const supabase = createAdminClient()
+  const { data: row, error: readErr } = await supabase
+    .from('go_internal_videos')
+    .select('creator_id, video_type, status, submitted_at')
+    .eq('id', id)
+    .maybeSingle()
+  if (readErr) return { error: readErr.message }
+  if (!row) return { error: 'Video no encontrado' }
+  console.log(`[undoInternalVideo] id=${id} before: status=${row.status} type=${row.video_type} submitted_at=${row.submitted_at}`)
+
+  if (row.status === 'pending') return {}
+  const wasApproved = row.status === 'approved'
+
+  const { error } = await supabase
+    .from('go_internal_videos')
+    .update({ status: 'pending', approved_at: null, rejected_at: null, rejection_reason: null })
+    .eq('id', id)
+  if (error) return { error: error.message }
+
+  if (wasApproved && row.creator_id && isThisMonthIso(row.submitted_at)) {
+    await adjustCreatorCounters(supabase, row.creator_id, row.video_type as 'ACC' | 'TTD', -1)
+  } else {
+    console.log(`[undoInternalVideo] no counter reversal (wasApproved=${wasApproved}, thisMonth=${isThisMonthIso(row.submitted_at)})`)
+  }
+
+  revalidatePath('/admin')
+  revalidatePath('/internal-dashboard')
+  revalidatePath('/dashboard')
+  return {}
+}
+
 function getRanges() {
   const now = new Date()
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate())
