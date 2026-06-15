@@ -2107,11 +2107,20 @@ export async function adminSubmitVideosForCreator(data: {
   // go_boost_requests. Duplicates are SKIPPED (not fatal): we insert the rest
   // and report how many were ignored.
   const dedupeTable = creator.is_internal ? 'go_internal_videos' : 'go_boost_requests'
-  const { data: existing } = await supabase
+  console.log('[adminSubmitVideosForCreator] checking duplicates for:', {
+    creator_id: data.creator_id,
+    table: dedupeTable,
+    urls: normalized.map((v) => v.tiktok_url),
+  })
+  const { data: existing, error: checkError } = await supabase
     .from(dedupeTable)
-    .select('tiktok_url')
+    .select('id, tiktok_url')
     .eq('creator_id', data.creator_id)
   const existingSet = new Set((existing ?? []).map((r) => normalizeTiktokUrl(r.tiktok_url)))
+  console.log('[adminSubmitVideosForCreator] duplicate check result:', {
+    checkError,
+    existingNormalized: Array.from(existingSet),
+  })
 
   const duplicateIndexes: number[] = []
   const seen = new Set<string>()
