@@ -2107,26 +2107,38 @@ export async function adminSubmitVideosForCreator(data: {
   // go_boost_requests. Duplicates are SKIPPED (not fatal): we insert the rest
   // and report how many were ignored.
   const dedupeTable = creator.is_internal ? 'go_internal_videos' : 'go_boost_requests'
-  console.log('[adminSubmitVideosForCreator] checking duplicates for:', {
+  // [DUPE CHECK] Diagnostic logging — the two failure modes we're chasing are
+  // (a) is_internal routing the check to the wrong table, and (b) the per-creator
+  // scope hiding a duplicate that lives under a different creator. Log raw vs
+  // normalized input, the routing inputs (is_internal → table), and the existing
+  // rows so the logs alone tell us which one is happening.
+  console.log('[DUPE CHECK] checking duplicates for:', {
     creator_id: data.creator_id,
+    is_internal: creator.is_internal,
     table: dedupeTable,
-    urls: normalized.map((v) => v.tiktok_url),
+    rows: normalized.map((v, i) => ({
+      index: i,
+      raw: data.videos[i]?.tiktok_url,
+      normalized: v.tiktok_url,
+    })),
   })
   const { data: existing, error: checkError } = await supabase
     .from(dedupeTable)
     .select('id, tiktok_url')
     .eq('creator_id', data.creator_id)
   const existingSet = new Set((existing ?? []).map((r) => normalizeTiktokUrl(r.tiktok_url)))
-  console.log('[adminSubmitVideosForCreator] duplicate check result:', {
-    checkError,
-    existingNormalized: Array.from(existingSet),
-  })
+  console.log('[DUPE CHECK] existing rows for this creator:', JSON.stringify(existing))
+  console.log('[DUPE CHECK] check error:', checkError)
+  console.log('[DUPE CHECK] existing normalized set:', Array.from(existingSet))
 
   const duplicateIndexes: number[] = []
   const seen = new Set<string>()
   const toInsert: { tiktok_url: string; video_type: 'ACC' | 'TTD'; boost_requested?: boolean }[] = []
   normalized.forEach((v, i) => {
-    if (existingSet.has(v.tiktok_url) || seen.has(v.tiktok_url)) {
+    const inExisting = existingSet.has(v.tiktok_url)
+    const inBatch = seen.has(v.tiktok_url)
+    console.log('[DUPE CHECK] row', i, v.tiktok_url, { inExisting, inBatch, duplicate: inExisting || inBatch })
+    if (inExisting || inBatch) {
       duplicateIndexes.push(i)
       return
     }
