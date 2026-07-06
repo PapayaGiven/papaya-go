@@ -28,6 +28,7 @@ export function CreatorEditModal({
     email: creator.email ?? '',
     tiktok_handle: creator.tiktok_handle ?? '',
     nivel: creator.nivel,
+    gmv_total: String(creator.gmv_total ?? 0),
     gmv_this_month: String(creator.gmv_this_month ?? 0),
     acc_this_month: String(creator.acc_this_month ?? 0),
     ttd_this_month: String(creator.ttd_this_month ?? 0),
@@ -57,6 +58,7 @@ export function CreatorEditModal({
         email: form.email,
         tiktok_handle: form.tiktok_handle,
         nivel: form.nivel,
+        gmv_total: Number(form.gmv_total) || 0,
         gmv_this_month: Number(form.gmv_this_month) || 0,
         acc_this_month: Number(form.acc_this_month) || 0,
         ttd_this_month: Number(form.ttd_this_month) || 0,
@@ -170,6 +172,17 @@ export function CreatorEditModal({
               </select>
             </Field>
           </div>
+
+          <Field label="GMV Total Acumulado ($)">
+            <Input
+              type="number"
+              value={form.gmv_total}
+              onChange={(v) => setForm({ ...form, gmv_total: v })}
+            />
+            <p className="font-dm text-[11px] text-go-dark/50 mt-1">
+              Total histórico — nunca se reinicia. Edítalo para corregir el acumulado.
+            </p>
+          </Field>
 
           <div className="grid grid-cols-3 gap-3">
             <Field label="GMV mes ($)">
