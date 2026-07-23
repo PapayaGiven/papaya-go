@@ -3,41 +3,53 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { submitInternalVideo } from './actions'
+import { submitInternalVideosBatch } from './actions'
 import type { Creator, TikTokAccount, InternalVideo } from '@/lib/types'
+
+type Split = { acc: number; ttd: number; total: number }
 
 interface Props {
   creator: Creator
   accounts: TikTokAccount[]
   videos: InternalVideo[]
-  stats: { today: number; week: number; month: number }
+  stats: { today: Split; week: Split; month: Split }
 }
 
-// Green if met, red if zero, orange while in progress. Spec is strict:
-// half-way is still "progress", not "behind" — only an empty bucket is red.
-function quotaState(count: number, quota: number): 'met' | 'progress' | 'behind' {
-  if (count === 0) return 'behind'
-  if (quota > 0 && count >= quota) return 'met'
-  return 'progress'
+// A single row in the multi-link submission form. `key` is a stable client-side
+// id so React can track rows across add/remove without remounting inputs.
+type FormRow = {
+  key: number
+  tiktokUrl: string
+  videoType: 'ACC' | 'TTD' | null
+  error?: string
+  duplicate?: boolean
 }
 
-function StatCard({ label, count, quota }: { label: string; count: number; quota: number }) {
-  const state = quotaState(count, quota)
-  const colors = {
-    met: { ring: 'border-emerald-300', bg: 'bg-emerald-50', text: 'text-emerald-700', bar: 'bg-emerald-500' },
-    progress: { ring: 'border-go-orange/40', bg: 'bg-go-orange/5', text: 'text-go-orange', bar: 'bg-go-orange' },
-    behind: { ring: 'border-red-200', bg: 'bg-red-50', text: 'text-red-600', bar: 'bg-red-500' },
-  }[state]
-  const pct = quota > 0 ? Math.min((count / quota) * 100, 100) : 0
+let rowSeq = 0
+const emptyRow = (): FormRow => ({ key: ++rowSeq, tiktokUrl: '', videoType: null })
+
+function Badge({ value, label, tone }: { value: number; label: string; tone: 'acc' | 'ttd' | 'total' }) {
+  const tones = {
+    acc: 'bg-orange-100 text-orange-700',
+    ttd: 'bg-pink-100 text-pink-700',
+    total: 'bg-gray-100 text-gray-600',
+  }[tone]
   return (
-    <div className={`rounded-2xl border-2 ${colors.ring} ${colors.bg} p-5`}>
-      <p className="font-dm text-xs uppercase tracking-wide text-go-dark/50">{label}</p>
-      <p className={`font-syne font-bold text-4xl mt-1 ${colors.text}`}>{count}</p>
-      <p className="font-dm text-xs text-go-dark/50 mt-1">
-        <span className={`font-semibold ${colors.text}`}>{count}</span> / {quota || '—'} meta
-      </p>
-      <div className="mt-2 h-2 rounded-full bg-go-dark/10 overflow-hidden">
-        <div className={`h-full ${colors.bar} transition-all`} style={{ width: `${pct}%` }} />
+    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-dm font-bold ${tones}`}>
+      <span className="font-syne">{value}</span> {label}
+    </span>
+  )
+}
+
+// One time-window row (Hoy / Esta semana / Este mes) rendered as colored badges.
+function BreakdownRow({ label, split }: { label: string; split: Split }) {
+  return (
+    <div className="bg-white border border-go-orange/15 rounded-2xl p-4">
+      <p className="font-dm text-xs uppercase tracking-wide text-go-dark/50 mb-2">{label}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge value={split.acc} label="ACC" tone="acc" />
+        <Badge value={split.ttd} label="TTD" tone="ttd" />
+        <Badge value={split.total} label="total" tone="total" />
       </div>
     </div>
   )
@@ -56,11 +68,8 @@ function statusBadge(v: InternalVideo) {
 export default function InternalDashboardClient({ creator, accounts, videos, stats }: Props) {
   const router = useRouter()
   const [accountId, setAccountId] = useState('')
-  const [tiktokUrl, setTiktokUrl] = useState('')
-  const [videoType, setVideoType] = useState<'ACC' | 'TTD' | null>(null)
-  const [submitted, setSubmitted] = useState(false)
-  const [error, setError] = useState('')
-  const [urlError, setUrlError] = useState(false)
+  const [rows, setRows] = useState<FormRow[]>([emptyRow()])
+  const [successMsg, setSuccessMsg] = useState('')
   const [loading, setLoading] = useState(false)
   const [signingOut, setSigningOut] = useState(false)
 
@@ -72,36 +81,64 @@ export default function InternalDashboardClient({ creator, accounts, videos, sta
     router.refresh()
   }
 
+  function addRow() {
+    setRows(prev => [...prev, emptyRow()])
+  }
+
+  function removeRow(key: number) {
+    setRows(prev => (prev.length <= 1 ? prev : prev.filter(r => r.key !== key)))
+  }
+
+  function patchRow(key: number, patch: Partial<FormRow>) {
+    setRows(prev => prev.map(r => (r.key === key ? { ...r, ...patch, error: undefined, duplicate: undefined } : r)))
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setError('')
-    setUrlError(false)
-    if (!tiktokUrl.trim()) { setError('Pega el link de tu video'); setUrlError(true); return }
-    if (!videoType) { setError('Selecciona ACC o TTD'); return }
+    setSuccessMsg('')
+
+    // Client-side: every row must have a URL and a type before we call the server.
+    let hasClientError = false
+    const validated = rows.map(r => {
+      if (!r.tiktokUrl.trim()) { hasClientError = true; return { ...r, error: 'Pega el link de tu video', duplicate: false } }
+      if (!r.videoType) { hasClientError = true; return { ...r, error: 'Selecciona ACC o TTD', duplicate: false } }
+      return { ...r, error: undefined, duplicate: undefined }
+    })
+    if (hasClientError) { setRows(validated); return }
 
     setLoading(true)
     try {
-      const r = await submitInternalVideo({
-        creator_id: creator.id,
-        tiktok_account_id: accountId || null,
-        tiktok_url: tiktokUrl.trim(),
-        video_type: videoType,
-      })
-      if (r.error) { setError(r.error); if (r.duplicate) setUrlError(true) }
-      else {
-        setSubmitted(true)
-        setAccountId('')
-        setTiktokUrl('')
-        setVideoType(null)
+      const { results, insertedCount } = await submitInternalVideosBatch(
+        creator.id,
+        rows.map(r => ({
+          tiktok_url: r.tiktokUrl.trim(),
+          video_type: r.videoType as 'ACC' | 'TTD',
+          tiktok_account_id: accountId || null,
+        }))
+      )
+
+      // Keep only the rows the server rejected, annotated with their error.
+      const erroredRows: FormRow[] = rows
+        .map((r, i) => ({ r, res: results[i] }))
+        .filter(x => x.res?.error)
+        .map(x => ({ ...x.r, error: x.res.error, duplicate: x.res.duplicate }))
+
+      if (insertedCount > 0) {
+        setSuccessMsg(`✅ ${insertedCount} ${insertedCount === 1 ? 'video agregado' : 'videos agregados'} correctamente`)
         router.refresh()
-        setTimeout(() => setSubmitted(false), 4000)
+        setTimeout(() => setSuccessMsg(''), 5000)
       }
+
+      // Success rows drop out; on a fully-clean submit we reset to one empty row.
+      setRows(erroredRows.length > 0 ? erroredRows : [emptyRow()])
     } finally {
       setLoading(false)
     }
   }
 
   const firstName = creator.full_name?.split(' ')[0] ?? 'Creadora'
+  const monthlyQuota = creator.monthly_quota ?? 0
+  const monthPct = monthlyQuota > 0 ? Math.min((stats.month.total / monthlyQuota) * 100, 100) : 0
 
   return (
     <div className="min-h-screen bg-[#fff8f2] pb-24">
@@ -159,88 +196,123 @@ export default function InternalDashboardClient({ creator, accounts, videos, sta
           )}
         </section>
 
-        {/* Section 2 — Video counter */}
+        {/* Section 2 — Video breakdown (ACC / TTD / total) */}
         <section>
           <h2 className="font-syne font-bold text-lg text-go-dark mb-3">📊 Tus videos</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <StatCard label="Hoy" count={stats.today} quota={creator.daily_quota ?? 0} />
-            <StatCard label="Esta semana" count={stats.week} quota={creator.weekly_quota ?? 0} />
-            <StatCard label="Este mes" count={stats.month} quota={creator.monthly_quota ?? 0} />
+          <div className="space-y-3">
+            <BreakdownRow label="Hoy" split={stats.today} />
+            <BreakdownRow label="Esta semana" split={stats.week} />
+
+            {/* This month adds a quota progress bar */}
+            <div className="bg-white border border-go-orange/15 rounded-2xl p-4">
+              <p className="font-dm text-xs uppercase tracking-wide text-go-dark/50 mb-2">Este mes</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge value={stats.month.acc} label="ACC" tone="acc" />
+                <Badge value={stats.month.ttd} label="TTD" tone="ttd" />
+                <Badge value={stats.month.total} label="total" tone="total" />
+              </div>
+              <div className="mt-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-dm text-xs text-go-dark/50">Meta mensual</span>
+                  <span className="font-dm text-xs font-semibold text-go-dark">
+                    {stats.month.total} / {monthlyQuota || '—'}
+                  </span>
+                </div>
+                <div className="h-2 rounded-full bg-go-dark/10 overflow-hidden">
+                  <div className="h-full bg-go-orange transition-all" style={{ width: `${monthPct}%` }} />
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
-        {/* Section 3 — Submit */}
+        {/* Section 3 — Submit (multi-link) */}
         <section id="submit">
-          <h2 className="font-syne font-bold text-lg text-go-dark mb-3">➕ Agregar video</h2>
+          <h2 className="font-syne font-bold text-lg text-go-dark mb-3">➕ Agregar videos</h2>
           <div className="bg-white border border-go-orange/15 rounded-2xl p-5 shadow-sm">
-            {submitted ? (
-              <div className="text-center py-6">
-                <p className="font-dm text-go-orange font-semibold text-lg">✅ Video enviado. El equipo lo verificará pronto.</p>
+            {successMsg && (
+              <div className="mb-4 text-center py-3 rounded-xl bg-emerald-50 border border-emerald-200">
+                <p className="font-dm text-emerald-700 font-semibold text-sm">{successMsg}</p>
               </div>
-            ) : (
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                  <label className="block font-dm text-sm font-medium text-go-dark mb-1">¿Para cuál cuenta?</label>
-                  <select
-                    value={accountId}
-                    onChange={(e) => setAccountId(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-4 py-2.5 font-dm text-sm text-go-dark bg-white focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition"
-                  >
-                    <option value="">Selecciona una cuenta...</option>
-                    {accounts.map(a => (
-                      <option key={a.id} value={a.id}>@{a.tiktok_handle.replace(/^@/, '')}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-dm text-sm font-medium text-go-dark mb-1">Pega el link de tu video</label>
-                  <input
-                    type="url"
-                    value={tiktokUrl}
-                    onChange={(e) => { setTiktokUrl(e.target.value); setUrlError(false) }}
-                    placeholder="https://www.tiktok.com/@..."
-                    className={`w-full border rounded-xl px-4 py-2.5 font-dm text-sm text-go-dark placeholder:text-gray-300 focus:outline-none focus:ring-2 transition ${
-                      urlError
-                        ? 'border-red-400 bg-red-50 focus:ring-red-300/40 focus:border-red-400'
-                        : 'border-gray-200 focus:ring-go-orange/30 focus:border-go-orange'
-                    }`}
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-dm text-sm font-medium text-go-dark mb-2">
-                    Tipo de video <span className="text-go-orange">*</span>
-                  </label>
-                  <div className="flex gap-3">
-                    {(['ACC', 'TTD'] as const).map(t => (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() => setVideoType(t)}
-                        className={`flex-1 py-3 rounded-xl font-dm font-semibold text-sm transition-all border-2 ${
-                          videoType === t
-                            ? 'bg-go-orange text-white border-go-orange'
-                            : 'bg-white text-go-dark/60 border-gray-200 hover:border-go-orange/40'
-                        }`}
-                      >
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {error && <p className="font-dm text-sm text-red-500">{error}</p>}
-
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full bg-go-orange hover:bg-go-orange/90 text-white font-dm font-semibold text-sm py-3 rounded-xl transition-all disabled:opacity-50"
-                >
-                  {loading ? 'Enviando...' : 'Enviar video →'}
-                </button>
-              </form>
             )}
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block font-dm text-sm font-medium text-go-dark mb-1">¿Para cuál cuenta?</label>
+                <select
+                  value={accountId}
+                  onChange={(e) => setAccountId(e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 font-dm text-sm text-go-dark bg-white focus:outline-none focus:ring-2 focus:ring-go-orange/30 focus:border-go-orange transition"
+                >
+                  <option value="">Selecciona una cuenta...</option>
+                  {accounts.map(a => (
+                    <option key={a.id} value={a.id}>@{a.tiktok_handle.replace(/^@/, '')}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* One row per link */}
+              <div className="space-y-3">
+                {rows.map((row) => (
+                  <div key={row.key} className="rounded-xl border border-gray-200 p-3 space-y-2">
+                    <div className="flex items-start gap-2">
+                      <input
+                        type="url"
+                        value={row.tiktokUrl}
+                        onChange={(e) => patchRow(row.key, { tiktokUrl: e.target.value })}
+                        placeholder="https://www.tiktok.com/@..."
+                        className={`flex-1 min-w-0 border rounded-xl px-4 py-2.5 font-dm text-sm text-go-dark placeholder:text-gray-300 focus:outline-none focus:ring-2 transition ${
+                          row.error
+                            ? 'border-red-400 bg-red-50 focus:ring-red-300/40 focus:border-red-400'
+                            : 'border-gray-200 focus:ring-go-orange/30 focus:border-go-orange'
+                        }`}
+                      />
+                      <div className="flex gap-1 shrink-0">
+                        {(['ACC', 'TTD'] as const).map(t => (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => patchRow(row.key, { videoType: t })}
+                            className={`px-3 py-2.5 rounded-xl font-dm font-semibold text-xs transition-all border-2 ${
+                              row.videoType === t
+                                ? 'bg-go-orange text-white border-go-orange'
+                                : 'bg-white text-go-dark/60 border-gray-200 hover:border-go-orange/40'
+                            }`}
+                          >
+                            {t}
+                          </button>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeRow(row.key)}
+                        disabled={rows.length <= 1}
+                        aria-label="Eliminar fila"
+                        className="shrink-0 w-10 h-10 flex items-center justify-center rounded-xl text-go-dark/40 hover:text-red-500 hover:bg-red-50 transition disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-go-dark/40"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    {row.error && <p className="font-dm text-xs text-red-500 pl-1">{row.error}</p>}
+                  </div>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={addRow}
+                className="w-full border-2 border-dashed border-go-orange/40 text-go-orange font-dm font-semibold text-sm py-2.5 rounded-xl hover:bg-go-orange/5 transition"
+              >
+                + Agregar otro video
+              </button>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-go-orange hover:bg-go-orange/90 text-white font-dm font-semibold text-sm py-3 rounded-xl transition-all disabled:opacity-50"
+              >
+                {loading ? 'Enviando...' : rows.length > 1 ? `Enviar ${rows.length} videos →` : 'Enviar video →'}
+              </button>
+            </form>
           </div>
         </section>
 

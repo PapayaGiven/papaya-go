@@ -4572,11 +4572,12 @@ function AdminDashboardTab({
     else if (v.video_type === 'TTD') cur.ttd++
     intByCreator.set(v.creator_id, cur)
   }
+  // Show the WHOLE internal team ranked by total approved videos this month
+  // (no top-5 cap) — the list scrolls in the card when it runs long.
   const topInternal = Array.from(intByCreator.entries())
     .map(([id, counts]) => ({ creator: creatorsById.get(id), acc: counts.acc, ttd: counts.ttd, total: counts.acc + counts.ttd }))
     .filter(x => x.creator)
     .sort((a, b) => b.total - a.total)
-    .slice(0, 5)
 
   // Activity alerts — derive from boost requests + creator snapshots.
   // classifyCreatorActivity now takes (thisMonth, last7Days), so we compute
@@ -4787,7 +4788,7 @@ function AdminDashboardTab({
           }))}
           accent="pink"
         />
-        <TopInternalList rows={topInternal} />
+        <TopInternalList rows={topInternal} showAll />
       </div>
 
       {/* Section 4 — Per-creator video tracker */}
@@ -5071,30 +5072,45 @@ function TopList({ title, rows, accent }: { title: string; rows: { id: string; n
   )
 }
 
-function TopInternalList({ rows }: { rows: { creator?: Creator; acc: number; ttd: number; total: number }[] }) {
+function TopInternalList({ rows, showAll = false }: { rows: { creator?: Creator; acc: number; ttd: number; total: number }[]; showAll?: boolean }) {
+  // When showing the whole team, cap the height and let it scroll; also surface
+  // a team total at the bottom.
+  const teamAcc = rows.reduce((s, r) => s + r.acc, 0)
+  const teamTtd = rows.reduce((s, r) => s + r.ttd, 0)
   return (
     <SectionCard>
       <div className="p-5">
-        <h3 className="font-syne font-bold text-sm text-go-dark mb-4">🏢 Top Equipo Interno</h3>
+        <h3 className="font-syne font-bold text-sm text-go-dark mb-4">
+          {showAll ? '🏢 Equipo Interno' : '🏢 Top Equipo Interno'}
+          {showAll && rows.length > 0 && <span className="ml-1.5 text-xs font-dm font-normal text-go-dark/40">({rows.length})</span>}
+        </h3>
         {rows.length === 0 ? (
           <p className="font-dm text-xs text-go-dark/40 text-center py-4">Aún no hay videos verificados.</p>
         ) : (
-          <ol className="space-y-2">
-            {rows.map((r, i) => (
-              <li key={r.creator!.id} className="flex items-center gap-3 py-1.5">
-                <span className="font-syne font-bold text-base w-6 text-center text-emerald-600">#{i + 1}</span>
-                <div className="flex-1 min-w-0">
-                  <p className="font-dm text-sm font-medium text-go-dark truncate">{r.creator!.full_name ?? r.creator!.email}</p>
-                  {r.creator!.tiktok_handle && <p className="font-dm text-xs text-go-dark/50 truncate">{r.creator!.tiktok_handle}</p>}
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700">{r.acc} ACC</span>
-                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-pink-100 text-pink-700">{r.ttd} TTD</span>
-                  <span className="text-xs font-syne font-bold text-go-dark ml-1">{r.total}</span>
-                </div>
-              </li>
-            ))}
-          </ol>
+          <>
+            <ol className={`space-y-2 ${showAll ? 'max-h-80 overflow-y-auto pr-1' : ''}`}>
+              {rows.map((r, i) => (
+                <li key={r.creator!.id} className="flex items-center gap-3 py-1.5">
+                  <span className="font-syne font-bold text-base w-6 text-center text-emerald-600">#{i + 1}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-dm text-sm font-medium text-go-dark truncate">{r.creator!.full_name ?? r.creator!.email}</p>
+                    {r.creator!.tiktok_handle && <p className="font-dm text-xs text-go-dark/50 truncate">@{r.creator!.tiktok_handle.replace(/^@/, '')}</p>}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700">{r.acc} ACC</span>
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-pink-100 text-pink-700">{r.ttd} TTD</span>
+                    <span className="text-xs font-syne font-bold text-go-dark ml-1">{r.total}</span>
+                  </div>
+                </li>
+              ))}
+            </ol>
+            {showAll && (
+              <div className="mt-3 pt-3 border-t border-go-dark/10 flex items-center justify-between">
+                <span className="font-dm text-xs font-semibold text-go-dark/60">Total equipo</span>
+                <span className="font-dm text-xs font-bold text-go-dark">{teamAcc} ACC · {teamTtd} TTD</span>
+              </div>
+            )}
+          </>
         )}
       </div>
     </SectionCard>

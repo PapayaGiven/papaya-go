@@ -49,16 +49,29 @@ export default async function InternalDashboardPage() {
   // admin happened to approve. status='approved' still gates inclusion so
   // pending/rejected rows never count.
   const approved = videos.filter(v => v.status === 'approved')
-  const todayCount = approved.filter(v => new Date(v.submitted_at) >= startOfDay).length
-  const weekCount = approved.filter(v => new Date(v.submitted_at) >= startOfWeek).length
-  const monthCount = approved.filter(v => new Date(v.submitted_at) >= startOfMonth).length
+
+  // Split each window into ACC / TTD / total so the dashboard can show the
+  // breakdown as separate badges instead of a single count.
+  const split = (list: InternalVideo[]) => {
+    let acc = 0
+    let ttd = 0
+    for (const v of list) {
+      if (v.video_type === 'ACC') acc++
+      else if (v.video_type === 'TTD') ttd++
+    }
+    return { acc, ttd, total: acc + ttd }
+  }
+
+  const today = split(approved.filter(v => new Date(v.submitted_at) >= startOfDay))
+  const week = split(approved.filter(v => new Date(v.submitted_at) >= startOfWeek))
+  const month = split(approved.filter(v => new Date(v.submitted_at) >= startOfMonth))
 
   return (
     <InternalDashboardClient
       creator={creator}
       accounts={accounts}
       videos={videos}
-      stats={{ today: todayCount, week: weekCount, month: monthCount }}
+      stats={{ today, week, month }}
     />
   )
 }
