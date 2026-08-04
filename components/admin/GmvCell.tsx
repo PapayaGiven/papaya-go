@@ -5,8 +5,10 @@ import { updateCreatorGmv, updateCreatorGmvTotal } from '@/app/admin/actions'
 
 /**
  * Inline-edit cell for a creator's GMV. `field` selects which column:
- * 'this_month' (default) → gmv_this_month (also nudges gmv_total),
- * 'total' → gmv_total (lifetime cumulative, admin correction). Click
+ * 'this_month' (default) → gmv_this_month (accrues gmv_total only when
+ * the month value goes UP; lowering it or resetting to 0 leaves the
+ * total alone), 'total' → gmv_total (lifetime cumulative, edited
+ * directly as an admin correction, never derived). Click
  * the value to swap it for an input + ✓ / ✗ controls. Surfaces
  * success/error to the parent through `onFeedback` so the parent's
  * toast strip is the single source of truth for status messages.

@@ -168,10 +168,13 @@ export async function updateCreatorGmv(
     return { error: 'GMV inválido — debe ser un número >= 0.' }
   }
   const supabase = createAdminClient()
-  // Keep gmv_total (lifetime cumulative) in sync with the month value.
-  // total moves by the DELTA between the old and new month value, so
-  // re-editing the same month corrects rather than double-counts. On the
-  // first entry of a month oldMonth is 0, so total += gmv as expected.
+  // gmv_total is lifetime cumulative and must never go DOWN from a
+  // month edit. It only ever accrues the INCREASE:
+  //   new > old → total += (new - old)   (month grew; bank the growth)
+  //   new <= old → total unchanged       (correction down, or the
+  //                                       reset-to-0 at month rollover)
+  // A symmetric delta (total - old + new) would wipe the accumulated
+  // history the moment admin zeroed the month for a new period.
   const { data: row, error: readErr } = await supabase
     .from('go_creators')
     .select('gmv_this_month, gmv_total')
@@ -180,10 +183,13 @@ export async function updateCreatorGmv(
   if (readErr) return { error: readErr.message }
   const oldMonth = Number(row?.gmv_this_month ?? 0)
   const oldTotal = Number(row?.gmv_total ?? 0)
-  const newTotal = Math.max(0, oldTotal - oldMonth + gmv)
+  const update: { gmv_this_month: number; gmv_total?: number } = {
+    gmv_this_month: gmv,
+  }
+  if (gmv > oldMonth) update.gmv_total = oldTotal + (gmv - oldMonth)
   const { error } = await supabase
     .from('go_creators')
-    .update({ gmv_this_month: gmv, gmv_total: newTotal })
+    .update(update)
     .eq('id', id)
   if (error) return { error: error.message }
   revalidatePath('/admin')
