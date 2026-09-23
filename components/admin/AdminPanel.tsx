@@ -23,7 +23,7 @@ import type {
   BoostStatus,
 } from '@/lib/types'
 import { NIVEL_NAMES, POI_TYPE_LABELS, CHALLENGE_TYPE_LABELS } from '@/lib/types'
-import type { MonthlyVideoStats } from '@/lib/videoStats'
+import type { MonthlyVideoStats, InternalCreatorCount } from '@/lib/videoStats'
 import {
   adminLogout,
   approveCreator,
@@ -70,6 +70,7 @@ import {
   rejectInternalVideo,
   undoInternalVideo,
   bulkApproveInternalVideos,
+  recomputeInternalCounters,
   getInternalVideoStats,
   upsertMonthlyGoal,
   // Single-action approval: marks valid + boosteado + increments counters.
@@ -142,6 +143,7 @@ interface AdminPanelProps {
   levelUpEvents: LevelUpEvent[]
   topPois: TopPoi[]
   monthlyStats: MonthlyVideoStats
+  internalCounts: InternalCreatorCount[]
   currentMonth: number
   currentYear: number
 }
@@ -1737,6 +1739,7 @@ export default function AdminPanel({
   levelUpEvents,
   topPois,
   monthlyStats,
+  internalCounts,
   currentMonth,
   currentYear,
 }: AdminPanelProps) {
@@ -1815,12 +1818,12 @@ export default function AdminPanel({
         {tab === 'dashboard' && (
           <AdminDashboardTab
             creators={creators}
-            internalVideos={internalVideos}
             boostRequests={boostRequests}
             creatorSnapshots={creatorSnapshots}
             levelUpEvents={levelUpEvents}
             monthlyGoal={monthlyGoal}
             monthlyStats={monthlyStats}
+            internalCounts={internalCounts}
             currentMonth={currentMonth}
             currentYear={currentYear}
             startTransition={startTransition}
@@ -1830,10 +1833,10 @@ export default function AdminPanel({
           <CrecimientoTab
             monthlySnapshots={monthlySnapshots}
             creators={creators}
-            internalVideos={internalVideos}
             boostRequests={boostRequests}
             monthlyGoal={monthlyGoal}
             monthlyStats={monthlyStats}
+            internalCounts={internalCounts}
             currentMonth={currentMonth}
             currentYear={currentYear}
             startTransition={startTransition}
@@ -3377,7 +3380,19 @@ function InternalVideosTab({ videos, creators, startTransition }: { videos: Inte
 
   return (
     <div className="space-y-4">
-      <h2 className="font-syne text-lg font-bold text-go-dark">🎬 Videos Internos</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-syne text-lg font-bold text-go-dark">🎬 Videos Internos</h2>
+        <button
+          onClick={() => startTransition(async () => {
+            const r = await recomputeInternalCounters()
+            if (r.error) fb(`Error: ${r.error}`)
+            else fb('✅ Contadores internos recomputados')
+          })}
+          className="font-dm text-sm font-semibold border border-go-border bg-white text-go-dark px-4 py-2 rounded-lg hover:bg-go-light transition"
+        >
+          🔄 Recomputar contadores internos
+        </button>
+      </div>
 
       {feedback && (
         <div className={`font-dm text-sm px-4 py-3 rounded-xl ${feedback.startsWith('Error') ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
@@ -4017,14 +4032,14 @@ interface MonthStats {
 }
 
 function CrecimientoTab({
-  monthlySnapshots, creators, internalVideos, boostRequests, monthlyGoal, monthlyStats, currentMonth, currentYear, startTransition,
+  monthlySnapshots, creators, boostRequests, monthlyGoal, monthlyStats, internalCounts, currentMonth, currentYear, startTransition,
 }: {
   monthlySnapshots: MonthlySnapshot[]
   creators: Creator[]
-  internalVideos: InternalVideo[]
   boostRequests: BoostRequest[]
   monthlyGoal: MonthlyGoal | null
   monthlyStats: MonthlyVideoStats
+  internalCounts: InternalCreatorCount[]
   currentMonth: number
   currentYear: number
   startTransition: (cb: () => void) => void
@@ -4101,9 +4116,6 @@ function CrecimientoTab({
   const regValid = regAcc + regTtd
   const regPendingReview = monthlyStats.regularPending
   const regBoosted = regularBoostsThisMonth.filter(b => b.boost_status === 'boosteado').length
-  // Internal videos: anchor "this month" on submitted_at so an approval
-  // that lands in the next calendar month doesn't pull the row forward.
-  const internalApprovedThisMonth = internalVideos.filter(v => v.status === 'approved' && v.submitted_at >= startOfMonth)
   const intAcc = monthlyStats.internalAccApproved
   const intTtd = monthlyStats.internalTtdApproved
   const intPending = monthlyStats.internalPending
@@ -4149,14 +4161,10 @@ function CrecimientoTab({
   }
   const topAcc = [...regular].map(c => ({ ...c, _v: accByCreator.get(c.id) ?? 0 })).filter(c => c._v > 0).sort((a, b) => b._v - a._v).slice(0, 5)
   const topTtd = [...regular].map(c => ({ ...c, _v: ttdByCreator.get(c.id) ?? 0 })).filter(c => c._v > 0).sort((a, b) => b._v - a._v).slice(0, 5)
-  const intByCreator = new Map<string, { acc: number; ttd: number }>()
-  for (const v of internalApprovedThisMonth) {
-    if (!v.creator_id) continue
-    const cur = intByCreator.get(v.creator_id) ?? { acc: 0, ttd: 0 }
-    if (v.video_type === 'ACC') cur.acc++
-    else if (v.video_type === 'TTD') cur.ttd++
-    intByCreator.set(v.creator_id, cur)
-  }
+  // Per-creator counts come from go_internal_videos via a paged server
+  // query (internalCounts), never from go_creators counters or the capped
+  // internalVideos row array.
+  const intByCreator = new Map(internalCounts.map(c => [c.creator_id, c]))
   // Match any creator that has go_internal_videos rows, not just those
   // currently flagged is_internal. Otherwise a row authored when the
   // flag was on disappears from Top Equipo Interno after the flag flips,
@@ -4440,15 +4448,15 @@ function CrecimientoTab({
 }
 
 function AdminDashboardTab({
-  creators, internalVideos, boostRequests, creatorSnapshots, levelUpEvents, monthlyGoal, monthlyStats, currentMonth, currentYear, startTransition,
+  creators, boostRequests, creatorSnapshots, levelUpEvents, monthlyGoal, monthlyStats, internalCounts, currentMonth, currentYear, startTransition,
 }: {
   creators: Creator[]
-  internalVideos: InternalVideo[]
   boostRequests: BoostRequest[]
   creatorSnapshots: CreatorSnapshot[]
   levelUpEvents: LevelUpEvent[]
   monthlyGoal: MonthlyGoal | null
   monthlyStats: MonthlyVideoStats
+  internalCounts: InternalCreatorCount[]
   currentMonth: number
   currentYear: number
   startTransition: (cb: () => void) => void
@@ -4476,8 +4484,6 @@ function AdminDashboardTab({
 
   // 1. All boost requests this month (regular pipeline).
   const regularBoosts = boostRequests.filter(b => b.created_at >= startOfMonth && b.created_at <= endOfMonth)
-  // 2. All internal videos this month.
-  const internalVideosThisMonth = internalVideos.filter(v => v.submitted_at >= startOfMonth && v.submitted_at <= endOfMonth)
 
   // Diagnostic — surfaces is_valid distribution so "pending=0 but I see
   // pending videos" reports can be triaged from logs (SSR render fires
@@ -4563,15 +4569,9 @@ function AdminDashboardTab({
     .slice(0, 5)
     .map(x => ({ ...(x.creator as Creator), _ttd: x._ttd }))
 
-  // Top internal — same source of truth.
-  const intByCreator = new Map<string, { acc: number; ttd: number }>()
-  for (const v of internalVideosThisMonth) {
-    if (!v.creator_id || v.status !== 'approved') continue
-    const cur = intByCreator.get(v.creator_id) ?? { acc: 0, ttd: 0 }
-    if (v.video_type === 'ACC') cur.acc++
-    else if (v.video_type === 'TTD') cur.ttd++
-    intByCreator.set(v.creator_id, cur)
-  }
+  // Top internal — approved go_internal_videos this month, counted server-side
+  // with paging (internalCounts) so it's accurate regardless of counter sync.
+  const intByCreator = new Map(internalCounts.map(c => [c.creator_id, c]))
   // Show the WHOLE internal team ranked by total approved videos this month
   // (no top-5 cap) — the list scrolls in the card when it runs long.
   const topInternal = Array.from(intByCreator.entries())

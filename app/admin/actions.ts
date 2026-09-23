@@ -6,6 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { normalizeTiktokUrl } from '@/lib/normalizeUrl'
 import { isThisMonthIso, adjustCreatorCounters, addCreatorCounters, checkAndApplyLevelUps } from '@/lib/creatorCounters'
 import type { BoostStatus } from '@/lib/types'
+import { getInternalCountsByCreator, getMonthBounds } from '@/lib/videoStats'
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'papaya-admin-2024'
 
@@ -687,6 +688,65 @@ export async function undoInternalVideo(id: string): Promise<{ error?: string }>
   revalidatePath('/internal-dashboard')
   revalidatePath('/dashboard')
   return {}
+}
+
+// Rebuild acc/ttd/videos_this_month for every internal creator from the
+// approved go_internal_videos rows this month — the fix for any counter drift.
+// Level-ups this month already subtracted the from-level's requirement from
+// the live counters (carry-over), so the same amounts are subtracted here;
+// otherwise a creator who leveled up would get their pre-level videos back.
+export async function recomputeInternalCounters(): Promise<{ error?: string; count?: number }> {
+  const supabase = createAdminClient()
+  const now = new Date()
+  const month = now.getMonth() + 1
+  const year = now.getFullYear()
+  const { startOfMonth, endOfMonth } = getMonthBounds(month, year)
+
+  const [creatorsRes, reqsRes, eventsRes] = await Promise.all([
+    supabase.from('go_creators').select('id').eq('is_internal', true),
+    supabase.from('go_nivel_requirements').select('nivel, total_videos_required, acc_required, ttd_required'),
+    supabase.from('go_level_up_events').select('creator_id, from_nivel')
+      .gte('leveled_up_at', startOfMonth).lte('leveled_up_at', endOfMonth),
+  ])
+  if (creatorsRes.error) return { error: creatorsRes.error.message }
+  if (reqsRes.error) return { error: reqsRes.error.message }
+  if (eventsRes.error) return { error: eventsRes.error.message }
+
+  let counts
+  try {
+    counts = await getInternalCountsByCreator(supabase, month, year)
+  } catch (e) {
+    return { error: (e as Error).message }
+  }
+  const countByCreator = new Map(counts.map(c => [c.creator_id, c]))
+  const reqByNivel = new Map((reqsRes.data ?? []).map(r => [r.nivel, r]))
+
+  let updated = 0
+  for (const { id } of creatorsRes.data ?? []) {
+    const c = countByCreator.get(id) ?? { acc: 0, ttd: 0 }
+    let acc = c.acc
+    let ttd = c.ttd
+    let total = c.acc + c.ttd
+    for (const ev of eventsRes.data ?? []) {
+      if (ev.creator_id !== id) continue
+      const req = reqByNivel.get(ev.from_nivel)
+      acc = Math.max(0, acc - (req?.acc_required ?? 0))
+      ttd = Math.max(0, ttd - (req?.ttd_required ?? 0))
+      total = Math.max(0, total - (req?.total_videos_required ?? 0))
+    }
+    const { error } = await supabase
+      .from('go_creators')
+      .update({ acc_this_month: acc, ttd_this_month: ttd, videos_this_month: total })
+      .eq('id', id)
+    if (error) return { error: error.message, count: updated }
+    updated++
+  }
+  console.log(`[recomputeInternalCounters] updated ${updated} internal creators`)
+
+  revalidatePath('/admin')
+  revalidatePath('/internal-dashboard')
+  revalidatePath('/dashboard')
+  return { count: updated }
 }
 
 function getRanges() {

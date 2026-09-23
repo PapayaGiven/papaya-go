@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getMonthlyVideoStats } from '@/lib/videoStats'
+import { getMonthlyVideoStats, getInternalCountsByCreator } from '@/lib/videoStats'
 import AdminLogin from '@/components/admin/AdminLogin'
 import AdminPanel from '@/components/admin/AdminPanel'
 import type {
@@ -133,7 +133,14 @@ export default async function AdminPage() {
   // row arrays above, which PostgREST caps at 1000 rows and would
   // undercount once the team grows). Dashboard rings, quick stats, and
   // Crecimiento totals all read from here so they can never disagree.
-  const monthlyStats = await getMonthlyVideoStats(supabase, currentMonth, currentYear)
+  const [monthlyStats, internalCounts] = await Promise.all([
+    getMonthlyVideoStats(supabase, currentMonth, currentYear),
+    // Equipo Interno leaderboard — per-creator approved counts this month.
+    getInternalCountsByCreator(supabase, currentMonth, currentYear).catch((e) => {
+      console.log('[admin] internalCounts failed:', e)
+      return []
+    }),
+  ])
   console.log('[admin] monthlyStats:', monthlyStats)
 
   return (
@@ -162,6 +169,7 @@ export default async function AdminPage() {
       levelUpEvents={(levelUpEvents as LevelUpEvent[]) ?? []}
       topPois={(topPois as TopPoi[]) ?? []}
       monthlyStats={monthlyStats}
+      internalCounts={internalCounts}
       currentMonth={currentMonth}
       currentYear={currentYear}
     />

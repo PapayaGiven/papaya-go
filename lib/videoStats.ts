@@ -150,3 +150,41 @@ export async function getCreatorMonthlyStats(
     invalid: invalid.count ?? 0,
   }
 }
+
+export interface InternalCreatorCount {
+  creator_id: string
+  acc: number
+  ttd: number
+}
+
+// Per-creator approved internal videos for a month, counted straight from
+// go_internal_videos. Paged so it never hits PostgREST's 1000-row cap —
+// this feeds the Equipo Interno leaderboard and the counter recompute.
+export async function getInternalCountsByCreator(
+  admin: Admin,
+  month: number,
+  year: number,
+): Promise<InternalCreatorCount[]> {
+  const { startOfMonth, endOfMonth } = getMonthBounds(month, year)
+  const PAGE = 1000
+  const byCreator = new Map<string, InternalCreatorCount>()
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await admin
+      .from('go_internal_videos')
+      .select('id, creator_id, video_type')
+      .eq('status', 'approved')
+      .gte('submitted_at', startOfMonth).lte('submitted_at', endOfMonth)
+      .order('id')
+      .range(from, from + PAGE - 1)
+    if (error) throw new Error(error.message)
+    for (const v of data ?? []) {
+      if (!v.creator_id) continue
+      const cur = byCreator.get(v.creator_id) ?? { creator_id: v.creator_id, acc: 0, ttd: 0 }
+      if (v.video_type === 'ACC') cur.acc++
+      else if (v.video_type === 'TTD') cur.ttd++
+      byCreator.set(v.creator_id, cur)
+    }
+    if (!data || data.length < PAGE) break
+  }
+  return Array.from(byCreator.values())
+}
