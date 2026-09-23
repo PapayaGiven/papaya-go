@@ -4,6 +4,7 @@ import { cookies } from 'next/headers'
 import { revalidatePath } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { normalizeTiktokUrl } from '@/lib/normalizeUrl'
+import { isThisMonthIso, adjustCreatorCounters, addCreatorCounters, checkAndApplyLevelUps } from '@/lib/creatorCounters'
 import type { BoostStatus } from '@/lib/types'
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'papaya-admin-2024'
@@ -1388,96 +1389,6 @@ export async function upsertMonthlyGoal(data: {
   return {}
 }
 
-// ── Level-up engine ──────────────────────────────────────
-//
-// Run after any change that bumps a creator's monthly counters. Loops until
-// the creator no longer qualifies for the next level (handles batch
-// approvals where someone leaps multiple levels at once).
-//
-// On each level-up:
-//   - carry_acc/ttd/total = current counter - CURRENT level's requirement
-//     (so the excess past the current threshold rolls into the new level)
-//   - gmv_this_month is preserved per spec — GMV doesn't reset on level up
-//   - One row inserted into go_level_up_events for the audit trail / popup
-
-interface NivelReqRow {
-  nivel: number
-  total_videos_required: number
-  gmv_required: number
-  acc_required: number
-  ttd_required: number
-}
-
-async function checkAndApplyLevelUps(creatorId: string): Promise<{ events: number }> {
-  const supabase = createAdminClient()
-  let events = 0
-
-  // Fetch all requirements once; we'll iterate locally.
-  const { data: reqsData } = await supabase
-    .from('go_nivel_requirements')
-    .select('nivel, total_videos_required, gmv_required, acc_required, ttd_required')
-  const reqs = (reqsData ?? []) as NivelReqRow[]
-  const reqByNivel = new Map(reqs.map(r => [r.nivel, r]))
-  console.log(`[level-up] check started for creator=${creatorId}, requirements=`, Array.from(reqByNivel.values()))
-
-  // Loop guard: cap iterations to a sane max so we never spin forever even
-  // if requirements data is malformed.
-  for (let i = 0; i < 8; i++) {
-    const { data: c } = await supabase
-      .from('go_creators')
-      .select('nivel, acc_this_month, ttd_this_month, videos_this_month, gmv_this_month')
-      .eq('id', creatorId)
-      .maybeSingle()
-    if (!c) { console.log('[level-up] no creator row, exiting'); break }
-    console.log(`[level-up] iter ${i}: creator nivel=${c.nivel} acc=${c.acc_this_month} ttd=${c.ttd_this_month} total=${c.videos_this_month} gmv=${c.gmv_this_month}`)
-
-    const next = reqByNivel.get(c.nivel + 1)
-    if (!next) { console.log(`[level-up] no requirement for nivel ${c.nivel + 1}, at max`); break }
-    console.log(`[level-up] next nivel ${c.nivel + 1} requires:`, next)
-
-    const acc = c.acc_this_month ?? 0
-    const ttd = c.ttd_this_month ?? 0
-    const total = c.videos_this_month ?? 0
-    const gmv = Number(c.gmv_this_month ?? 0)
-
-    const qualifies =
-      total >= (next.total_videos_required ?? 0)
-      && gmv >= Number(next.gmv_required ?? 0)
-      && acc >= (next.acc_required ?? 0)
-      && ttd >= (next.ttd_required ?? 0)
-    if (!qualifies) {
-      console.log(`[level-up] does not qualify yet (total ${total}/${next.total_videos_required}, acc ${acc}/${next.acc_required}, ttd ${ttd}/${next.ttd_required}, gmv ${gmv}/${next.gmv_required})`)
-      break
-    }
-
-    const cur = reqByNivel.get(c.nivel)
-    const carryAcc = Math.max(0, acc - (cur?.acc_required ?? 0))
-    const carryTtd = Math.max(0, ttd - (cur?.ttd_required ?? 0))
-    const carryTotal = Math.max(0, total - (cur?.total_videos_required ?? 0))
-    console.log(`[level-up] LEVELING UP ${c.nivel} -> ${c.nivel + 1}, carry acc=${carryAcc} ttd=${carryTtd} total=${carryTotal}`)
-
-    await supabase.from('go_creators').update({
-      nivel: c.nivel + 1,
-      acc_this_month: carryAcc,
-      ttd_this_month: carryTtd,
-      videos_this_month: carryTotal,
-      // gmv_this_month intentionally unchanged
-    }).eq('id', creatorId)
-
-    await supabase.from('go_level_up_events').insert({
-      creator_id: creatorId,
-      from_nivel: c.nivel,
-      to_nivel: c.nivel + 1,
-      carry_acc: carryAcc,
-      carry_ttd: carryTtd,
-      carry_total: carryTotal,
-    })
-    events++
-  }
-
-  return { events }
-}
-
 // ── Boost validation + boost decision (split as of 2026-05) ──
 //
 // Two orthogonal concepts:
@@ -1488,47 +1399,6 @@ async function checkAndApplyLevelUps(creatorId: string): Promise<{ events: numbe
 //
 // Counters only move when is_valid TRANSITIONS, and only for rows in the
 // current calendar month (older rows are rolled into snapshots).
-
-function isThisMonthIso(iso: string | null | undefined): boolean {
-  if (!iso) return false
-  const d = new Date(iso)
-  const now = new Date()
-  return d.getUTCFullYear() === now.getUTCFullYear() && d.getUTCMonth() === now.getUTCMonth()
-}
-
-async function adjustCreatorCounters(
-  supabase: ReturnType<typeof createAdminClient>,
-  creatorId: string,
-  videoType: 'ACC' | 'TTD' | null,
-  delta: 1 | -1,
-) {
-  const { data: c, error: readErr } = await supabase
-    .from('go_creators')
-    .select('acc_this_month, ttd_this_month, videos_this_month')
-    .eq('id', creatorId)
-    .maybeSingle()
-  if (readErr) { console.log(`[adjustCreatorCounters] read failed: ${readErr.message}`); return }
-  if (!c) { console.log(`[adjustCreatorCounters] no creator row for ${creatorId}`); return }
-  const accDelta = videoType === 'ACC' ? delta : 0
-  const ttdDelta = videoType === 'TTD' ? delta : 0
-  const next = {
-    acc_this_month: Math.max(0, (c.acc_this_month ?? 0) + accDelta),
-    ttd_this_month: Math.max(0, (c.ttd_this_month ?? 0) + ttdDelta),
-    videos_this_month: Math.max(0, (c.videos_this_month ?? 0) + delta),
-  }
-  console.log(`[adjustCreatorCounters] creator=${creatorId} type=${videoType} delta=${delta}`)
-  console.log(`[adjustCreatorCounters] before:`, c)
-  console.log(`[adjustCreatorCounters] after:`, next)
-  const { error: updErr } = await supabase.from('go_creators').update(next).eq('id', creatorId)
-  if (updErr) { console.log(`[adjustCreatorCounters] update failed: ${updErr.message}`); return }
-  // Verification read — confirm the write actually landed.
-  const { data: verify } = await supabase
-    .from('go_creators')
-    .select('acc_this_month, ttd_this_month, videos_this_month')
-    .eq('id', creatorId)
-    .maybeSingle()
-  console.log(`[adjustCreatorCounters] verified:`, verify)
-}
 
 // ── Validation: counts toward the monthly goal ───────────
 
@@ -2164,8 +2034,9 @@ export async function adminSubmitVideosForCreator(data: {
   const sameMonth = dateObj.getUTCFullYear() === now.getUTCFullYear() && dateObj.getUTCMonth() === now.getUTCMonth()
 
   if (creator.is_internal) {
-    // Internal pipeline: insert into go_internal_videos as approved so the
-    // counter bump fires immediately. submitted_at carries the chosen date.
+    // Internal pipeline: internal videos are auto-approved — never pending.
+    // submitted_at carries the chosen date; approved_at is the moment it counted.
+    const approvedIso = new Date().toISOString()
     const rows = toInsert.map((v) => ({
       creator_id: data.creator_id,
       tiktok_account_id: null,
@@ -2173,7 +2044,7 @@ export async function adminSubmitVideosForCreator(data: {
       video_type: v.video_type,
       status: 'approved' as const,
       submitted_at: createdIso,
-      approved_at: createdIso,
+      approved_at: approvedIso,
     }))
     const { error: insErr } = await supabase.from('go_internal_videos').insert(rows)
     if (insErr) {
@@ -2181,24 +2052,13 @@ export async function adminSubmitVideosForCreator(data: {
       return { error: insErr.message }
     }
 
+    // Counters only track the current month — backdated imports land in
+    // their month's snapshot instead (reject/undo reverse with the same rule).
     if (sameMonth) {
-      const accAdd = rows.filter(r => r.video_type === 'ACC').length
-      const ttdAdd = rows.filter(r => r.video_type === 'TTD').length
-      const { data: c } = await supabase
-        .from('go_creators')
-        .select('acc_this_month, ttd_this_month, videos_this_month')
-        .eq('id', data.creator_id)
-        .maybeSingle()
-      if (c) {
-        const before = { ...c }
-        const next = {
-          acc_this_month: (c.acc_this_month ?? 0) + accAdd,
-          ttd_this_month: (c.ttd_this_month ?? 0) + ttdAdd,
-          videos_this_month: (c.videos_this_month ?? 0) + rows.length,
-        }
-        console.log(`[adminSubmitVideosForCreator/internal] creator=${data.creator_id} before=`, before, ' next=', next)
-        await supabase.from('go_creators').update(next).eq('id', data.creator_id)
-      }
+      await addCreatorCounters(supabase, data.creator_id, {
+        acc: rows.filter(r => r.video_type === 'ACC').length,
+        ttd: rows.filter(r => r.video_type === 'TTD').length,
+      })
       await checkAndApplyLevelUps(data.creator_id)
     }
 
