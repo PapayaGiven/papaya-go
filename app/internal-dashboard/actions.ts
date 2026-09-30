@@ -1,7 +1,6 @@
 'use server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { addCreatorCounters, checkAndApplyLevelUps } from '@/lib/creatorCounters'
 import { revalidatePath } from 'next/cache'
 import { normalizeTiktokUrl } from '@/lib/normalizeUrl'
 
@@ -12,15 +11,16 @@ export type BatchRowResult = { duplicate?: boolean; error?: string }
 // `results` array is index-aligned with the input `rows` so the client can paint
 // a per-row error ("⚠️ Link duplicado") without losing which row failed.
 //
-// Internal videos are auto-approved: inserted as 'approved' and counted toward
-// the creator's monthly counters + level-up right away. Admin can still reject
-// from the Videos Internos tab, which reverses the counters.
+// Creator-submitted videos land as 'pending' and do NOT count yet. Counters and
+// level-up only move when an admin approves them in the Videos Internos tab.
+// (Admin-submitted videos via adminSubmitVideosForCreator are trusted and go in
+// as 'approved'.)
 export async function submitInternalVideosBatch(
   creator_id: string,
   rows: { tiktok_url: string; video_type: 'ACC' | 'TTD'; tiktok_account_id: string | null }[]
 ): Promise<{ results: BatchRowResult[]; insertedCount: number }> {
-  // Counters are written with the service role, so the creator_id from the
-  // client must belong to the signed-in internal creator.
+  // Inserts use the service role, so the creator_id from the client must
+  // belong to the signed-in internal creator.
   const results: BatchRowResult[] = rows.map(() => ({}))
   const authClient = await createClient()
   const { data: { user } } = await authClient.auth.getUser()
@@ -67,16 +67,13 @@ export async function submitInternalVideosBatch(
 
   let insertedCount = 0
   if (toInsert.length > 0) {
-    const nowIso = new Date().toISOString()
     const { error } = await supabase.from('go_internal_videos').insert(
       toInsert.map(({ row, norm }) => ({
         creator_id,
         tiktok_account_id: row.tiktok_account_id,
         tiktok_url: norm,
         video_type: row.video_type,
-        status: 'approved',
-        submitted_at: nowIso,
-        approved_at: nowIso,
+        status: 'pending',
       }))
     )
     if (error) {
@@ -91,16 +88,10 @@ export async function submitInternalVideosBatch(
       })
     } else {
       insertedCount = toInsert.length
-      await addCreatorCounters(supabase, creator_id, {
-        acc: toInsert.filter(({ row }) => row.video_type === 'ACC').length,
-        ttd: toInsert.filter(({ row }) => row.video_type === 'TTD').length,
-      })
-      await checkAndApplyLevelUps(creator_id)
     }
   }
 
   revalidatePath('/internal-dashboard')
   revalidatePath('/admin')
-  revalidatePath('/dashboard')
   return { results, insertedCount }
 }

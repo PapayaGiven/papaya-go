@@ -2094,7 +2094,8 @@ export async function adminSubmitVideosForCreator(data: {
   const sameMonth = dateObj.getUTCFullYear() === now.getUTCFullYear() && dateObj.getUTCMonth() === now.getUTCMonth()
 
   if (creator.is_internal) {
-    // Internal pipeline: internal videos are auto-approved — never pending.
+    // Internal pipeline: admin-submitted videos are trusted, so they go in as
+    // 'approved' and count immediately. (Creator self-submissions stay 'pending'.)
     // submitted_at carries the chosen date; approved_at is the moment it counted.
     const approvedIso = new Date().toISOString()
     const rows = toInsert.map((v) => ({
